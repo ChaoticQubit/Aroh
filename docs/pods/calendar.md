@@ -43,7 +43,7 @@ calendar_set_reminder_settings(s: ReminderSettings) -> ReminderSettings
 
 ### Pure core: `crates/aroh-reminders`
 
-No Tauri, no DB. Depends on `chrono` only, so its tests build fast in a small Docker container.
+No Tauri, no DB. Depends on `chrono` only, so its tests build fast in a small Kiri container.
 
 ```rust
 pub fn plan_reminders(actions: &[ActionSlot], settings: &ReminderSettings, now: DateTime<Utc>, horizon: Duration, cap: usize) -> Vec<Reminder>
@@ -74,25 +74,27 @@ Per platform:
 
 | Platform | How it fires while the app is closed |
 |---|---|
-| iOS, Android | `tauri-plugin-notification` with `Schedule::At { date, allow_while_idle: true }`. The OS delivers it. |
-| macOS desktop | The plugin's desktop backend has no `schedule` support (checked in `plugins-workspace/v2/plugins/notification/src/desktop.rs`). Step 1 (MVP acceptance): an in-process tokio timer fires the next reminder with the plugin's `show()` while the app runs, and closing the window hides the app instead of quitting it. Step 2: in a bundled, signed build, schedule through `UNUserNotificationCenter` with a calendar trigger (`objc2-user-notifications`), so the OS fires it with the app quit. `tauri dev` is unbundled, so it stays on step 1. |
+| iOS (first target) | `tauri-plugin-notification` with `Schedule::At { date, allow_while_idle: true }`. The OS delivers it with the app closed. |
+| Android | Same as iOS. |
+| macOS desktop (secondary) | The plugin's desktop backend has no `schedule` support (checked in `plugins-workspace/v2/plugins/notification/src/desktop.rs`). Step 1: an in-process tokio timer fires the next reminder with the plugin's `show()` while the app runs, and closing the window hides the app instead of quitting it. Step 2: in a bundled, signed build, schedule through `UNUserNotificationCenter` with a calendar trigger (`objc2-user-notifications`), so the OS fires it with the app quit. `tauri dev` is unbundled, so it stays on step 1. |
 
 Permission is asked the first time an action is created or the user opens Today with actions, not on first launch.
 
 Notification text: `Soon`: "In 10 min: {title}". `Start`: "Now: {title}". `Nudge`: "Did you finish {title}?". Body is the goal title. Max 120 chars. Tapping opens `/today?action={id}`.
 
-### Missed hook (to agree with pod-replan)
-
-Proposal sent to @pod-replan:
+### Missed hook (agreed with pod-replan, msg 1896)
 
 - Calendar never sets `status = 'missed'`. Replan owns missed detection.
-- The `Nudge` fires at `end_at + reminders.missed_grace_min`. The same grace value is the threshold replan uses: an action is missed when `status = 'planned'` and `end_at + grace < now`.
-- When a `Nudge` fires in-process (desktop timer) or the app starts or resumes, calendar emits the Tauri event `aroh://action-overdue` with `{ action_id, end_at }` and calls replan's public `detect_missed(now)` once. On mobile, a nudge delivered while the app is closed is caught by the start/resume sweep.
-- After replan marks actions missed or applies a replan, it calls `commands::calendar::sync_reminders(&app)`.
+- Shared threshold: `reminders.missed_grace_min` (default 15). An action is missed when `status = 'planned'` and `end_at + grace < now`. The `Nudge` fires at that same instant.
+- Pure side: `aroh_replan::detect_missed(actions: &[Action], now, grace_min) -> Vec<String>`. DB side: `commands::replan::check_missed(app: &AppHandle) -> Result<Vec<String>, String>`. It marks actions missed, runs the replan, then calls `commands::calendar::sync_reminders(&app)` once.
+- Calendar calls `check_missed` on app start, on resume, and when a nudge fires in-process. No `aroh://action-overdue` event.
+- A hand-moved missed action goes back to `planned`; replan needs no signal for it.
 
 ## 4. Screens
 
 Visual direction: "calm instrument" from `context/research/front_end_design.md`. Warm off-white and graphite themes from tokens, one accent for the primary action and the now line, 8 goal hues, system font with tabular numerals, state shown by fill and border, never colour alone. 44 px touch targets. 150 to 200 ms transitions, none with `prefers-reduced-motion`. Built with the `design-taste-frontend` app-screen rules.
+
+Phone first (owner, msg 1949): the iPhone day view is the main design target; the desktop week view comes second.
 
 ### `/today`
 
@@ -117,8 +119,8 @@ Visual direction: "calm instrument" from `context/research/front_end_design.md`.
 
 ### `/calendar`
 
-- Desktop (840 px and up): week view by default, a Day/Week toggle, prev/next/today buttons, keys `D`, `W`, `T`, arrow keys.
-- Phone (under 600 px): day view with a horizontal swipe to the previous or next day (pointer events, 60 px threshold, no library), plus a date strip of the week at the top.
+- Phone (under 600 px, main view): day view with a horizontal swipe to the previous or next day (pointer events, 60 px threshold, no library), plus a date strip of the week at the top. Safe-area insets respected.
+- Desktop (840 px and up, second): week view by default, a Day/Week toggle, prev/next/today buttons, keys `D`, `W`, `T`, arrow keys.
 - Medium widths use the day view with the date strip.
 - One `TimeGrid.svelte` component draws N day columns (1 or 7), hours 00 to 24, scrolled to 07:00 or the now line, with absolute-positioned `ActionBlock`s. Overlapping blocks split the column width. No calendar library: the grid is small and the replan ghost overlay comes later, which libraries handle badly.
 - Tap a block to open the action sheet (bottom sheet on phone, right panel on desktop): title, goal, time, notes, links from notes, Done, Skip, and Move (date input plus start and end time inputs in local time, saved through `calendar_move_action`). No drag in the MVP.
@@ -134,11 +136,11 @@ Month view, drag to move, notification action buttons (Done/Snooze from the bann
 ## 6. Acceptance
 
 - `crates/aroh-reminders` tests pass in a small container run with Kiri (`/usr/local/bin/kiri build`, `kiri run --rm`), using foundation's `Dockerfile.test`.
-- In `tauri dev`: create a test action starting in 2 minutes, see it on Today and Calendar, mark it done, undo, and get a notification at its start.
+- In the iOS simulator with `tauri ios dev`: create a test action starting in 2 minutes, see it on Today and Calendar, mark it done, undo, and get a notification at its start.
 
 ## 7. Needs from other pods
 
 - foundation: `aroh-core` structs, DB access in commands, HLC helper, placeholder `/today` and `/calendar` routes (this pod overwrites them), and `aroh-reminders` joins the workspace through `crates/*`. This pod adds `pub mod calendar;` and its handlers to `lib.rs` per `AGENTS.md`.
 - This pod owns the `tauri-plugin-notification` setup (Cargo, `tauri.conf`, capability) and close-to-hide on macOS; asks @pod-foundation only if the shell needs another change.
 - plugins: `<Slot name="today.top" />`.
-- replan: `detect_missed(now)` and the missed hook above.
+- replan: `commands::replan::check_missed` and the missed hook above.
