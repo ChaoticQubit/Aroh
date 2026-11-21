@@ -17,8 +17,10 @@
 	];
 
 	const current = $derived(page.url.pathname);
+	const bare = $derived((page.data as { bare?: boolean }).bare === true);
 
 	$effect(() => {
+		if (bare) return;
 		const listening = onNotificationRoute((route) => goto(route));
 		return () => {
 			listening.then((l) => l?.unregister());
@@ -26,19 +28,23 @@
 	});
 </script>
 
-<div class="shell">
-	<div class="statusbar" aria-hidden="true"></div>
-	<nav aria-label="Main">
-		<span class="brand">Aroh</span>
-		{#each tabs as tab (tab.href)}
-			<a href={tab.href} aria-current={current.startsWith(tab.href) ? 'page' : undefined}>{tab.label}</a>
-		{/each}
-	</nav>
-	<main>
-		{@render children()}
-	</main>
-	<ReplanWatcher />
-</div>
+{#if bare}
+	{@render children()}
+{:else}
+	<div class="shell">
+		<div class="statusbar" aria-hidden="true"></div>
+		<nav aria-label="Main">
+			<span class="brand">Aroh</span>
+			{#each tabs as tab (tab.href)}
+				<a href={tab.href} aria-current={current.startsWith(tab.href) ? 'page' : undefined}>{tab.label}</a>
+			{/each}
+		</nav>
+		<main>
+			{@render children()}
+		</main>
+		<ReplanWatcher />
+	</div>
+{/if}
 
 <style>
 	.shell {
