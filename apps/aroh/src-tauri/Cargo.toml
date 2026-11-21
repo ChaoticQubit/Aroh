@@ -17,3 +17,4 @@ serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
 aroh-core.workspace = true
+aroh-plugins = { path = "../../../crates/aroh-plugins" }

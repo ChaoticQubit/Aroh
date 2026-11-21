@@ -223,6 +223,16 @@ impl Plugin {
         &self.info.name
     }
 
+    /// The plugin name, version and title.
+    pub fn info(&self) -> &PluginInfo {
+        &self.info
+    }
+
+    /// The YAML text this plugin was parsed from.
+    pub fn yaml(&self) -> &str {
+        &self.source
+    }
+
     /// The agents this plugin declares, in file order.
     pub fn agents(&self) -> &[AgentDecl] {
         &self.agents

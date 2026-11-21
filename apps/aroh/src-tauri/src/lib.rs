@@ -60,6 +60,10 @@ pub fn run() {
             commands::core::claude_key_status,
             commands::core::save_claude_key,
             commands::core::clear_claude_key,
+            commands::plugins::plugins_list,
+            commands::plugins::plugins_model,
+            commands::plugins::plugins_set_enabled,
+            commands::plugins::plugins_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
