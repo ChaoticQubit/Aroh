@@ -66,8 +66,9 @@
   .warning {
     padding: 12px;
     border-radius: 12px;
-    background: #fff4e0;
-    color: #6b3d00;
+    background: var(--surface-raised);
+    border: 1px solid var(--danger);
+    color: var(--danger);
   }
   .warning p,
   li p {
@@ -84,7 +85,8 @@
   li {
     padding: 12px;
     border-radius: 12px;
-    background: #f4f4f6;
+    background: var(--surface-raised);
+    border: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -95,10 +97,10 @@
   }
   .verb {
     font-weight: 500;
-    color: #555;
+    color: var(--ink-muted);
   }
   .before {
-    color: #777;
+    color: var(--ink-muted);
     text-decoration: line-through;
   }
   .sr {
@@ -109,7 +111,7 @@
     clip: rect(0 0 0 0);
   }
   .empty {
-    color: #555;
+    color: var(--ink-muted);
   }
   .actions {
     position: sticky;
@@ -128,18 +130,18 @@
     font-weight: 600;
   }
   .apply {
-    background: #2a5bd7;
-    color: #fff;
+    background: var(--accent);
+    color: var(--accent-ink);
   }
   .reject {
-    background: #e6e6ea;
-    color: #222;
+    background: var(--line);
+    color: var(--ink);
   }
   button:disabled {
     opacity: 0.5;
   }
   button:focus-visible {
-    outline: 3px solid #2a5bd7;
+    outline: 3px solid var(--accent);
     outline-offset: 2px;
   }
 </style>

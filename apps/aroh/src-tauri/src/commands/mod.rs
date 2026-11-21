@@ -1,8 +1,12 @@
 //! Tauri command modules, one per pod. Add `pub mod <pod>;` here and list its commands in `lib.rs`.
 
+pub mod calendar;
 pub mod core;
+pub mod sync;
 pub mod intake;
 pub mod plugins;
+pub mod replan;
+pub mod goals;
 
 use crate::{AppState, Core};
 

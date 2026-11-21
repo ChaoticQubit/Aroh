@@ -77,6 +77,14 @@ CREATE TABLE settings (
     value TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+"#, r#"
+CREATE TABLE goal_drafts (
+    goal_id TEXT PRIMARY KEY NOT NULL,
+    analysis_json TEXT,
+    questions_json TEXT,
+    proposed_actions_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL
+);
 "#];
 
 /// Schema version after every migration ran.

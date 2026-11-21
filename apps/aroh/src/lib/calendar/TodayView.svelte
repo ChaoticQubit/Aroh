@@ -1,9 +1,10 @@
 <script lang="ts">
 	import './calendar.css';
 	import { listen } from '@tauri-apps/api/event';
-	import { listActions, setStatus, type ActionView, type SettableStatus } from './api';
+	import { ensureNotificationPermission, listActions, setStatus, type ActionView, type SettableStatus } from './api';
 	import { formatDayTitle, formatTime, localRange } from './time';
 	import ActionRow from './ActionRow.svelte';
+	import PluginSlot from '../plugins/PluginSlot.svelte';
 	import ActionSheet from './ActionSheet.svelte';
 
 	interface Props {
@@ -32,8 +33,9 @@
 			null
 	);
 	const rest = $derived(openList.filter((a) => a.id !== nowCard?.id));
-	const restBefore = $derived(rest.filter((a) => new Date(a.start_at) <= now));
-	const restAfter = $derived(rest.filter((a) => new Date(a.start_at) > now));
+	const pivot = $derived(nowCard ? new Date(nowCard.start_at) : now);
+	const restBefore = $derived(rest.filter((a) => new Date(a.start_at) < pivot));
+	const restAfter = $derived(rest.filter((a) => new Date(a.start_at) >= pivot));
 	const doneCount = $derived(actions.filter((a) => a.status === 'done').length);
 	const countable = $derived(actions.filter((a) => a.status !== 'skipped').length);
 	const progress = $derived(countable === 0 ? 0 : doneCount / countable);
@@ -107,6 +109,13 @@
 		};
 	});
 
+	let permissionAsked = false;
+	$effect(() => {
+		if (permissionAsked || actions.length === 0) return;
+		permissionAsked = true;
+		ensureNotificationPermission().catch(() => {});
+	});
+
 	let focusedOnce = false;
 	$effect(() => {
 		if (focusedOnce || !focusActionId || !actions.some((a) => a.id === focusActionId)) return;
@@ -135,7 +144,7 @@
 		</div>
 	{/if}
 
-	<div class="slot" data-slot="today.top"></div>
+	<PluginSlot name="today.top" />
 
 	{#if error}
 		<p class="error" role="alert">{error} <button type="button" class="link" onclick={load}>Retry</button></p>
@@ -230,9 +239,6 @@
 		background: var(--cal-ink);
 		border-radius: inherit;
 		transition: width var(--ease);
-	}
-	.slot:empty {
-		display: none;
 	}
 	.list {
 		display: flex;

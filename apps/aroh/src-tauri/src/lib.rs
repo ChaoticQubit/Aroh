@@ -39,6 +39,26 @@ fn open_core(app: &tauri::App) -> Result<Core, Box<dyn std::error::Error>> {
     Ok(Core { conn, clock })
 }
 
+/// Reschedules reminders. Runs at app start and on resume.
+fn on_start_or_resume(app: &tauri::AppHandle) {
+    if let Err(e) = commands::calendar::sync_reminders(app) {
+        eprintln!("aroh: sync_reminders failed: {e}");
+    }
+}
+
+/// On resume, replans missed actions in the background; check_missed reschedules reminders itself.
+/// At start the UI's ReplanWatcher calls check_missed once its event listeners exist.
+#[cfg(mobile)]
+fn on_resume(app: &tauri::AppHandle) {
+    on_start_or_resume(app);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = commands::replan::check_missed(app).await {
+            eprintln!("aroh: check_missed failed: {e}");
+        }
+    });
+}
+
 /// Debug builds only: saves `AROH_DEV_CLAUDE_KEY` to the keychain and, three seconds after start,
 /// evaluates the JavaScript file at `AROH_DEV_SCRIPT` in the main window. Simulator checks use it
 /// to drive the real UI where no tap tool exists. Release builds do not contain it.
@@ -69,9 +89,11 @@ pub fn run() {
         .setup(|app| {
             let core = open_core(app)?;
             app.manage(AppState { core: Mutex::new(core) });
+            app.manage(commands::calendar::ReminderState::default());
             if let Err(e) = commands::intake::sync_checkin(app.handle(), &app.state::<AppState>()) {
                 eprintln!("daily check-in not scheduled: {e}");
             }
+            on_start_or_resume(app.handle());
             #[cfg(debug_assertions)]
             dev_hooks(app);
             Ok(())
@@ -88,6 +110,17 @@ pub fn run() {
             commands::core::claude_key_status,
             commands::core::save_claude_key,
             commands::core::clear_claude_key,
+            commands::calendar::calendar_list_actions,
+            commands::calendar::calendar_set_status,
+            commands::calendar::calendar_move_action,
+            commands::calendar::calendar_get_reminder_settings,
+            commands::calendar::calendar_set_reminder_settings,
+            commands::calendar::calendar_ensure_notification_permission,
+            commands::sync::sync_configure,
+            commands::sync::sync_sign_in,
+            commands::sync::sync_sign_out,
+            commands::sync::sync_now,
+            commands::sync::sync_status,
             commands::intake::intake_log_text,
             commands::intake::intake_log_chip,
             commands::intake::intake_list_today,
@@ -100,7 +133,24 @@ pub fn run() {
             commands::plugins::plugins_model,
             commands::plugins::plugins_set_enabled,
             commands::plugins::plugins_data,
+            commands::replan::check_missed,
+            commands::replan::replan_list_proposed,
+            commands::replan::replan_apply,
+            commands::replan::replan_reject,
+            commands::replan::replan_undo,
+            commands::goals::goals_create,
+            commands::goals::goals_analyze,
+            commands::goals::goals_plan,
+            commands::goals::goals_approve,
+            commands::goals::goals_detail,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, _event| {
+            #[cfg(mobile)]
+            if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } = _event {
+                on_resume(_app);
+                commands::sync::on_resume(_app);
+            }
+        });
 }

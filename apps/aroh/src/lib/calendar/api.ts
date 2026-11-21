@@ -52,3 +52,8 @@ export function getReminderSettings(): Promise<ReminderSettings> {
 export function setReminderSettings(s: ReminderSettings): Promise<ReminderSettings> {
 	return invoke<ReminderSettings>('calendar_set_reminder_settings', { s });
 }
+
+/** Asks for notification permission once if the OS has not decided yet. Resolves to whether it is granted. */
+export function ensureNotificationPermission(): Promise<boolean> {
+	return invoke<boolean>('calendar_ensure_notification_permission');
+}

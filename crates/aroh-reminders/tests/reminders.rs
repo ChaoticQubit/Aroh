@@ -126,7 +126,7 @@ fn reschedule_after_move_keeps_ids_and_drops_old_times() {
         reminder_id("a1", ReminderKind::Soon),
         reminder_id("a1", ReminderKind::Start)
     );
-    assert!(before.iter().all(|r| r.id >= 0));
+    assert!(before.iter().all(|r| r.id >= 0 && (r.id as u32) < aroh_reminders::REMINDER_ID_LIMIT));
 }
 
 #[test]

@@ -1,4 +1,5 @@
-use crate::model::{Action, ActionStatus, DiffOp, Goal, Infeasible, Op, PlanInput, Proposal, Slot};
+use crate::model::{ActionStatus, DiffOp, Infeasible, Op, PlanInput, Proposal, Slot};
+use crate::parsed::{self, format_time, PAction, PGoal};
 use crate::time::{day_windows, deadline, inside_window, local_date, Span};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,7 +20,7 @@ struct Item {
 /// Shared read-only state of one plan() run.
 struct Ctx<'a> {
     input: &'a PlanInput,
-    goals: BTreeMap<&'a str, &'a Goal>,
+    goals: BTreeMap<String, PGoal>,
     missed: BTreeSet<&'a str>,
 }
 
@@ -29,47 +30,47 @@ impl Ctx<'_> {
         self.goals.get(goal_id).map(|g| deadline(g, &self.input.availability))
     }
 
-    /// True when the action blocks time: planned, live and not a missed one.
-    fn occupies(&self, action: &Action) -> bool {
-        action.status == ActionStatus::Planned && !action.deleted && !self.missed.contains(action.id.as_str())
+    /// True when the action blocks time: planned and not a missed one.
+    fn occupies(&self, action: &PAction) -> bool {
+        action.status == ActionStatus::Planned && !self.missed.contains(action.id.as_str())
     }
 }
 
 /// Spreads each goal's missed minutes over its remaining days and returns
-/// the diff plus minutes that fit nowhere. Inputs are read only; output is
-/// deterministic and always passes validate().
+/// the diff plus minutes that fit nowhere. Created actions get fresh uuid v7
+/// ids; everything else is deterministic. Output always passes validate().
 pub fn plan(input: &PlanInput) -> Proposal {
     let ctx = Ctx {
         input,
-        goals: input.goals.iter().filter(|g| !g.deleted).map(|g| (g.id.as_str(), g)).collect(),
+        goals: parsed::goals(&input.goals).into_iter().map(|g| (g.id.clone(), g)).collect(),
         missed: input.missed_ids.iter().map(String::as_str).collect(),
     };
-    let mut need: BTreeMap<&str, i64> = BTreeMap::new();
-    for action in &input.actions {
-        if ctx.missed.contains(action.id.as_str()) && !action.deleted && ctx.goals.contains_key(action.goal_id.as_str()) {
-            *need.entry(action.goal_id.as_str()).or_default() += action.est_minutes.max(0);
+    let mut current = parsed::actions(&input.actions);
+    let mut need: BTreeMap<String, i64> = BTreeMap::new();
+    for action in &current {
+        if ctx.missed.contains(action.id.as_str()) && ctx.goals.contains_key(&action.goal_id) {
+            *need.entry(action.goal_id.clone()).or_default() += action.est_minutes.max(0);
         }
     }
-    let mut order: Vec<&Goal> = need.keys().map(|id| ctx.goals[id]).collect();
+    let mut order: Vec<&PGoal> = need.keys().map(|id| &ctx.goals[id]).collect();
     order.sort_by_key(|g| (deadline(g, &input.availability), g.id.clone()));
 
-    let mut current = input.actions.clone();
     let mut infeasible = Vec::new();
     for goal in order {
-        let minutes = need[goal.id.as_str()];
+        let minutes = need[&goal.id];
         let placed = place_goal(&ctx, &mut current, goal, minutes);
         assert!(placed <= minutes);
         if placed < minutes {
             infeasible.push(Infeasible { goal_id: goal.id.clone(), unplaced_minutes: minutes - placed });
         }
     }
-    let proposal = Proposal { diff: diff_between(&input.actions, &current), infeasible };
+    let proposal = Proposal { diff: diff_of(&current), infeasible };
     debug_assert_eq!(crate::validate(input, &proposal.diff), Ok(()));
     proposal
 }
 
 /// Places up to `minutes` of a goal's work into `current`; returns minutes placed.
-fn place_goal(ctx: &Ctx, current: &mut Vec<Action>, goal: &Goal, minutes: i64) -> i64 {
+fn place_goal(ctx: &Ctx, current: &mut Vec<PAction>, goal: &PGoal, minutes: i64) -> i64 {
     let availability = &ctx.input.availability;
     let first = local_date(ctx.input.now, availability);
     let days: Vec<NaiveDate> = (0..DAYS_MAX)
@@ -88,7 +89,7 @@ fn place_goal(ctx: &Ctx, current: &mut Vec<Action>, goal: &Goal, minutes: i64) -
 }
 
 /// Largest extra minutes (at most `limit`) the goal can take on `day`.
-fn capacity(ctx: &Ctx, current: &[Action], day: NaiveDate, goal: &Goal, limit: i64) -> i64 {
+fn capacity(ctx: &Ctx, current: &[PAction], day: NaiveDate, goal: &PGoal, limit: i64) -> i64 {
     if limit <= 0 || layout(ctx, current, day, goal, 0).is_none() {
         return 0;
     }
@@ -131,9 +132,12 @@ fn water_fill(total: i64, caps: &[i64]) -> Vec<i64> {
     alloc
 }
 
-/// Lays out `day` with the goal grown by `extra` minutes. Returns new
-/// slots for every item, or None when something does not fit.
-fn layout(ctx: &Ctx, current: &[Action], day: NaiveDate, goal: &Goal, extra: i64) -> Option<Vec<(Option<usize>, Slot)>> {
+/// New placement of one item: working index (None for a created action), start, end, estimate.
+type Placed = (Option<usize>, DateTime<Utc>, DateTime<Utc>, i64);
+
+/// Lays out `day` with the goal grown by `extra` minutes. Returns a
+/// placement for every item, or None when something does not fit.
+fn layout(ctx: &Ctx, current: &[PAction], day: NaiveDate, goal: &PGoal, extra: i64) -> Option<Vec<Placed>> {
     let availability = &ctx.input.availability;
     let now = ctx.input.now;
     let windows: Vec<Span> = day_windows(day, availability)
@@ -189,7 +193,7 @@ fn layout(ctx: &Ctx, current: &[Action], day: NaiveDate, goal: &Goal, extra: i64
         let start = earliest_fit(&windows, &occupied, item.lower, item.minutes, item.deadline)?;
         let end = start + Duration::minutes(item.minutes);
         occupied.push((start, end));
-        placed.push((item.index, Slot { start_at: start, end_at: end, est_minutes: item.est_minutes }));
+        placed.push((item.index, start, end, item.est_minutes));
     }
     Some(placed)
 }
@@ -215,50 +219,51 @@ fn earliest_fit(windows: &[Span], occupied: &[Span], lower: DateTime<Utc>, minut
 }
 
 /// Writes a day layout into the working actions, creating the catch-up action.
-fn commit(current: &mut Vec<Action>, layout: Vec<(Option<usize>, Slot)>, goal: &Goal) {
-    for (index, slot) in layout {
+fn commit(current: &mut Vec<PAction>, layout: Vec<Placed>, goal: &PGoal) {
+    for (index, start_at, end_at, est_minutes) in layout {
         match index {
             Some(i) => {
-                current[i].start_at = slot.start_at;
-                current[i].end_at = slot.end_at;
-                current[i].est_minutes = slot.est_minutes;
+                current[i].start_at = start_at;
+                current[i].end_at = end_at;
+                current[i].est_minutes = est_minutes;
             }
-            None => {
-                let op = DiffOp {
-                    action_id: format!("{}-replan-{}", goal.id, slot.start_at.format("%Y%m%dT%H%M")),
-                    op: Op::Create,
-                    before: None,
-                    after: Some(slot),
-                    goal_id: Some(goal.id.clone()),
-                    title: Some(format!("Catch up: {}", goal.title)),
-                };
-                *current = crate::apply(current, &[op]);
-            }
+            None => current.push(PAction {
+                id: aroh_core::new_id(),
+                goal_id: goal.id.clone(),
+                title: format!("Catch up: {}", goal.title),
+                start_at,
+                end_at,
+                est_minutes,
+                status: ActionStatus::Planned,
+                original: None,
+            }),
         }
     }
 }
 
-/// Diff that turns `before` into `after`, sorted by new start then id.
-fn diff_between(before: &[Action], after: &[Action]) -> Vec<DiffOp> {
-    let slot = |a: &Action| Slot { start_at: a.start_at, end_at: a.end_at, est_minutes: a.est_minutes };
-    let mut diff: Vec<DiffOp> = Vec::new();
-    for (old, new) in before.iter().zip(after) {
-        assert_eq!(old.id, new.id);
-        if slot(old) != slot(new) {
-            let op = if old.est_minutes == new.est_minutes { Op::Move } else { Op::Resize };
-            diff.push(DiffOp { action_id: old.id.clone(), op, before: Some(slot(old)), after: Some(slot(new)), goal_id: None, title: None });
-        }
+/// Diff from each action's stored slot to its working slot, sorted by new start then id.
+fn diff_of(current: &[PAction]) -> Vec<DiffOp> {
+    let mut diff: Vec<(DateTime<Utc>, DiffOp)> = Vec::new();
+    for action in current {
+        let after = Slot { start_at: format_time(action.start_at), end_at: format_time(action.end_at), est_minutes: action.est_minutes };
+        let entry = match &action.original {
+            None => Some(DiffOp {
+                action_id: action.id.clone(),
+                op: Op::Create,
+                before: None,
+                after: Some(after),
+                goal_id: Some(action.goal_id.clone()),
+                title: Some(action.title.clone()),
+            }),
+            Some(before) => {
+                let times = parsed::parse_slot(before).expect("parsed on input");
+                let changed = times != (action.start_at, action.end_at) || before.est_minutes != action.est_minutes;
+                let op = if before.est_minutes == action.est_minutes { Op::Move } else { Op::Resize };
+                changed.then(|| DiffOp { action_id: action.id.clone(), op, before: Some(before.clone()), after: Some(after), goal_id: None, title: None })
+            }
+        };
+        diff.extend(entry.map(|e| (action.start_at, e)));
     }
-    for new in &after[before.len()..] {
-        diff.push(DiffOp {
-            action_id: new.id.clone(),
-            op: Op::Create,
-            before: None,
-            after: Some(slot(new)),
-            goal_id: Some(new.goal_id.clone()),
-            title: Some(new.title.clone()),
-        });
-    }
-    diff.sort_by(|a, b| (a.after.map(|s| s.start_at), &a.action_id).cmp(&(b.after.map(|s| s.start_at), &b.action_id)));
-    diff
+    diff.sort_by(|a, b| (a.0, &a.1.action_id).cmp(&(b.0, &b.1.action_id)));
+    diff.into_iter().map(|(_, e)| e).collect()
 }

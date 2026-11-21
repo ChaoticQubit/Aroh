@@ -79,13 +79,13 @@ pub fn plan_reminders(
     out.truncate(cap);
     assert!(out.len() <= cap);
     assert!(out.windows(2).all(|w| w[0].fire_at <= w[1].fire_at));
-    assert!(out.iter().all(|r| r.fire_at > now && r.fire_at <= until && r.id >= 0));
+    assert!(out.iter().all(|r| r.fire_at > now && r.fire_at <= until && r.id >= 0 && (r.id as u32) < REMINDER_ID_LIMIT));
     out
 }
 
-/// Stable 31-bit notification id for one reminder of one action (FNV-1a 32 over id and kind).
+/// Stable notification id for one reminder of one action (FNV-1a 32 over id and kind, modulo `REMINDER_ID_LIMIT`).
 /// The same inputs give the same id on every run and device, so a reschedule replaces.
-/// Returns a non-negative `i32`.
+/// Returns an `i32` in `0..REMINDER_ID_LIMIT`; ids at or above the limit belong to other features.
 pub fn reminder_id(action_id: &str, kind: ReminderKind) -> i32 {
     let tag: u8 = match kind {
         ReminderKind::Soon => b'S',
@@ -97,8 +97,8 @@ pub fn reminder_id(action_id: &str, kind: ReminderKind) -> i32 {
         hash ^= u32::from(byte);
         hash = hash.wrapping_mul(0x0100_0193);
     }
-    let id = (hash & 0x7fff_ffff) as i32;
-    assert!(id >= 0);
+    let id = (hash % REMINDER_ID_LIMIT) as i32;
+    assert!((0..REMINDER_ID_LIMIT as i32).contains(&id));
     id
 }
 
@@ -112,6 +112,9 @@ pub fn local_day_bounds(date: NaiveDate, tz: Tz) -> (DateTime<Utc>, DateTime<Utc
     assert!(to > from);
     (from, to)
 }
+
+/// Calendar reminder ids stay below this; other notification owners use ids at or above it.
+pub const REMINDER_ID_LIMIT: u32 = 2_000_000_000;
 
 const LEAD_MAX_MIN: u32 = 120;
 const GRACE_MAX_MIN: u32 = 240;

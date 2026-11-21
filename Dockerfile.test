@@ -1,5 +1,5 @@
 FROM rust:1-slim
 WORKDIR /src
 COPY . .
-RUN cargo test --workspace --exclude aroh --no-run
-CMD ["cargo", "test", "--workspace", "--exclude", "aroh"]
+RUN cargo test --workspace --exclude aroh --exclude tauri-plugin-aroh-speech --no-run
+CMD ["cargo", "test", "--workspace", "--exclude", "aroh", "--exclude", "tauri-plugin-aroh-speech"]

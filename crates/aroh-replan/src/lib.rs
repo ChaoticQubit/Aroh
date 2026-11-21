@@ -1,4 +1,5 @@
 mod model;
+mod parsed;
 mod plan;
 mod time;
 mod validate;
@@ -8,6 +9,7 @@ pub use plan::plan;
 pub use validate::validate;
 
 use chrono::{DateTime, Duration, Utc};
+use parsed::parse_time;
 mod agent;
 pub use agent::*;
 
@@ -26,8 +28,8 @@ pub fn classify(diff: &[DiffOp]) -> Size {
 pub fn apply(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
     let mut out = actions.to_vec();
     for op in diff {
-        match (op.op, op.after) {
-            (Op::Create, Some(slot)) => {
+        match (op.op, &op.after) {
+            (Op::Create, Some(slot)) if !out.iter().any(|a| a.id == op.action_id) => {
                 let goal_id = op.goal_id.clone().unwrap_or_default();
                 let seq = out.iter().filter(|a| a.goal_id == goal_id).map(|a| a.seq + 1).max().unwrap_or(0);
                 out.push(Action {
@@ -35,8 +37,8 @@ pub fn apply(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
                     goal_id,
                     title: op.title.clone().unwrap_or_default(),
                     notes: None,
-                    start_at: slot.start_at,
-                    end_at: slot.end_at,
+                    start_at: slot.start_at.clone(),
+                    end_at: slot.end_at.clone(),
                     est_minutes: slot.est_minutes,
                     status: ActionStatus::Planned,
                     seq,
@@ -62,7 +64,7 @@ pub fn apply(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
 pub fn undo(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
     let mut out = actions.to_vec();
     for op in diff.iter().rev() {
-        match (op.op, op.before) {
+        match (op.op, &op.before) {
             (Op::Create, _) => out.retain(|a| a.id != op.action_id),
             (Op::Move | Op::Resize, Some(slot)) => set_slot(&mut out, &op.action_id, slot),
             (Op::Delete, _) => {
@@ -77,20 +79,21 @@ pub fn undo(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
 }
 
 /// Sets start, end and estimate of the action with `id`, if present.
-fn set_slot(actions: &mut [Action], id: &str, slot: Slot) {
+fn set_slot(actions: &mut [Action], id: &str, slot: &Slot) {
     if let Some(a) = actions.iter_mut().find(|a| a.id == id) {
-        a.start_at = slot.start_at;
-        a.end_at = slot.end_at;
+        a.start_at = slot.start_at.clone();
+        a.end_at = slot.end_at.clone();
         a.est_minutes = slot.est_minutes;
     }
 }
 
-/// Ids of live planned actions whose end plus `grace_min` minutes is
+/// Ids of live planned actions whose parseable end plus `grace_min` minutes is
 /// before `now`, sorted. Pure: the caller writes the status change.
 pub fn detect_missed(actions: &[Action], now: DateTime<Utc>, grace_min: i64) -> Vec<String> {
     let mut ids: Vec<String> = actions
         .iter()
-        .filter(|a| a.status == ActionStatus::Planned && !a.deleted && a.end_at + Duration::minutes(grace_min) < now)
+        .filter(|a| a.status == ActionStatus::Planned && !a.deleted)
+        .filter(|a| parse_time(&a.end_at).is_some_and(|end| end + Duration::minutes(grace_min) < now))
         .map(|a| a.id.clone())
         .collect();
     ids.sort();

@@ -1,1 +1,5 @@
-<h1>Calendar</h1>
+<script lang="ts">
+	import CalendarView from '../../lib/calendar/CalendarView.svelte';
+</script>
+
+<CalendarView />

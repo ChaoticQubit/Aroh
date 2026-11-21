@@ -168,7 +168,7 @@ fn version(row: &Row) -> Result<Version, Error> {
     let updated_at = row
         .get("updated_at")
         .and_then(Json::as_str)
-        .filter(|s| is_hlc(s))
+        .filter(|s| aroh_core::hlc::parse(s).is_ok())
         .ok_or_else(|| Error::InvalidRow("bad updated_at".into()))?;
     let deleted = match row.get("deleted") {
         None | Some(Json::Null) => false,
@@ -179,18 +179,6 @@ fn version(row: &Row) -> Result<Version, Error> {
         },
     };
     Ok(Version { updated_at: updated_at.to_string(), deleted })
-}
-
-/// Whether `s` has the fixed HLC shape `<13 digits>-<4 hex>-<16 hex>`.
-pub fn is_hlc(s: &str) -> bool {
-    let b = s.as_bytes();
-    let hex = |r: std::ops::Range<usize>| b[r].iter().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c));
-    b.len() == 35
-        && b[..13].iter().all(u8::is_ascii_digit)
-        && b[13] == b'-'
-        && hex(14..18)
-        && b[18] == b'-'
-        && hex(19..35)
 }
 
 fn upsert(conn: &Connection, table: &Table, row: &Row) -> Result<(), Error> {
@@ -244,19 +232,13 @@ mod tests {
     use serde_json::json;
 
     fn db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(
-            "CREATE TABLE goals (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, kind TEXT NOT NULL,
-             source_url TEXT, target_date TEXT, status TEXT NOT NULL, answers_json TEXT,
-             created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0);",
-        )
-        .unwrap();
+        let conn = aroh_core::db::open_in_memory().unwrap();
         ensure_state(&conn).unwrap();
         conn
     }
 
     fn goal(id: &str, title: &str, updated_at: &str, deleted: i64) -> Row {
-        json!({"id": id, "title": title, "kind": "custom", "source_url": null, "target_date": null,
+        json!({"id": id, "title": title, "kind": "custom", "source_url": null, "target_date": "2026-12-31",
                "status": "active", "answers_json": null, "created_at": "2026-11-20T00:00:00Z",
                "updated_at": updated_at, "deleted": deleted, "user_id": "u", "server_seq": 9})
         .as_object()

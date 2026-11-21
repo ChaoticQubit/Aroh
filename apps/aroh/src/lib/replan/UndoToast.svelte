@@ -33,7 +33,7 @@
     position: fixed;
     left: max(12px, env(safe-area-inset-left));
     right: max(12px, env(safe-area-inset-right));
-    bottom: calc(12px + env(safe-area-inset-bottom));
+    bottom: calc(var(--tabbar, 0px) + 12px + env(safe-area-inset-bottom));
     max-width: 640px;
     margin: 0 auto;
     display: flex;
@@ -41,8 +41,8 @@
     gap: 12px;
     padding: 8px 8px 8px 16px;
     border-radius: 14px;
-    background: #1f1f24;
-    color: #fff;
+    background: var(--ink);
+    color: var(--surface);
   }
   p {
     flex: 1;
@@ -55,11 +55,12 @@
     border: none;
     border-radius: 10px;
     background: transparent;
-    color: #8fb0ff;
+    color: var(--surface);
+    text-decoration: underline;
     font: inherit;
     font-weight: 600;
   }
   button:focus-visible {
-    outline: 3px solid #8fb0ff;
+    outline: 3px solid var(--surface);
   }
 </style>

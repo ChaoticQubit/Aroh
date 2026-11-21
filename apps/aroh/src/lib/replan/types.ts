@@ -36,3 +36,12 @@ export function slotLabel(slot: Slot | null): string {
   const time = (d: Date) => d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   return `${day}, ${time(start)}-${time(end)} (${slot.est_minutes} min)`;
 }
+
+/** One stored replan row as the replan commands return it. */
+export interface StoredReplan {
+  id: string;
+  size: 'small' | 'big';
+  status: 'proposed' | 'applied' | 'rejected' | 'undone';
+  created_at: string;
+  proposal: Proposal;
+}

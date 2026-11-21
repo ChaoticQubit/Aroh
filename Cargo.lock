@@ -55,7 +55,11 @@ dependencies = [
  "aroh-core",
  "aroh-intake",
  "aroh-plugins",
+ "aroh-reminders",
+ "aroh-replan",
+ "aroh-sync",
  "chrono",
+ "chrono-tz",
  "rusqlite",
  "serde",
  "serde_json",
@@ -63,6 +67,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-aroh-speech",
  "tauri-plugin-notification",
+ "time",
+ "uuid",
 ]
 
 [[package]]
@@ -89,6 +95,7 @@ dependencies = [
  "keyring",
  "rusqlite",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
  "uuid",
 ]
@@ -127,6 +134,7 @@ name = "aroh-replan"
 version = "0.1.0"
 dependencies = [
  "aroh-agents",
+ "aroh-core",
  "chrono",
  "serde",
  "serde_json",
@@ -137,6 +145,7 @@ dependencies = [
 name = "aroh-sync"
 version = "0.1.0"
 dependencies = [
+ "aroh-core",
  "keyring",
  "reqwest 0.12.28",
  "rusqlite",

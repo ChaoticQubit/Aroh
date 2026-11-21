@@ -1,4 +1,5 @@
-use crate::model::{Availability, Goal};
+use crate::model::Availability;
+use crate::parsed::PGoal;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 
 /// A half-open UTC interval [start, end).
@@ -16,7 +17,7 @@ fn local_midnight(date: NaiveDate, availability: &Availability) -> DateTime<Utc>
 }
 
 /// First instant after the goal's target date ends, in UTC.
-pub(crate) fn deadline(goal: &Goal, availability: &Availability) -> DateTime<Utc> {
+pub(crate) fn deadline(goal: &PGoal, availability: &Availability) -> DateTime<Utc> {
     local_midnight(goal.target_date + Duration::days(1), availability)
 }
 

@@ -1,4 +1,5 @@
-use crate::model::{Action, ActionStatus, DiffOp, Op, PlanInput, Slot, Violation};
+use crate::model::{ActionStatus, DiffOp, Op, PlanInput, Violation};
+use crate::parsed::{self, parse_slot, PAction};
 use crate::time::{deadline, inside_window};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -8,9 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Returns every violation found, or Ok when there are none.
 pub fn validate(input: &PlanInput, diff: &[DiffOp]) -> Result<(), Vec<Violation>> {
     let mut violations = Vec::new();
-    let actions: BTreeMap<&str, &Action> =
-        input.actions.iter().filter(|a| !a.deleted).map(|a| (a.id.as_str(), a)).collect();
-    let goals: BTreeMap<&str, _> = input.goals.iter().filter(|g| !g.deleted).map(|g| (g.id.as_str(), g)).collect();
+    let current = parsed::actions(&input.actions);
+    let actions: BTreeMap<&str, &PAction> = current.iter().map(|a| (a.id.as_str(), a)).collect();
+    let goals: BTreeMap<String, _> = parsed::goals(&input.goals).into_iter().map(|g| (g.id.clone(), g)).collect();
     let missed: BTreeSet<&str> = input.missed_ids.iter().map(String::as_str).collect();
     let mut seen = BTreeSet::new();
 
@@ -21,12 +22,17 @@ pub fn validate(input: &PlanInput, diff: &[DiffOp]) -> Result<(), Vec<Violation>
         }
         let shape_ok = match op.op {
             Op::Create => op.before.is_none() && op.after.is_some() && op.goal_id.is_some(),
-            Op::Move => op.before.is_some() && op.after.is_some() && op.before.map(|s| s.est_minutes) == op.after.map(|s| s.est_minutes),
+            Op::Move => {
+                op.before.is_some()
+                    && op.after.is_some()
+                    && op.before.as_ref().map(|s| s.est_minutes) == op.after.as_ref().map(|s| s.est_minutes)
+            }
             Op::Resize => op.before.is_some() && op.after.is_some(),
             Op::Delete => op.before.is_some() && op.after.is_none(),
         };
-        let end_ok = op.after.map_or(true, |s| s.start_at < s.end_at && s.est_minutes >= 0);
-        if !shape_ok || !end_ok || missed.contains(op.action_id.as_str()) {
+        let after = op.after.as_ref().map(|s| (parse_slot(s), s.est_minutes));
+        let after_ok = after.map_or(true, |(times, est)| times.is_some() && est >= 0);
+        if !shape_ok || !after_ok || missed.contains(op.action_id.as_str()) {
             violations.push(Violation::BadShape { action_id: id.clone() });
             continue;
         }
@@ -41,25 +47,25 @@ pub fn validate(input: &PlanInput, diff: &[DiffOp]) -> Result<(), Vec<Violation>
                 continue;
             }
             (_, Some(current)) => {
-                let slot = Slot { start_at: current.start_at, end_at: current.end_at, est_minutes: current.est_minutes };
-                if op.before != Some(slot) {
+                let before = op.before.as_ref().expect("shape checked");
+                if parse_slot(before) != Some((current.start_at, current.end_at)) || before.est_minutes != current.est_minutes {
                     violations.push(Violation::BeforeMismatch { action_id: id.clone() });
                 }
                 current.goal_id.clone()
             }
         };
-        let Some(goal) = goals.get(goal_id.as_str()) else {
+        let Some(goal) = goals.get(&goal_id) else {
             violations.push(Violation::UnknownGoal { action_id: id.clone() });
             continue;
         };
-        if let Some(after) = op.after {
-            if after.start_at < input.now {
+        if let Some((Some((start, end)), _)) = after {
+            if start < input.now {
                 violations.push(Violation::InPast { action_id: id.clone() });
             }
-            if !inside_window(after.start_at, after.end_at, &input.availability) {
+            if !inside_window(start, end, &input.availability) {
                 violations.push(Violation::OutsideWindow { action_id: id.clone() });
             }
-            if after.end_at > deadline(goal, &input.availability) {
+            if end > deadline(goal, &input.availability) {
                 violations.push(Violation::AfterDeadline { action_id: id.clone() });
             }
         }
@@ -78,10 +84,10 @@ pub fn validate(input: &PlanInput, diff: &[DiffOp]) -> Result<(), Vec<Violation>
 /// at least one side was placed by the diff.
 fn overlaps(input: &PlanInput, diff: &[DiffOp], missed: &BTreeSet<&str>) -> Vec<Violation> {
     let touched: BTreeSet<&str> = diff.iter().filter(|d| d.after.is_some()).map(|d| d.action_id.as_str()).collect();
-    let applied = crate::apply(&input.actions, diff);
-    let live: Vec<&Action> = applied
+    let applied = parsed::actions(&crate::apply(&input.actions, diff));
+    let live: Vec<&PAction> = applied
         .iter()
-        .filter(|a| a.status == ActionStatus::Planned && !a.deleted && !missed.contains(a.id.as_str()))
+        .filter(|a| a.status == ActionStatus::Planned && !missed.contains(a.id.as_str()))
         .collect();
     let mut found = Vec::new();
     for a in live.iter().filter(|a| touched.contains(a.id.as_str())) {

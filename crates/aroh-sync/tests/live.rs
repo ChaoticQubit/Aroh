@@ -1,7 +1,6 @@
 use aroh_sync::auth::password_session;
 use aroh_sync::config::{validate_url, Config};
 use aroh_sync::remote::sync_all;
-use aroh_sync::store::TABLES;
 use aroh_sync::remote::Moved;
 use rusqlite::{Connection, OptionalExtension};
 
@@ -19,21 +18,11 @@ fn now_millis() -> u64 {
 }
 
 fn hlc(millis: u64, node: u64) -> String {
-    format!("{millis:013}-0000-{node:016x}")
+    aroh_core::hlc::Hlc::with_wall_clock(format!("{node:016x}"), millis).tick()
 }
 
 fn device() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    for table in &TABLES {
-        let sql = format!(
-            "CREATE TABLE {} ({}, PRIMARY KEY ({}))",
-            table.name,
-            table.columns.join(", "),
-            table.pk
-        );
-        conn.execute_batch(&sql).unwrap();
-    }
-    conn
+    aroh_core::db::open_in_memory().unwrap()
 }
 
 fn goal(conn: &Connection, id: &str) -> Option<(String, i64, String)> {
@@ -67,12 +56,12 @@ async fn two_devices_converge_through_supabase() {
     let t1 = hlc(run, node_a);
 
     a.execute(
-        "INSERT INTO goals (id, title, kind, status, created_at, updated_at, deleted) VALUES (?1, 'Live goal', 'custom', 'active', '2026-11-20T00:00:00Z', ?2, 0)",
+        "INSERT INTO goals (id, title, kind, target_date, status, created_at, updated_at, deleted) VALUES (?1, 'Live goal', 'custom', '2026-12-31', 'active', '2026-11-20T00:00:00Z', ?2, 0)",
         [&goal_id, &t1],
     )
     .unwrap();
     a.execute(
-        "INSERT INTO actions (id, goal_id, title, status, est_minutes, seq, updated_at, deleted) VALUES (?1, ?2, 'Read chapter 1', 'planned', 30, 1, ?3, 0)",
+        "INSERT INTO actions (id, goal_id, title, start_at, end_at, status, est_minutes, seq, updated_at, deleted) VALUES (?1, ?2, 'Read chapter 1', '2026-11-21T09:00:00Z', '2026-11-21T09:30:00Z', 'planned', 30, 1, ?3, 0)",
         [&action_id, &goal_id, &t1],
     )
     .unwrap();

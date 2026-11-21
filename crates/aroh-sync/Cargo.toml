@@ -1,15 +1,16 @@
 [package]
 name = "aroh-sync"
-version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
 publish = false
 
 [dependencies]
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-tokio = { version = "1", features = ["rt", "macros"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
-keyring = { version = "3", features = ["apple-native", "linux-native"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-thiserror = "2"
-
+reqwest.workspace = true
+tokio.workspace = true
+rusqlite.workspace = true
+keyring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+aroh-core.workspace = true

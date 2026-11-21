@@ -83,11 +83,8 @@
 		color: var(--cal-muted);
 	}
 	.row.missed {
-		background: repeating-linear-gradient(
-			135deg,
-			color-mix(in srgb, var(--hue) var(--tint), var(--cal-raised)) 0 6px,
-			var(--cal-raised) 6px 12px
-		);
+		background: color-mix(in srgb, var(--cal-muted) 14%, var(--cal-raised));
+		border-left-color: var(--cal-muted);
 	}
 	.body {
 		flex: 1;

@@ -34,6 +34,7 @@
 	<span class="title">
 		{#if action.status === 'done'}<span aria-hidden="true">✓ </span>{/if}{action.title}
 	</span>
+	{#if action.status === 'missed'}<span class="missed-label">Missed</span>{/if}
 	{#if !compact}<span class="time num">{formatRange(action.start_at, action.end_at)}</span>{/if}
 </button>
 
@@ -87,11 +88,14 @@
 		text-decoration: line-through;
 	}
 	.block.missed {
-		background: repeating-linear-gradient(
-			135deg,
-			color-mix(in srgb, var(--hue) 22%, var(--cal-raised)) 0 5px,
-			var(--cal-raised) 5px 10px
-		);
+		background: color-mix(in srgb, var(--cal-muted) 14%, var(--cal-raised));
+		border-color: color-mix(in srgb, var(--cal-muted) 40%, var(--cal-raised));
+		border-left-color: var(--cal-muted);
+	}
+	.missed-label {
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--cal-muted);
 	}
 	.title {
 		font-weight: 600;

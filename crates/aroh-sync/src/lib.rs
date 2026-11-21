@@ -58,7 +58,7 @@ impl Drop for SyncGuard {
 }
 
 /// What one `sync_now` call did. `at` is unix milliseconds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct SyncReport {
     pub pushed: usize,
     pub pulled: usize,
@@ -66,7 +66,7 @@ pub struct SyncReport {
 }
 
 /// Sync state for the settings screen.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SyncStatus {
     pub signed_in: bool,
     pub email: Option<String>,

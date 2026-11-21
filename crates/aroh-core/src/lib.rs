@@ -21,6 +21,8 @@ pub enum Error {
     SchemaTooNew(i64),
     #[error("keychain: {0}")]
     Keychain(String),
+    #[error("invalid state: {0}")]
+    InvalidState(String),
 }
 
 /// Result alias for aroh-core.
