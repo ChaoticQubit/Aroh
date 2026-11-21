@@ -86,7 +86,7 @@ pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; backgr
       <h1>Aroh Architecture</h1>
       <div class="meta">
         <span>Status: <span class="pill proposed">Proposed</span></span>
-        <span>Version 0.7, 2026-11-21</span>
+        <span>Version 0.8, 2026-11-21</span>
         <span>Branch <code>docs/engine-architecture</code></span>
         <span>Source of decisions: <code>docs/agent-decisions.md</code></span>
       </div>
@@ -669,9 +669,9 @@ supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
           <tr><td><code>troupekit-providers</code> (4 protocols, catalog)</td><td>1</td><td><span class="pill built">Built</span></td><td>63 tests; non-Anthropic prices unverified</td></tr>
           <tr><td><code>troupekit-tools</code> (fetch, search with 2 adapters)</td><td>1</td><td><span class="pill built">Built</span></td><td>308a275, 57 tests; MCP client is follow-up</td></tr>
           <tr><td><code>troupekit-context</code> (memory, RAG on pgvector)</td><td>1</td><td><span class="pill built">Built</span></td><td>b3ebe78, 43 tests; pgvector store lands with aroh-server</td></tr>
-          <tr><td><code>troupekit-agent</code> (persona TOML, evals, budgets)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
-          <tr><td><code>troupekit-graph</code> (durable runs)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
-          <tr><td><code>troupekit-host</code> step mode on Vercel</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
+          <tr><td><code>troupekit-agent</code> (persona TOML, evals, budgets)</td><td>1</td><td><span class="pill built">Built</span></td><td>e05093b, 44 tests; one shared Transport</td></tr>
+          <tr><td><code>troupekit-graph</code> (durable runs)</td><td>1</td><td><span class="pill building">Building</span></td><td></td></tr>
+          <tr><td><code>troupekit-host</code> step mode on Vercel</td><td>1</td><td><span class="pill building">Building</span></td><td></td></tr>
           <tr><td>Aroh domain, store, sync</td><td>1</td><td><span class="pill built">Built</span></td><td>67aca37, RLS on 25 tables proven; network adapter lands in pod 10</td></tr>
           <tr><td>Settings, New Goal chat, Goals, Today, Calendar, Inbox</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td>six-pack goal end to end</td></tr>
           <tr><td>Apple Health, calendar triage, push</td><td>2</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
@@ -684,6 +684,7 @@ supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
       <table>
         <thead><tr><th>Date</th><th>Version</th><th>Change</th></tr></thead>
         <tbody>
+          <tr><td>2026-11-21</td><td>0.8</td><td>troupekit-agent merged. Graph and host pod started.</td></tr>
           <tr><td>2026-11-21</td><td>0.7</td><td>troupekit-providers merged. Mockup round 3: functional color.</td></tr>
           <tr><td>2026-11-21</td><td>0.6</td><td>aroh-domain and aroh-store merged with the rebuild Supabase schema.</td></tr>
           <tr><td>2026-11-21</td><td>0.5</td><td>troupekit-tools merged. Mockup round 2 in progress: monochrome direction.</td></tr>
