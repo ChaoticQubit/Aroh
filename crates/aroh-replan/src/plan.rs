@@ -36,7 +36,7 @@ impl Ctx<'_> {
     }
 }
 
-/// Spreads each goal's missed minutes over its remaining days and returns
+/// Moves each goal's missed minutes to its earliest free days and returns
 /// the diff plus minutes that fit nowhere. Created actions get fresh uuid v7
 /// ids; everything else is deterministic. Output always passes validate().
 pub fn plan(input: &PlanInput) -> Proposal {
@@ -78,7 +78,7 @@ fn place_goal(ctx: &Ctx, current: &mut Vec<PAction>, goal: &PGoal, minutes: i64)
         .take_while(|d| *d <= goal.target_date)
         .collect();
     let caps: Vec<i64> = days.iter().map(|d| capacity(ctx, current, *d, goal, minutes)).collect();
-    let alloc = water_fill(minutes, &caps);
+    let alloc = front_fill(minutes, &caps);
     for (day, extra) in days.iter().zip(&alloc) {
         if *extra > 0 {
             let layout = layout(ctx, current, *day, goal, *extra).expect("allocation within capacity");
@@ -105,29 +105,29 @@ fn capacity(ctx: &Ctx, current: &[PAction], day: NaiveDate, goal: &PGoal, limit:
     lo
 }
 
-/// Splits `total` as evenly as the per-day caps allow; earlier days take
-/// the remainder. The result never exceeds a cap or the total.
-fn water_fill(total: i64, caps: &[i64]) -> Vec<i64> {
+/// Shortest piece of missed work placed on one day, unless the whole remainder is shorter.
+const CHUNK_MIN: i64 = 25;
+
+/// Fills the earliest days first: each day takes as much of the remainder
+/// as its cap allows, so the work stays whole when it fits. No piece is
+/// shorter than CHUNK_MIN, and no piece leaves a remainder shorter than it.
+fn front_fill(total: i64, caps: &[i64]) -> Vec<i64> {
     let mut alloc = vec![0; caps.len()];
-    let mut open: Vec<usize> = (0..caps.len()).filter(|i| caps[*i] > 0).collect();
     let mut remaining = total;
-    while remaining > 0 && !open.is_empty() {
-        let count = open.len() as i64;
-        let share = |j: usize| remaining / count + i64::from((j as i64) < remaining % count);
-        let full: Vec<usize> = open.iter().enumerate().filter(|(j, i)| share(*j) >= caps[**i]).map(|(_, i)| *i).collect();
-        if full.is_empty() {
-            for (j, i) in open.iter().enumerate() {
-                alloc[*i] = share(j);
-            }
-            remaining = 0;
-        } else {
-            for i in &full {
-                alloc[*i] = caps[*i];
-                remaining -= caps[*i];
-            }
-            open.retain(|i| !full.contains(i));
+    for (slot, cap) in alloc.iter_mut().zip(caps) {
+        if remaining <= 0 {
+            break;
+        }
+        let mut take = remaining.min(*cap);
+        if take < remaining && remaining - take < CHUNK_MIN {
+            take = remaining - CHUNK_MIN;
+        }
+        if take >= CHUNK_MIN.min(remaining) && take > 0 {
+            *slot = take;
+            remaining -= take;
         }
     }
+    assert!(alloc.iter().all(|a| *a == 0 || *a >= CHUNK_MIN.min(total)));
     assert!(alloc.iter().sum::<i64>() <= total);
     alloc
 }

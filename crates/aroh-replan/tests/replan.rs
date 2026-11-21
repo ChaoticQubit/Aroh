@@ -93,16 +93,31 @@ fn overlaps(actions: &[Action]) -> Vec<(String, String)> {
 }
 
 #[test]
-fn spreads_missed_minutes_evenly_over_remaining_days() {
-    let input = week_input();
+fn keeps_missed_45_minutes_whole_on_the_next_free_day() {
+    let mut input = week_input();
+    input.actions[0] = action("missed", "a", "2026-11-22T09:00:00Z", "2026-11-22T09:45:00Z", ActionStatus::Missed);
     let proposal = plan(&input);
     assert!(proposal.infeasible.is_empty());
-    assert_eq!(proposal.diff.len(), 5);
-    for op in &proposal.diff {
-        assert_eq!(op.op, Op::Resize);
-        assert_ne!(op.action_id, "missed");
-        assert_eq!(op.after.as_ref().unwrap().est_minutes, 72);
-    }
+    assert_eq!(proposal.diff.len(), 1);
+    let op = &proposal.diff[0];
+    assert_eq!(op.op, Op::Resize);
+    assert_eq!(op.action_id, "a23");
+    assert_eq!(op.after.as_ref().unwrap().est_minutes, 105);
+    assert!(validate(&input, &proposal.diff).is_ok());
+}
+
+#[test]
+fn spills_to_later_days_only_in_chunks_of_at_least_25_minutes() {
+    let mut input = week_input();
+    input.availability = every_day("09:00", "10:30");
+    let proposal = plan(&input);
+    assert!(proposal.infeasible.is_empty());
+    let grown: Vec<(&str, i64)> = proposal
+        .diff
+        .iter()
+        .map(|op| (op.action_id.as_str(), op.after.as_ref().unwrap().est_minutes - op.before.as_ref().unwrap().est_minutes))
+        .collect();
+    assert_eq!(grown, vec![("a23", 30), ("a24", 30)]);
     assert!(validate(&input, &proposal.diff).is_ok());
 }
 
