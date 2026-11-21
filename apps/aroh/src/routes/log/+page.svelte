@@ -1,11 +1,11 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import { page } from '$app/state';
-  import LogScreen from '../../lib/log/LogScreen.svelte';
-  import { intake } from '../../lib/log/api';
-  import type { KindTotal, TrackerEntry } from '../../lib/log/types';
-  import Slot from '../../lib/plugins/Slot.svelte';
-  import type { QueryData, RenderModel } from '../../lib/plugins/types';
+  import LogScreen from '$lib/log/LogScreen.svelte';
+  import { intake } from '$lib/log/api';
+  import type { KindTotal, TrackerEntry } from '$lib/log/types';
+  import Slot from '$lib/plugins/Slot.svelte';
+  import type { QueryData, RenderModel } from '$lib/plugins/types';
 
   let entries = $state<TrackerEntry[]>([]);
   let totals = $state<KindTotal[]>([]);

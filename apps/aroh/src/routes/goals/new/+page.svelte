@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import '../../../lib/calendar/calendar.css';
+	import '$lib/calendar/calendar.css';
 	import {
 		analyzeGoal,
 		approvePlan,
@@ -13,8 +13,8 @@
 		type Analysis,
 		type Goal,
 		type PlanView
-	} from '../../../lib/goals/api';
-	import { formatDayTitle, formatRange } from '../../../lib/calendar/time';
+	} from '$lib/goals/api';
+	import { formatDayTitle, formatRange } from '$lib/calendar/time';
 
 	type Step = 'course' | 'reading' | 'questions' | 'planning' | 'plan';
 

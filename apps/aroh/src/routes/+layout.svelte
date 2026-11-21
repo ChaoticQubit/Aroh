@@ -3,8 +3,8 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import type { Snippet } from 'svelte';
-	import { onNotificationRoute } from '../lib/log/api';
-	import ReplanWatcher from '../lib/replan/ReplanWatcher.svelte';
+	import { onNotificationRoute } from '$lib/log/api';
+	import ReplanWatcher from '$lib/replan/ReplanWatcher.svelte';
 
 	let { children }: { children: Snippet } = $props();
 

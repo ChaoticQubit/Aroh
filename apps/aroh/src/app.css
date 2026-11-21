@@ -16,6 +16,7 @@
 	--space-5: 40px;
 	--sidebar: 220px;
 	--tabbar: 56px;
+	--aroh-ground: var(--surface);
 	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 	font-variant-numeric: tabular-nums;
 	color: var(--ink);

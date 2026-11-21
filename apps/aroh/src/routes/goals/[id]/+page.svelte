@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import '../../../lib/calendar/calendar.css';
-	import ProgressBar from '../../../lib/plugins/ProgressBar.svelte';
-	import PluginSlot from '../../../lib/plugins/PluginSlot.svelte';
-	import { byDay, errorText, formatMinutes, goalDetail, type Action, type GoalDetail } from '../../../lib/goals/api';
-	import { formatDayTitle, formatRange } from '../../../lib/calendar/time';
+	import '$lib/calendar/calendar.css';
+	import ProgressBar from '$lib/plugins/ProgressBar.svelte';
+	import PluginSlot from '$lib/plugins/PluginSlot.svelte';
+	import { byDay, errorText, formatMinutes, goalDetail, type Action, type GoalDetail } from '$lib/goals/api';
+	import { formatDayTitle, formatRange } from '$lib/calendar/time';
 
 	const STATUS_TEXT: Record<Action['status'], string> = {
 		planned: 'Planned',

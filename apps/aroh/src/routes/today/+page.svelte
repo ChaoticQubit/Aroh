@@ -2,9 +2,9 @@
 	import { page } from '$app/state';
 	import { invoke } from '@tauri-apps/api/core';
 	import { emit } from '@tauri-apps/api/event';
-	import TodayView from '../../lib/calendar/TodayView.svelte';
-	import PluginSlot from '../../lib/plugins/PluginSlot.svelte';
-	import FirstRun from '../../lib/firstrun/FirstRun.svelte';
+	import TodayView from '$lib/calendar/TodayView.svelte';
+	import PluginSlot from '$lib/plugins/PluginSlot.svelte';
+	import FirstRun from '$lib/firstrun/FirstRun.svelte';
 
 	const focusActionId = $derived(page.url.searchParams.get('action'));
 	const dev = import.meta.env.DEV;

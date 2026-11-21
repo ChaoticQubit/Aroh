@@ -1,8 +1,8 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import ReplanReview from '../../lib/replan/ReplanReview.svelte';
-  import { applyReplan, listProposed, rejectReplan } from '../../lib/replan/api';
-  import type { StoredReplan } from '../../lib/replan/types';
+  import ReplanReview from '$lib/replan/ReplanReview.svelte';
+  import { applyReplan, listProposed, rejectReplan } from '$lib/replan/api';
+  import type { StoredReplan } from '$lib/replan/types';
 
   interface Named {
     id: string;

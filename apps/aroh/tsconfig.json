@@ -4,6 +4,10 @@
 	"exclude": ["src/service-worker"],
 	"compilerOptions": {
 		"strict": true,
-		"skipLibCheck": true
+		"skipLibCheck": true,
+		"paths": {
+			"$lib": ["./src/lib"],
+			"$lib/*": ["./src/lib/*"]
+		}
 	}
 }

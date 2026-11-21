@@ -31,11 +31,13 @@
 	onclick={() => onopen(action)}
 	aria-label="{action.title}, {formatRange(action.start_at, action.end_at)}, {action.status}"
 >
-	<span class="title">
-		{#if action.status === 'done'}<span aria-hidden="true">✓ </span>{/if}{action.title}
+	<span class="body">
+		<span class="title">
+			{#if action.status === 'done'}<span aria-hidden="true">✓ </span>{/if}{action.title}
+		</span>
+		{#if action.status === 'missed'}<span class="missed-label">Missed</span>{/if}
+		{#if !compact}<span class="time num">{formatRange(action.start_at, action.end_at)}</span>{/if}
 	</span>
-	{#if action.status === 'missed'}<span class="missed-label">Missed</span>{/if}
-	{#if !compact}<span class="time num">{formatRange(action.start_at, action.end_at)}</span>{/if}
 </button>
 
 <style>
@@ -63,6 +65,20 @@
 		align-items: center;
 		padding-block: 0 2px;
 		overflow: visible;
+	}
+	.body {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 2px;
+		width: 100%;
+		height: 100%;
+		min-height: 0;
+		overflow: hidden;
+	}
+	.block.compact .body {
+		flex-direction: row;
+		align-items: center;
 	}
 	.block.compact::after {
 		content: '';
@@ -107,6 +123,10 @@
 	.time {
 		color: var(--cal-muted);
 		font-size: 12px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 100%;
 	}
 	.block:focus-visible {
 		outline: 2px solid var(--cal-accent);
