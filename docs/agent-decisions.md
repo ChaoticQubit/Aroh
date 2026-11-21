@@ -58,6 +58,12 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 | Q39 | Project workflow | Owner rule for this project: every ticket starts with a mockup written in real Svelte code. Owner reviews and iterates, then approves. Approved mockup code is ported into the app, not rewritten. Tests run in containers (Kiri). One pod per feature: PM plans and asks the owner, one engineer sub-agent writes tests, code and does the testing, pushes to its own branch, reports done. The leader takes a quick look and merges. No CodeRabbit, security or code reviews on this project; this overrides global gate 6 here. |
 | Q40 | First slice | Framework spine (4 provider protocols plus catalog, fetch and search trait with 2 adapters, durable graph with checkpoints, persona TOML loader, memory and RAG on pgvector, step mode on Vercel) plus app (tokens and gallery for the four component families, Settings for provider, model and key, New Goal chat, Goals, Today, Calendar, Inbox), proved end to end on one fitness goal ("six pack by Feb 1") with check-ins and adaptation. Health, calendar triage, push and other categories follow. |
 
+| Q41 | Visual direction | Simple, professional, enterprise grade, intuitive. Calendar-first layout in the style of a plain web calendar, with cards layered on top. Neutral palette, one accent, no flair. |
+| Q42 | Code shape | Simple modules. One copy of every function: shared logic lives in one common module (`fw-core`, `aroh-domain`, `apps/aroh/src/lib/ui`) and is imported, never duplicated. ponytail, software-practices and tiger-style still apply. |
+| Q43 | Mockup review | Mockups are shown to the owner as an artifact; the owner approves before implementation. |
+| Q44 | Live architecture | `docs/architecture.html`, published at https://claude.ai/artifact/2GvdWKx4cyoC3WmqY8emDU, updated as pods land (build status table and change log). |
+| Q45 | Android and web | Deferred, timing decided at implementation. |
+
 ### Rejected alternatives
 
 - Device-only or server-only engine (Q1).
@@ -87,7 +93,5 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 
 ### Unresolved
 
-- Framework name.
-- Visual design direction (decided through mockups per Q39).
-- Android and web timing.
+- Framework name: candidates Dramaturg, Prosopon, Maskwork (crates.io free on 2026-11-21); owner to pick.
 - `docs/decisions.md` still holds the MVP contract and must be rewritten to match this record.
