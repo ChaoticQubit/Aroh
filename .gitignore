@@ -54,3 +54,4 @@ yarn-error.log*
 *.tsbuildinfo
 .svelte-kit/
 .local-state/
+.claude/worktrees/

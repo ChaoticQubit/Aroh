@@ -86,7 +86,7 @@ pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; backgr
       <h1>Aroh Architecture</h1>
       <div class="meta">
         <span>Status: <span class="pill proposed">Proposed</span></span>
-        <span>Version 0.2, 2026-11-21</span>
+        <span>Version 0.3, 2026-11-21</span>
         <span>Branch <code>docs/engine-architecture</code></span>
         <span>Source of decisions: <code>docs/agent-decisions.md</code></span>
       </div>
@@ -664,8 +664,8 @@ supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
       <table>
         <thead><tr><th>Part</th><th>Slice</th><th>Status</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td>Design tokens and component gallery</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td>mockup first, simple calendar-style look</td></tr>
-          <tr><td><code>troupekit-core</code></td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
+          <tr><td>Design tokens and component gallery</td><td>1</td><td><span class="pill building">Building</span></td><td>mockup first, simple calendar-style look</td></tr>
+          <tr><td><code>troupekit-core</code></td><td>1</td><td><span class="pill built">Built</span></td><td>0cbe06e, 18 tests, boundary check</td></tr>
           <tr><td><code>troupekit-providers</code> (4 protocols, catalog)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
           <tr><td><code>troupekit-tools</code> (fetch, search with 2 adapters)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td>SSRF guard salvaged from MVP</td></tr>
           <tr><td><code>troupekit-context</code> (memory, RAG on pgvector)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
@@ -684,6 +684,7 @@ supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
       <table>
         <thead><tr><th>Date</th><th>Version</th><th>Change</th></tr></thead>
         <tbody>
+          <tr><td>2026-11-21</td><td>0.3</td><td>troupekit-core merged. Design pod building.</td></tr>
           <tr><td>2026-11-21</td><td>0.2</td><td>Framework named Troupekit.</td></tr>
           <tr><td>2026-11-21</td><td>0.1</td><td>First proposal from the grill session (Q1 to Q40).</td></tr>
         </tbody>
