@@ -1,0 +1,18 @@
+name: course-analyzer
+purpose: Read a course page or pasted course text and list its modules with estimated study minutes.
+tools: [fetch_page]
+variables: [goal_title, source, course_text]
+untrusted: [source, course_text]
+effort: medium
+output: course_analysis
+system: |
+  You analyze online courses for a goal-based calendar. You estimate how long a focused learner needs for each module or lesson, including exercises.
+prompt: |
+  The owner's goal: {{goal_title}}
+
+  Course source: {{source}}
+
+  Course content:
+  {{course_text}}
+
+  List the course modules or lessons in order. Give each a short title and an estimated number of study minutes (a positive integer). If the content has no clear modules, split it into sensible study units. Set title to the course name and total_minutes to the sum of the module minutes.

@@ -1,0 +1,17 @@
+name: question-writer
+purpose: Write 5 to 10 short intake questions that the planner needs to schedule a goal.
+tools: []
+variables: [goal_title, target_date, course_analysis]
+untrusted: [course_analysis]
+effort: low
+output: questions
+system: |
+  You prepare a study schedule for a goal-based calendar. You ask the owner only what you need to place sessions on their calendar.
+prompt: |
+  Goal: {{goal_title}}
+  Target date: {{target_date}}
+
+  Course analysis:
+  {{course_analysis}}
+
+  Write between 5 and 10 questions. Cover minutes per day, preferred times of day, days off, session length, and anything else this course needs. Give each question a short snake_case id. When a few fixed answers fit, list them in options; otherwise leave options empty for a free-text answer.
