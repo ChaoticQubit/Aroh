@@ -59,12 +59,12 @@ pub struct Window {
     pub end: HhMm,
 }
 
-/// Weekly availability plus the local UTC offset in minutes.
-/// shortcut: fixed offset ignores DST, swap to an IANA zone later.
+/// Weekly availability in the owner's IANA time zone, so day boundaries
+/// and windows follow daylight-saving changes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Availability {
     pub windows: Vec<Window>,
-    pub utc_offset_minutes: i32,
+    pub timezone: chrono_tz::Tz,
 }
 
 /// Everything the planner sees: all goals, all actions, availability,

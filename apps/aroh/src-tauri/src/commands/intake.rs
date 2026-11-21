@@ -6,11 +6,12 @@ use std::collections::HashMap;
 use aroh_core::keychain;
 use aroh_core::models::TrackerEntry;
 use aroh_intake::KindTotal;
-use chrono::{FixedOffset, Utc};
+use chrono::{FixedOffset, TimeZone, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime, State};
 
+use super::replan::owner_timezone;
 use super::with_core;
 use crate::{AppState, Core};
 
@@ -53,7 +54,7 @@ fn insert_entries(core: &mut Core, entries: Vec<TrackerEntry>) -> aroh_core::Res
     Ok(saved)
 }
 
-fn entries_today(conn: &Connection, tz: FixedOffset) -> aroh_core::Result<Vec<TrackerEntry>> {
+fn entries_today<Z: TimeZone>(conn: &Connection, tz: Z) -> aroh_core::Result<Vec<TrackerEntry>> {
     let day = Utc::now().with_timezone(&tz).date_naive();
     let (start, end) = aroh_intake::local_day_bounds(day, tz);
     let mut stmt = conn.prepare(&format!(
@@ -91,9 +92,18 @@ fn set_setting(core: &mut Core, key: &str, value: &str) -> aroh_core::Result<()>
     Ok(())
 }
 
-fn totals(core: &Core, tz: FixedOffset) -> aroh_core::Result<Vec<KindTotal>> {
+fn totals<Z: TimeZone>(core: &Core, tz: Z) -> aroh_core::Result<Vec<KindTotal>> {
     let day = Utc::now().with_timezone(&tz).date_naive();
-    Ok(aroh_intake::daily_totals(&entries_today(&core.conn, tz)?, day, tz, &settings(&core.conn)?))
+    Ok(aroh_intake::daily_totals(&entries_today(&core.conn, tz.clone())?, day, tz, &settings(&core.conn)?))
+}
+
+/// Today's totals in the `timezone` setting's IANA zone, or at the device
+/// offset `fallback` when the setting is missing.
+fn zoned_totals(core: &Core, fallback: FixedOffset) -> aroh_core::Result<Vec<KindTotal>> {
+    match owner_timezone(&core.conn)? {
+        Some(tz) => totals(core, tz),
+        None => totals(core, fallback),
+    }
 }
 
 /// Logs free text: Claude turns it into entries, which are validated before they are saved.
@@ -123,18 +133,22 @@ pub fn intake_log_chip(state: State<'_, AppState>, chip: String) -> Result<Vec<T
     with_core(&state, |c| insert_entries(c, entries))
 }
 
-/// Lists today's live entries, newest first. `offset_minutes` is the device's UTC offset.
+/// Lists today's live entries, newest first. Today is local to the `timezone`
+/// setting; `offset_minutes`, the device's UTC offset, is used when it is missing.
 #[tauri::command]
 pub fn intake_list_today(state: State<'_, AppState>, offset_minutes: i32) -> Result<Vec<TrackerEntry>, String> {
-    let tz = offset(offset_minutes)?;
-    with_core(&state, |c| entries_today(&c.conn, tz))
+    let fallback = offset(offset_minutes)?;
+    with_core(&state, |c| match owner_timezone(&c.conn)? {
+        Some(tz) => entries_today(&c.conn, tz),
+        None => entries_today(&c.conn, fallback),
+    })
 }
 
 /// Today's per-kind totals against the targets in settings.
 #[tauri::command]
 pub fn intake_totals(state: State<'_, AppState>, offset_minutes: i32) -> Result<Vec<KindTotal>, String> {
-    let tz = offset(offset_minutes)?;
-    with_core(&state, |c| totals(c, tz))
+    let fallback = offset(offset_minutes)?;
+    with_core(&state, |c| zoned_totals(c, fallback))
 }
 
 /// Daily targets; a `None` field leaves that target unchanged.
@@ -262,8 +276,8 @@ async fn agent_question(totals: &[KindTotal]) -> Option<String> {
 /// totals when a key is saved; otherwise, or on any failure, a question built without a model.
 #[tauri::command]
 pub async fn intake_checkin_question(state: State<'_, AppState>, offset_minutes: i32) -> Result<String, String> {
-    let tz = offset(offset_minutes)?;
-    let totals = with_core(&state, |c| totals(c, tz))?;
+    let fallback = offset(offset_minutes)?;
+    let totals = with_core(&state, |c| zoned_totals(c, fallback))?;
     match agent_question(&totals).await {
         Some(question) => Ok(question),
         None => Ok(aroh_intake::checkin_question(&totals)),

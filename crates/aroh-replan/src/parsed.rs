@@ -5,7 +5,6 @@ use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
 /// the goal may hold work.
 pub(crate) struct PGoal {
     pub id: String,
-    pub title: String,
     pub target_date: NaiveDate,
 }
 
@@ -47,7 +46,7 @@ pub(crate) fn goals(goals: &[Goal]) -> Vec<PGoal> {
         .filter(|g| !g.deleted)
         .filter_map(|g| {
             let date = NaiveDate::parse_from_str(g.target_date.get(..10)?, "%Y-%m-%d").ok()?;
-            Some(PGoal { id: g.id.clone(), title: g.title.clone(), target_date: date })
+            Some(PGoal { id: g.id.clone(), target_date: date })
         })
         .collect()
 }

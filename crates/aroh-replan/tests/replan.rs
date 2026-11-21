@@ -46,7 +46,7 @@ fn every_day(start: &str, end: &str) -> Availability {
                 end: HhMm::parse(end).unwrap(),
             })
             .collect(),
-        utc_offset_minutes: 0,
+        timezone: chrono_tz::UTC,
     }
 }
 
@@ -279,5 +279,78 @@ fn creates_catch_up_action_with_uuid_v7_id() {
     assert_eq!(op.op, Op::Create);
     assert_eq!(op.after.as_ref().unwrap().start_at, "2026-11-23T09:00:00Z");
     assert_eq!((op.action_id.len(), op.action_id.as_bytes()[14]), (36, b'7'));
+    assert!(validate(&input, &proposal.diff).is_ok());
+}
+
+#[test]
+fn full_tomorrow_takes_the_missed_work_and_shifts_each_later_action_a_day() {
+    let mut input = week_input();
+    input.goals = vec![goal("a", "2026-11-28")];
+    input.availability = every_day("09:00", "10:00");
+    let proposal = plan(&input);
+    assert!(proposal.infeasible.is_empty());
+    let slots: Vec<(Op, &str, &str, i64)> = proposal
+        .diff
+        .iter()
+        .map(|op| {
+            let after = op.after.as_ref().unwrap();
+            (op.op, if op.op == Op::Create { "new" } else { op.action_id.as_str() }, after.start_at.as_str(), after.est_minutes)
+        })
+        .collect();
+    assert_eq!(
+        slots,
+        vec![
+            (Op::Create, "new", "2026-11-23T09:00:00Z", 60),
+            (Op::Move, "a23", "2026-11-24T09:00:00Z", 60),
+            (Op::Move, "a24", "2026-11-25T09:00:00Z", 60),
+            (Op::Move, "a25", "2026-11-26T09:00:00Z", 60),
+            (Op::Move, "a26", "2026-11-27T09:00:00Z", 60),
+            (Op::Move, "a27", "2026-11-28T09:00:00Z", 60),
+        ]
+    );
+    assert_eq!(proposal.diff[0].title.as_deref(), Some("Catch up: missed"));
+    assert_eq!(classify(&proposal.diff), Size::Big);
+    assert!(validate(&input, &proposal.diff).is_ok());
+
+    input.goals = vec![goal("a", "2026-11-27")];
+    let tight = plan(&input);
+    assert!(tight.diff.is_empty());
+    assert_eq!(tight.infeasible, vec![Infeasible { goal_id: "a".into(), unplaced_minutes: 60 }]);
+}
+
+#[test]
+fn tomorrow_holds_missed_plus_part_of_next_and_no_piece_is_under_25_minutes() {
+    let mut input = week_input();
+    input.goals = vec![goal("a", "2026-11-28")];
+    input.availability = every_day("09:00", "10:40");
+    input.actions.push(action("b23", "b", "2026-11-23T10:00:00Z", "2026-11-23T10:40:00Z", ActionStatus::Planned));
+    input.actions.push(action("b24", "b", "2026-11-24T10:00:00Z", "2026-11-24T10:40:00Z", ActionStatus::Planned));
+    input.goals.push(goal("b", "2026-11-28"));
+    let proposal = plan(&input);
+    assert!(proposal.infeasible.is_empty());
+    let applied = apply(&input.actions, &proposal.diff);
+    let live: Vec<Action> = applied.into_iter().filter(|a| a.id != "missed").collect();
+    assert!(overlaps(&live).is_empty());
+    assert!(live.iter().all(|a| a.est_minutes >= 25));
+    let a23 = live.iter().find(|a| a.id == "a23").unwrap();
+    assert_eq!((a23.start_at.as_str(), a23.est_minutes), ("2026-11-24T09:00:00Z", 60));
+    let total: i64 = live.iter().filter(|a| a.goal_id == "a").map(|a| a.est_minutes).sum();
+    assert_eq!(total, 6 * 60);
+    assert!(validate(&input, &proposal.diff).is_ok());
+}
+
+#[test]
+fn day_windows_follow_the_iana_zone_across_a_dst_change() {
+    let input = PlanInput {
+        goals: vec![goal("a", "2026-11-02")],
+        actions: vec![action("missed", "a", "2026-10-31T13:00:00Z", "2026-10-31T13:30:00Z", ActionStatus::Missed)],
+        availability: Availability { timezone: chrono_tz::America::New_York, ..every_day("09:00", "10:00") },
+        now: t("2026-11-01T05:00:00Z"),
+        missed_ids: vec!["missed".into()],
+    };
+    let proposal = plan(&input);
+    assert!(proposal.infeasible.is_empty());
+    assert_eq!(proposal.diff.len(), 1);
+    assert_eq!(proposal.diff[0].after.as_ref().unwrap().start_at, "2026-11-01T14:00:00Z");
     assert!(validate(&input, &proposal.diff).is_ok());
 }

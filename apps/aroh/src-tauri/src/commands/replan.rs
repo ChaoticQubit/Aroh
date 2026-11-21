@@ -8,7 +8,7 @@ use aroh_replan::{
     apply, classify, detect_missed, undo, validate, Availability, ClaudeAgent, DeterministicAgent, HhMm, PlanInput,
     Proposal, ReplanAgent, Size, Window,
 };
-use chrono::{Offset, TimeZone, Utc};
+use chrono::Utc;
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -36,8 +36,15 @@ fn setting(conn: &rusqlite::Connection, key: &str) -> aroh_core::Result<Option<S
     Ok(conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0)).optional()?)
 }
 
+/// The owner's IANA zone from the `timezone` setting, or None when it is
+/// missing or not a known zone name.
+pub(crate) fn owner_timezone(conn: &rusqlite::Connection) -> aroh_core::Result<Option<chrono_tz::Tz>> {
+    Ok(setting(conn, "timezone")?.and_then(|z| z.trim().parse::<chrono_tz::Tz>().ok()))
+}
+
 /// Availability from settings `availability` and `timezone`. Missing or bad
-/// windows fall back to every day 08:00-20:00; a missing zone uses the device offset.
+/// windows fall back to every day 08:00-20:00; a missing zone uses the
+/// device's IANA zone, then UTC.
 fn availability(conn: &rusqlite::Connection) -> aroh_core::Result<Availability> {
     let windows: Vec<Window> = setting(conn, "availability")?
         .and_then(|v| serde_json::from_str(&v).ok())
@@ -46,12 +53,10 @@ fn availability(conn: &rusqlite::Connection) -> aroh_core::Result<Availability> 
             let (start, end) = (HhMm::parse("08:00").expect("valid"), HhMm::parse("20:00").expect("valid"));
             (0..7).map(|weekday| Window { weekday, start, end }).collect()
         });
-    let now = Utc::now().naive_utc();
-    let offset_seconds = match setting(conn, "timezone")?.and_then(|z| z.parse::<chrono_tz::Tz>().ok()) {
-        Some(tz) => tz.offset_from_utc_datetime(&now).fix().local_minus_utc(),
-        None => chrono::Local.offset_from_utc_datetime(&now).local_minus_utc(),
-    };
-    Ok(Availability { windows, utc_offset_minutes: offset_seconds / 60 })
+    let timezone = owner_timezone(conn)?
+        .or_else(|| iana_time_zone::get_timezone().ok()?.parse().ok())
+        .unwrap_or(chrono_tz::UTC);
+    Ok(Availability { windows, timezone })
 }
 
 fn grace_minutes(conn: &rusqlite::Connection) -> aroh_core::Result<i64> {

@@ -7,16 +7,6 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Upper bound on days scanned per goal, so a far target date stays cheap.
 const DAYS_MAX: i64 = 3660;
 
-/// One action placed during a day layout: an index into the working
-/// actions, or None for the catch-up action the layout creates.
-struct Item {
-    index: Option<usize>,
-    lower: DateTime<Utc>,
-    minutes: i64,
-    est_minutes: i64,
-    deadline: DateTime<Utc>,
-}
-
 /// Shared read-only state of one plan() run.
 struct Ctx<'a> {
     input: &'a PlanInput,
@@ -69,7 +59,44 @@ pub fn plan(input: &PlanInput) -> Proposal {
     proposal
 }
 
-/// Places up to `minutes` of a goal's work into `current`; returns minutes placed.
+/// Shortest piece of work placed on one day, unless the whole segment is shorter.
+const CHUNK_MIN: i64 = 25;
+
+/// One run of a goal's work in queue order. `index` is the working index of
+/// a movable planned action, or None for a missed action's minutes.
+struct Segment {
+    index: Option<usize>,
+    title: String,
+    minutes: i64,
+    first_day: Option<NaiveDate>,
+}
+
+/// Part of a segment placed on one day; `first` marks the segment's first piece.
+#[derive(Clone, Copy)]
+struct Piece {
+    segment: usize,
+    minutes: i64,
+    first: bool,
+}
+
+/// Back-to-back pieces laid out as one action. `host` is the segment whose
+/// existing action the block becomes; None means a created action.
+struct Block {
+    host: Option<usize>,
+    pieces: Vec<Piece>,
+}
+
+impl Block {
+    fn minutes(&self) -> i64 {
+        self.pieces.iter().map(|p| p.minutes).sum()
+    }
+}
+
+/// Places up to `minutes` of the goal's missed work and returns minutes placed.
+/// The missed work goes first and the goal's movable actions follow in order,
+/// each day filled as far as it holds, so a full day pushes the goal's later
+/// actions forward a day, up to the deadline. Minutes that do not fit are
+/// cut from the missed work, never from the existing plan.
 fn place_goal(ctx: &Ctx, current: &mut Vec<PAction>, goal: &PGoal, minutes: i64) -> i64 {
     let availability = &ctx.input.availability;
     let first = local_date(ctx.input.now, availability);
@@ -77,26 +104,107 @@ fn place_goal(ctx: &Ctx, current: &mut Vec<PAction>, goal: &PGoal, minutes: i64)
         .map(|n| first + Duration::days(n))
         .take_while(|d| *d <= goal.target_date)
         .collect();
-    let caps: Vec<i64> = days.iter().map(|d| capacity(ctx, current, *d, goal, minutes)).collect();
-    let alloc = front_fill(minutes, &caps);
-    for (day, extra) in days.iter().zip(&alloc) {
-        if *extra > 0 {
-            let layout = layout(ctx, current, *day, goal, *extra).expect("allocation within capacity");
-            commit(current, layout, goal);
+    let mut missed: Vec<&PAction> = current
+        .iter()
+        .filter(|a| a.goal_id == goal.id && ctx.missed.contains(a.id.as_str()) && a.est_minutes > 0)
+        .collect();
+    missed.sort_by(|a, b| (a.start_at, &a.id).cmp(&(b.start_at, &b.id)));
+    let missed: Vec<(String, i64)> = missed.iter().map(|a| (a.title.clone(), a.est_minutes)).collect();
+    assert_eq!(missed.iter().map(|m| m.1).sum::<i64>(), minutes);
+    let mut queued: Vec<usize> = (0..current.len())
+        .filter(|i| {
+            let a = &current[*i];
+            a.goal_id == goal.id
+                && ctx.occupies(a)
+                && a.start_at >= ctx.input.now
+                && a.end_at > a.start_at
+                && inside_window(a.start_at, a.end_at, availability)
+                && days.contains(&local_date(a.start_at, availability))
+        })
+        .collect();
+    queued.sort_by(|a, b| (current[*a].start_at, &current[*a].id).cmp(&(current[*b].start_at, &current[*b].id)));
+    let exclude: BTreeSet<usize> = queued.iter().copied().collect();
+
+    let mut cut = 0;
+    loop {
+        let mut segments: Vec<Segment> = Vec::new();
+        let mut keep = minutes - cut;
+        for (title, est) in &missed {
+            let take = keep.min(*est);
+            keep -= take;
+            if take > 0 {
+                segments.push(Segment { index: None, title: title.clone(), minutes: take, first_day: None });
+            }
         }
+        for index in &queued {
+            let a = &current[*index];
+            let first_day = Some(local_date(a.start_at, availability));
+            segments.push(Segment { index: Some(*index), title: a.title.clone(), minutes: (a.end_at - a.start_at).num_minutes(), first_day });
+        }
+        let (plans, overflow) = fill(ctx, current, goal, &exclude, &segments, &days);
+        if overflow == 0 {
+            for (day, blocks) in plans {
+                commit(ctx, current, goal, &exclude, &segments, day, &blocks);
+            }
+            return minutes - cut;
+        }
+        assert!(overflow > 0);
+        if cut >= minutes {
+            return 0;
+        }
+        cut = (cut + overflow).min(minutes);
     }
-    alloc.iter().sum()
 }
 
-/// Largest extra minutes (at most `limit`) the goal can take on `day`.
-fn capacity(ctx: &Ctx, current: &[PAction], day: NaiveDate, goal: &PGoal, limit: i64) -> i64 {
-    if limit <= 0 || layout(ctx, current, day, goal, 0).is_none() {
+/// Fills days in order from the segment queue. Returns each day's blocks
+/// and the minutes left unplaced after the last day.
+fn fill(ctx: &Ctx, current: &[PAction], goal: &PGoal, exclude: &BTreeSet<usize>, segments: &[Segment], days: &[NaiveDate]) -> (Vec<(NaiveDate, Vec<Block>)>, i64) {
+    let mut remaining: Vec<i64> = segments.iter().map(|s| s.minutes).collect();
+    let mut next = 0;
+    let mut plans = Vec::new();
+    for day in days {
+        if next == segments.len() {
+            break;
+        }
+        let mut pieces: Vec<Piece> = Vec::new();
+        while next < segments.len() && segments[next].first_day.is_none_or(|d| d <= *day) {
+            let rest = remaining[next];
+            let first = rest == segments[next].minutes;
+            let fits = |m: i64| {
+                let mut trial = pieces.clone();
+                trial.push(Piece { segment: next, minutes: m, first });
+                layout(ctx, current, *day, goal, exclude, segments, &blocks_of(segments, &trial)).is_some()
+            };
+            let take = if fits(rest) { rest } else { largest_fit(rest, fits) };
+            if take == 0 {
+                break;
+            }
+            pieces.push(Piece { segment: next, minutes: take, first });
+            remaining[next] -= take;
+            if remaining[next] > 0 {
+                break;
+            }
+            next += 1;
+        }
+        assert!(pieces.iter().all(|p| p.minutes >= CHUNK_MIN.min(segments[p.segment].minutes)));
+        if !pieces.is_empty() {
+            plans.push((*day, blocks_of(segments, &pieces)));
+        }
+    }
+    assert!(remaining.iter().zip(segments).all(|(r, s)| (0..=s.minutes).contains(r)));
+    (plans, remaining.iter().sum())
+}
+
+/// Largest split of `rest` minutes that fits, keeping both parts at least
+/// CHUNK_MIN long; 0 when no such split fits.
+fn largest_fit(rest: i64, fits: impl Fn(i64) -> bool) -> i64 {
+    let (mut lo, mut hi) = (CHUNK_MIN, rest - CHUNK_MIN);
+    if hi < lo || !fits(lo) {
         return 0;
     }
-    let (mut lo, mut hi) = (0, limit);
     while lo < hi {
         let mid = lo + (hi - lo + 1) / 2;
-        if layout(ctx, current, day, goal, mid).is_some() {
+        if fits(mid) {
             lo = mid;
         } else {
             hi = mid - 1;
@@ -105,39 +213,42 @@ fn capacity(ctx: &Ctx, current: &[PAction], day: NaiveDate, goal: &PGoal, limit:
     lo
 }
 
-/// Shortest piece of missed work placed on one day, unless the whole remainder is shorter.
-const CHUNK_MIN: i64 = 25;
-
-/// Fills the earliest days first: each day takes as much of the remainder
-/// as its cap allows, so the work stays whole when it fits. No piece is
-/// shorter than CHUNK_MIN, and no piece leaves a remainder shorter than it.
-fn front_fill(total: i64, caps: &[i64]) -> Vec<i64> {
-    let mut alloc = vec![0; caps.len()];
-    let mut remaining = total;
-    for (slot, cap) in alloc.iter_mut().zip(caps) {
-        if remaining <= 0 {
-            break;
-        }
-        let mut take = remaining.min(*cap);
-        if take < remaining && remaining - take < CHUNK_MIN {
-            take = remaining - CHUNK_MIN;
-        }
-        if take >= CHUNK_MIN.min(remaining) && take > 0 {
-            *slot = take;
-            remaining -= take;
+/// Groups one day's pieces into blocks: each first piece of an existing
+/// action starts its own block, and other pieces join the next block that
+/// day, else the last one, else a created block.
+fn blocks_of(segments: &[Segment], pieces: &[Piece]) -> Vec<Block> {
+    let mut blocks: Vec<Block> = Vec::new();
+    let mut pending: Vec<Piece> = Vec::new();
+    for piece in pieces {
+        pending.push(*piece);
+        if piece.first && segments[piece.segment].index.is_some() {
+            blocks.push(Block { host: Some(piece.segment), pieces: std::mem::take(&mut pending) });
         }
     }
-    assert!(alloc.iter().all(|a| *a == 0 || *a >= CHUNK_MIN.min(total)));
-    assert!(alloc.iter().sum::<i64>() <= total);
-    alloc
+    if !pending.is_empty() {
+        match blocks.last_mut() {
+            Some(last) => last.pieces.extend(pending),
+            None => blocks.push(Block { host: None, pieces: pending }),
+        }
+    }
+    blocks
 }
 
-/// New placement of one item: working index (None for a created action), start, end, estimate.
-type Placed = (Option<usize>, DateTime<Utc>, DateTime<Utc>, i64);
+/// Placement of one other action on the day: working index, start, end.
+type Placed = (usize, DateTime<Utc>, DateTime<Utc>);
 
-/// Lays out `day` with the goal grown by `extra` minutes. Returns a
-/// placement for every item, or None when something does not fit.
-fn layout(ctx: &Ctx, current: &[PAction], day: NaiveDate, goal: &PGoal, extra: i64) -> Option<Vec<Placed>> {
+/// Lays out `day` with the goal's queued actions replaced by `blocks`.
+/// Returns new slots for the day's other movable actions and one span per
+/// block, or None when something does not fit.
+fn layout(
+    ctx: &Ctx,
+    current: &[PAction],
+    day: NaiveDate,
+    goal: &PGoal,
+    exclude: &BTreeSet<usize>,
+    segments: &[Segment],
+    blocks: &[Block],
+) -> Option<(Vec<Placed>, Vec<Span>)> {
     let availability = &ctx.input.availability;
     let now = ctx.input.now;
     let windows: Vec<Span> = day_windows(day, availability)
@@ -145,57 +256,52 @@ fn layout(ctx: &Ctx, current: &[PAction], day: NaiveDate, goal: &PGoal, extra: i
         .filter(|w| w.1 > now)
         .map(|w| (w.0.max(now), w.1))
         .collect();
-    let mut items = Vec::new();
+    let mut items: Vec<(Option<usize>, DateTime<Utc>, i64, DateTime<Utc>)> = Vec::new();
     let mut occupied: Vec<Span> = Vec::new();
     for (index, action) in current.iter().enumerate() {
-        if !ctx.occupies(action) {
+        if !ctx.occupies(action) || exclude.contains(&index) {
             continue;
         }
         let item_deadline = ctx.goal_deadline(&action.goal_id);
         let movable = action.start_at >= now
             && local_date(action.start_at, availability) == day
-            && inside_window(action.start_at, action.end_at, availability)
-            && item_deadline.is_some();
-        if movable {
-            items.push(Item {
-                index: Some(index),
-                lower: action.start_at,
-                minutes: (action.end_at - action.start_at).num_minutes(),
-                est_minutes: action.est_minutes,
-                deadline: item_deadline.expect("checked above"),
-            });
-        } else {
-            occupied.push((action.start_at, action.end_at));
+            && inside_window(action.start_at, action.end_at, availability);
+        match item_deadline {
+            Some(limit) if movable => items.push((Some(index), action.start_at, (action.end_at - action.start_at).num_minutes(), limit)),
+            _ => occupied.push((action.start_at, action.end_at)),
         }
     }
-    items.sort_by(|a, b| {
-        let key = |i: &Item| (i.lower, i.index.map(|x| current[x].id.clone()));
-        key(a).cmp(&key(b))
-    });
-    if extra > 0 {
-        let own = items.iter_mut().find(|i| current[i.index.expect("existing")].goal_id == goal.id);
-        match own {
-            Some(item) => {
-                item.minutes += extra;
-                item.est_minutes += extra;
+    items.sort_by(|a, b| (a.1, a.0.map(|x| &current[x].id)).cmp(&(b.1, b.0.map(|x| &current[x].id))));
+    let goal_deadline = deadline(goal, availability);
+    for block in blocks {
+        let unchanged = match (block.host, block.pieces.as_slice()) {
+            (Some(host), [only]) if only.minutes == segments[host].minutes && segments[host].first_day == Some(day) => {
+                Some(current[segments[host].index.expect("host is existing")].start_at)
             }
-            None => items.push(Item {
-                index: None,
-                lower: windows.first()?.0,
-                minutes: extra,
-                est_minutes: extra,
-                deadline: deadline(goal, availability),
-            }),
+            _ => None,
+        };
+        let lower = match unchanged {
+            Some(start) => start,
+            None => windows.first()?.0,
+        };
+        items.push((None, lower, block.minutes(), goal_deadline));
+    }
+    let mut order: Vec<usize> = (0..items.len()).collect();
+    order.sort_by_key(|i| items[*i].1);
+    let mut others = Vec::new();
+    let mut spans = vec![None; blocks.len()];
+    let first_block = items.len() - blocks.len();
+    for i in order {
+        let (index, lower, length, limit) = items[i];
+        let start = earliest_fit(&windows, &occupied, lower, length, limit)?;
+        let end = start + Duration::minutes(length);
+        occupied.push((start, end));
+        match index {
+            Some(index) => others.push((index, start, end)),
+            None => spans[i - first_block] = Some((start, end)),
         }
     }
-    let mut placed = Vec::with_capacity(items.len());
-    for item in items {
-        let start = earliest_fit(&windows, &occupied, item.lower, item.minutes, item.deadline)?;
-        let end = start + Duration::minutes(item.minutes);
-        occupied.push((start, end));
-        placed.push((item.index, start, end, item.est_minutes));
-    }
-    Some(placed)
+    Some((others, spans.into_iter().map(|s| s.expect("every block placed")).collect()))
 }
 
 /// Earliest start at or after `lower` where `minutes` fit inside one
@@ -218,25 +324,43 @@ fn earliest_fit(windows: &[Span], occupied: &[Span], lower: DateTime<Utc>, minut
     None
 }
 
-/// Writes a day layout into the working actions, creating the catch-up action.
-fn commit(current: &mut Vec<PAction>, layout: Vec<Placed>, goal: &PGoal) {
-    for (index, start_at, end_at, est_minutes) in layout {
-        match index {
-            Some(i) => {
-                current[i].start_at = start_at;
-                current[i].end_at = end_at;
-                current[i].est_minutes = est_minutes;
+/// Writes one day's layout into the working actions: other actions get
+/// their new slots, each hosted block resizes its action and each unhosted
+/// block becomes a created action.
+fn commit(ctx: &Ctx, current: &mut Vec<PAction>, goal: &PGoal, exclude: &BTreeSet<usize>, segments: &[Segment], day: NaiveDate, blocks: &[Block]) {
+    let (others, spans) = layout(ctx, current, day, goal, exclude, segments, blocks).expect("filled layout fits");
+    for (index, start_at, end_at) in others {
+        current[index].start_at = start_at;
+        current[index].end_at = end_at;
+    }
+    for (block, (start_at, end_at)) in blocks.iter().zip(spans) {
+        let length = block.minutes();
+        assert_eq!((end_at - start_at).num_minutes(), length);
+        match block.host {
+            Some(host) => {
+                let action = &mut current[segments[host].index.expect("host is existing")];
+                action.est_minutes += length - segments[host].minutes;
+                assert!(action.est_minutes >= 0);
+                action.start_at = start_at;
+                action.end_at = end_at;
             }
-            None => current.push(PAction {
-                id: aroh_core::new_id(),
-                goal_id: goal.id.clone(),
-                title: format!("Catch up: {}", goal.title),
-                start_at,
-                end_at,
-                est_minutes,
-                status: ActionStatus::Planned,
-                original: None,
-            }),
+            None => {
+                let lead = &segments[block.pieces[0].segment];
+                let title = match lead.index {
+                    None => format!("Catch up: {}", lead.title),
+                    Some(_) => format!("{} (continued)", lead.title),
+                };
+                current.push(PAction {
+                    id: aroh_core::new_id(),
+                    goal_id: goal.id.clone(),
+                    title,
+                    start_at,
+                    end_at,
+                    est_minutes: length,
+                    status: ActionStatus::Planned,
+                    original: None,
+                });
+            }
         }
     }
 }

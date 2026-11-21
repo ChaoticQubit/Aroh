@@ -32,3 +32,4 @@ tauri-plugin-aroh-speech = { path = "../../../crates/tauri-plugin-aroh-speech" }
 aroh-plugins = { path = "../../../crates/aroh-plugins" }
 aroh-replan = { path = "../../../crates/aroh-replan" }
 chrono-tz = { version = "0.10", default-features = false }
+iana-time-zone = "0.1"

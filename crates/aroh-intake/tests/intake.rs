@@ -199,3 +199,21 @@ fn empty_day_totals_are_positive_zero() {
     let totals = daily_totals(&[], day, FixedOffset::east_opt(0).unwrap(), &HashMap::new());
     assert!(totals.iter().all(|t| t.total.to_bits() == 0.0f64.to_bits()), "{totals:?}");
 }
+
+#[test]
+fn dst_day_in_new_york_is_25_hours_for_bounds_and_totals() {
+    let tz = chrono_tz::America::New_York;
+    let day = NaiveDate::from_ymd_opt(2026, 11, 1).unwrap();
+    let (start, end) = aroh_intake::local_day_bounds(day, tz);
+    assert_eq!(start, "2026-11-01T04:00:00.000Z");
+    assert_eq!(end, "2026-11-02T05:00:00.000Z");
+    let entries = vec![
+        entry(TrackerKind::Water, 300.0, "ml", "2026-11-01T03:30:00Z", false),
+        entry(TrackerKind::Water, 200.0, "ml", "2026-11-01T04:30:00Z", false),
+        entry(TrackerKind::Water, 100.0, "ml", "2026-11-02T04:30:00Z", false),
+        entry(TrackerKind::Water, 50.0, "ml", "2026-11-02T05:30:00Z", false),
+    ];
+    let totals = daily_totals(&entries, day, tz, &HashMap::new());
+    let water = totals.iter().find(|t| t.kind == TrackerKind::Water).unwrap();
+    assert_eq!(water.total, 300.0);
+}

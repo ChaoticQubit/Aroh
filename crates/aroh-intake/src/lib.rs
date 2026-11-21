@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, FixedOffset, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, NaiveDate, SecondsFormat, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -162,13 +162,13 @@ pub fn parse_chip(chip: &str, now: DateTime<Utc>) -> Result<Vec<TrackerEntry>, I
     Ok(vec![build_entry(kind, amount, unit, None, chip.trim(), now)?])
 }
 
-/// Sums non-deleted entries per kind whose `logged_at` falls on local `day` at `offset`.
+/// Sums non-deleted entries per kind whose `logged_at` falls on local `day` in `tz`.
 /// Targets come from settings keys `target.water_ml`, `target.workout_min`, `target.food_kcal`.
 /// Food sums only kcal entries; `other` has no shared unit and is not totalled.
-pub fn daily_totals(
+pub fn daily_totals<Z: TimeZone>(
     entries: &[TrackerEntry],
     day: NaiveDate,
-    offset: FixedOffset,
+    tz: Z,
     settings: &HashMap<String, String>,
 ) -> Vec<KindTotal> {
     [
@@ -183,7 +183,7 @@ pub fn daily_totals(
             .filter(|e| !e.deleted && e.kind == kind && e.unit.as_deref() == Some(unit))
             .filter(|e| {
                 DateTime::parse_from_rfc3339(&e.logged_at)
-                    .is_ok_and(|t| t.with_timezone(&offset).date_naive() == day)
+                    .is_ok_and(|t| t.with_timezone(&tz).date_naive() == day)
             })
             .filter_map(|e| e.amount)
             .filter(|a| a.is_finite() && *a >= 0.0)
@@ -306,12 +306,26 @@ pub fn checkin_question(totals: &[KindTotal]) -> String {
     }
 }
 
-/// Returns the UTC start (inclusive) and end (exclusive) of local `day` at `offset`,
+/// Returns the UTC start (inclusive) and end (exclusive) of local `day` in `tz`,
 /// formatted like stored `logged_at` values so they compare as text.
-pub fn local_day_bounds(day: NaiveDate, offset: FixedOffset) -> (String, String) {
-    let start = day.and_time(chrono::NaiveTime::MIN).and_local_timezone(offset).single();
-    let start = start.expect("a fixed offset maps every local time to one instant").with_timezone(&Utc);
-    let end = start + chrono::Duration::days(1);
+pub fn local_day_bounds<Z: TimeZone>(day: NaiveDate, tz: Z) -> (String, String) {
+    let start = local_day_start(day, &tz);
+    let end = local_day_start(day.succ_opt().expect("day before NaiveDate::MAX"), &tz);
     assert!(end > start);
     (start.to_rfc3339_opts(SecondsFormat::Millis, true), end.to_rfc3339_opts(SecondsFormat::Millis, true))
+}
+
+/// Longest DST gap searched past a local midnight that does not exist.
+const GAP_MAX_MIN: i64 = 180;
+
+/// First UTC instant of local `day` in `tz`; a midnight inside a DST gap
+/// moves to the first valid minute after it.
+fn local_day_start<Z: TimeZone>(day: NaiveDate, tz: &Z) -> DateTime<Utc> {
+    let midnight = day.and_time(chrono::NaiveTime::MIN);
+    for shift in 0..=GAP_MAX_MIN {
+        if let Some(t) = tz.from_local_datetime(&(midnight + chrono::Duration::minutes(shift))).earliest() {
+            return t.with_timezone(&Utc);
+        }
+    }
+    unreachable!("no valid local time within {GAP_MAX_MIN} minutes of {midnight}")
 }
