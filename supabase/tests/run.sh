@@ -5,7 +5,7 @@ export HOME="${KIRI_HOME:-$HOME}"
 name="aroh-rls-$$"
 cleanup() { kiri rm -f "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT INT TERM
-kiri run -d --rm --name "$name" -e POSTGRES_PASSWORD=test postgres:16 >/dev/null
+kiri run -d --rm --name "$name" -e POSTGRES_PASSWORD=test pgvector/pgvector:pg17 >/dev/null
 tries=0
 until kiri exec "$name" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do
   tries=$((tries + 1))
@@ -20,5 +20,5 @@ psql < "$here/stub_auth.sql"
 for migration in "$here"/../migrations/*.sql; do
   psql < "$migration"
 done
-psql < "$here/rls.sql"
+psql < "$here/rls_rebuild.sql"
 echo "rls: ok"

@@ -6,3 +6,7 @@ node_modules
 apps/aroh/build
 apps/aroh/.svelte-kit
 .local-state
+.crazyagent
+.claude
+graphify-out
+apps/aroh/src-tauri/gen

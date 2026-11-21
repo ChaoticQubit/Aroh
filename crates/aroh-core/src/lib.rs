@@ -1,7 +1,7 @@
 //! Aroh core: shared row types, SQLite schema, hybrid logical clock and repositories.
 
 pub mod db;
-pub mod hlc;
+pub use aroh_domain::hlc;
 pub mod keychain;
 pub mod models;
 pub mod repo;
@@ -11,8 +11,6 @@ pub mod repo;
 pub enum Error {
     #[error("sqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
-    #[error("invalid hlc timestamp: {0}")]
-    InvalidHlc(String),
     #[error("invalid value {value:?} for {field}")]
     InvalidEnum { field: &'static str, value: String },
     #[error("row not found: {0}")]

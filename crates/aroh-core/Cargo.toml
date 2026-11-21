@@ -11,3 +11,4 @@ rusqlite.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
 keyring.workspace = true
+aroh-domain.workspace = true

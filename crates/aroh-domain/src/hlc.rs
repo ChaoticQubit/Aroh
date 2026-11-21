@@ -33,6 +33,11 @@ impl Hlc {
         clock
     }
 
+    /// Returns this clock's 16 lowercase hex node id, the last part of every stamp it issues.
+    pub fn node(&self) -> &str {
+        &self.node
+    }
+
     /// Overrides the wall time in ms the clock reads next.
     pub fn set_wall_clock(&mut self, wall_ms: u64) {
         self.fixed_wall_ms = Some(wall_ms);
@@ -129,4 +134,51 @@ fn is_node_id(node: &str) -> bool {
 
 fn is_lower_hex(b: u8) -> bool {
     b.is_ascii_digit() || (b'a'..=b'f').contains(&b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hlc_orders_causally() {
+        let mut clock = Hlc::with_wall_clock("00000000000000aa", 1_000);
+        let first = clock.tick();
+        let second = clock.tick();
+        assert!(second > first, "same wall time must still advance");
+        clock.set_wall_clock(500);
+        let third = clock.tick();
+        assert!(third > second, "clock going backwards must still advance");
+
+        let mut remote = Hlc::with_wall_clock("00000000000000bb", 9_000);
+        let remote_stamp = remote.tick();
+        let received = clock.receive(&remote_stamp).unwrap();
+        assert!(received > remote_stamp, "receive must advance past remote");
+        assert!(clock.tick() > received);
+        assert!(clock.receive("garbage").is_err());
+        assert_eq!(clock.node(), "00000000000000aa");
+    }
+
+    #[test]
+    fn hlc_string_order_matches_time_order() {
+        let mut clock = Hlc::with_wall_clock(random_node_id(), 1_763_683_200_000);
+        let mut stamps = Vec::new();
+        for step in 0..40u64 {
+            clock.set_wall_clock(1_763_683_200_000 + (step % 7) * 3);
+            stamps.push(clock.tick());
+        }
+        let first = &stamps[0];
+        assert_eq!(first.len(), 13 + 1 + 4 + 1 + 16);
+        assert!(first.starts_with("1763683200000-0000-"));
+        let parsed: Vec<(u64, u32)> = stamps.iter().map(|s| parse(s).unwrap()).collect();
+        for pair in parsed.windows(2) {
+            assert!(pair[1] > pair[0]);
+        }
+        let mut unique = stamps.clone();
+        unique.dedup();
+        assert_eq!(unique.len(), stamps.len(), "no two stamps may be equal");
+        let mut sorted = stamps.clone();
+        sorted.sort();
+        assert_eq!(sorted, stamps);
+    }
 }
