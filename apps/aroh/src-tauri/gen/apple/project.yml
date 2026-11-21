@@ -58,6 +58,8 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 0.1.0
         CFBundleVersion: "0.1.0"
+        NSMicrophoneUsageDescription: Aroh uses the microphone so you can log food, water and workouts by voice.
+        NSSpeechRecognitionUsageDescription: Aroh turns your voice into text on this iPhone to log food, water and workouts. Audio never leaves the device.
     entitlements:
       path: aroh_iOS/aroh_iOS.entitlements
     scheme:

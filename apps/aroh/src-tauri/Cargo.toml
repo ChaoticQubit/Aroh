@@ -17,4 +17,9 @@ serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
 aroh-core.workspace = true
+aroh-intake = { path = "../../../crates/aroh-intake" }
+aroh-agents = { path = "../../../crates/aroh-agents" }
+tauri-plugin-aroh-speech = { path = "../../../crates/tauri-plugin-aroh-speech" }
+tauri-plugin-notification = "2.7"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 aroh-plugins = { path = "../../../crates/aroh-plugins" }

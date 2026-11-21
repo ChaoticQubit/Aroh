@@ -14,7 +14,7 @@
   let { speech, disabled = false, onTranscript, onError }: Props = $props();
 
   type Phase = 'idle' | 'starting' | 'listening' | 'stopping';
-  let phase: Phase = $state('idle');
+  let phase = $state<Phase>('idle');
   let partial = $state('');
   let pressedAt: number | null = null;
   let starting: Promise<boolean> | null = null;

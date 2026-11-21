@@ -1,7 +1,9 @@
 <script lang="ts">
 	import '../app.css';
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import type { Snippet } from 'svelte';
+	import { onNotificationRoute } from '../lib/log/api';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -14,6 +16,13 @@
 	];
 
 	const current = $derived(page.url.pathname);
+
+	$effect(() => {
+		const listening = onNotificationRoute((route) => goto(route));
+		return () => {
+			listening.then((l) => l?.unregister());
+		};
+	});
 </script>
 
 <div class="shell">

@@ -1,6 +1,7 @@
 //! Tauri command modules, one per pod. Add `pub mod <pod>;` here and list its commands in `lib.rs`.
 
 pub mod core;
+pub mod intake;
 pub mod plugins;
 
 use crate::{AppState, Core};

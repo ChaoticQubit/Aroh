@@ -25,31 +25,7 @@ kind is one of food, water, workout, other. amount is a non-negative number. \
 Allowed units: water ml, l or glass; workout min or h; food kcal, g or serving; other any short unit. \
 note is a short description or null. Make one entry per distinct item. If nothing can be logged, return an empty entries array.";
 
-/// Kind of a tracker entry, stored lowercase.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TrackerKind {
-    Food,
-    Water,
-    Workout,
-    Other,
-}
-
-/// One row of `tracker_entries`, matching the shared data model.
-/// Amounts are stored in the normalized unit: water ml, workout min.
-/// Times are UTC ISO 8601 strings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TrackerEntry {
-    pub id: String,
-    pub updated_at: String,
-    pub deleted: bool,
-    pub kind: TrackerKind,
-    pub amount: f64,
-    pub unit: String,
-    pub note: Option<String>,
-    pub raw_text: String,
-    pub logged_at: String,
-}
+pub use aroh_core::models::{TrackerEntry, TrackerKind};
 
 /// Why log text or model output was rejected.
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -204,13 +180,14 @@ pub fn daily_totals(
     .map(|(kind, unit, key)| {
         let total: f64 = entries
             .iter()
-            .filter(|e| !e.deleted && e.kind == kind && e.unit == unit)
+            .filter(|e| !e.deleted && e.kind == kind && e.unit.as_deref() == Some(unit))
             .filter(|e| {
                 DateTime::parse_from_rfc3339(&e.logged_at)
                     .is_ok_and(|t| t.with_timezone(&offset).date_naive() == day)
             })
-            .map(|e| e.amount)
-            .sum();
+            .filter_map(|e| e.amount)
+            .filter(|a| a.is_finite() && *a >= 0.0)
+            .fold(0.0, |sum, a| sum + a);
         assert!(total.is_finite() && total >= 0.0);
         let target = settings
             .get(key)
@@ -283,10 +260,58 @@ fn build_entry(
         updated_at: logged_at.clone(),
         deleted: false,
         kind,
-        amount,
-        unit,
+        amount: Some(amount),
+        unit: Some(unit),
         note,
-        raw_text: raw_text.to_string(),
+        raw_text: Some(raw_text.to_string()),
         logged_at,
     })
+}
+
+/// Parses a settings check-in time `HH:MM` (24-hour, local) into `(hour, minute)`.
+/// Errors with `IntakeError::Malformed` on any other shape or an out-of-range value.
+pub fn parse_checkin_time(text: &str) -> Result<(u8, u8), IntakeError> {
+    let bad = || IntakeError::Malformed(format!("check-in time {:?} is not HH:MM", text.chars().take(16).collect::<String>()));
+    let (h, m) = text.trim().split_once(':').ok_or_else(bad)?;
+    let digits = |s: &str| s.len() == 2 && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(h) || !digits(m) {
+        return Err(bad());
+    }
+    let (hour, minute) = (h.parse::<u8>().map_err(|_| bad())?, m.parse::<u8>().map_err(|_| bad())?);
+    if hour > 23 || minute > 59 {
+        return Err(bad());
+    }
+    Ok((hour, minute))
+}
+
+/// Builds the short check-in question from today's totals without a model call.
+/// Names the target the owner is furthest behind on; asks a general question when every target is met or unset.
+pub fn checkin_question(totals: &[KindTotal]) -> String {
+    let behind = totals
+        .iter()
+        .filter_map(|t| match (t.target, t.remaining) {
+            (Some(target), Some(remaining)) if target > 0.0 && remaining > 0.0 => Some((remaining / target, t)),
+            _ => None,
+        })
+        .max_by(|a, b| a.0.total_cmp(&b.0));
+    match behind {
+        Some((_, t)) => format!(
+            "You have {} of {} {} {} so far. How is the rest of today looking?",
+            t.total.round(),
+            t.target.unwrap_or(0.0).round(),
+            t.unit,
+            t.kind.as_str()
+        ),
+        None => "How did today go? Anything you have not logged yet?".to_string(),
+    }
+}
+
+/// Returns the UTC start (inclusive) and end (exclusive) of local `day` at `offset`,
+/// formatted like stored `logged_at` values so they compare as text.
+pub fn local_day_bounds(day: NaiveDate, offset: FixedOffset) -> (String, String) {
+    let start = day.and_time(chrono::NaiveTime::MIN).and_local_timezone(offset).single();
+    let start = start.expect("a fixed offset maps every local time to one instant").with_timezone(&Utc);
+    let end = start + chrono::Duration::days(1);
+    assert!(end > start);
+    (start.to_rfc3339_opts(SecondsFormat::Millis, true), end.to_rfc3339_opts(SecondsFormat::Millis, true))
 }

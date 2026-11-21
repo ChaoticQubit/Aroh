@@ -24,7 +24,7 @@
         <div class="head">
           <span class="kind">{KIND_LABEL[t.kind]}</span>
           <span class="figure">
-            {formatAmount(t.total, t.unit)}{#if t.target !== null}<span class="of"> of {formatAmount(t.target, t.unit)}</span>{/if}
+            {formatAmount(t.total, t.unit)}{#if t.target !== null}<span class="of">{` of ${formatAmount(t.target, t.unit)}`}</span>{/if}
           </span>
         </div>
         {#if s !== null}

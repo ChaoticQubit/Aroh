@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import TrackerSettings from '../../lib/log/TrackerSettings.svelte';
 
 	type KeyStatus = { present: boolean; last4: string | null };
 
@@ -64,6 +65,8 @@
 	</form>
 	{#if message}<p class="message" role="status">{message}</p>{/if}
 </section>
+
+<TrackerSettings />
 
 <style>
 	section {

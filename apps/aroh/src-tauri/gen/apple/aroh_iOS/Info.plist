@@ -40,5 +40,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Aroh uses the microphone so you can log food, water and workouts by voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Aroh turns your voice into text on this iPhone to log food, water and workouts. Audio never leaves the device.</string>
 </dict>
 </plist>

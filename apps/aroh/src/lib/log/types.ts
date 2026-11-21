@@ -1,16 +1,16 @@
 /** Tracker kind, matching `aroh_intake::TrackerKind` serialized lowercase. */
 export type TrackerKind = 'food' | 'water' | 'workout' | 'other';
 
-/** One `tracker_entries` row as `aroh_intake::TrackerEntry` serializes it; water in ml, workout in min. */
+/** One `tracker_entries` row as `aroh_core::models::TrackerEntry` serializes it; water in ml, workout in min. */
 export interface TrackerEntry {
   id: string;
   updated_at: string;
   deleted: boolean;
   kind: TrackerKind;
-  amount: number;
-  unit: string;
+  amount: number | null;
+  unit: string | null;
   note: string | null;
-  raw_text: string;
+  raw_text: string | null;
   logged_at: string;
 }
 

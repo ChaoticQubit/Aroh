@@ -69,11 +69,9 @@
     --log-danger: var(--aroh-danger, #a3261b);
 
     box-sizing: border-box;
-    min-height: 100dvh;
     max-width: 560px;
     margin: 0 auto;
-    padding: calc(env(safe-area-inset-top) + 16px) calc(env(safe-area-inset-right) + 16px)
-      calc(env(safe-area-inset-bottom) + 24px) calc(env(safe-area-inset-left) + 16px);
+    padding: 0 0 24px;
     display: grid;
     align-content: start;
     gap: 28px;
@@ -86,7 +84,7 @@
   }
 
   .title {
-    margin: 8px 0 0;
+    margin: 0;
     font-size: 34px;
     font-weight: 700;
     letter-spacing: -0.02em;

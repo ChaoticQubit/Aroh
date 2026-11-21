@@ -39,13 +39,41 @@ fn open_core(app: &tauri::App) -> Result<Core, Box<dyn std::error::Error>> {
     Ok(Core { conn, clock })
 }
 
+/// Debug builds only: saves `AROH_DEV_CLAUDE_KEY` to the keychain and, three seconds after start,
+/// evaluates the JavaScript file at `AROH_DEV_SCRIPT` in the main window. Simulator checks use it
+/// to drive the real UI where no tap tool exists. Release builds do not contain it.
+#[cfg(debug_assertions)]
+fn dev_hooks(app: &tauri::App) {
+    if let Ok(key) = std::env::var("AROH_DEV_CLAUDE_KEY") {
+        if let Err(e) = aroh_core::keychain::set_claude_api_key(key.trim()) {
+            eprintln!("dev key not saved: {e}");
+        }
+    }
+    let Ok(path) = std::env::var("AROH_DEV_SCRIPT") else { return };
+    let Some(window) = app.get_webview_window("main") else { return };
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        match std::fs::read_to_string(&path) {
+            Ok(script) => drop(window.eval(&script)),
+            Err(e) => eprintln!("dev script {path} not read: {e}"),
+        }
+    });
+}
+
 /// Builds and runs the app.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_aroh_speech::init())
         .setup(|app| {
             let core = open_core(app)?;
             app.manage(AppState { core: Mutex::new(core) });
+            if let Err(e) = commands::intake::sync_checkin(app.handle(), &app.state::<AppState>()) {
+                eprintln!("daily check-in not scheduled: {e}");
+            }
+            #[cfg(debug_assertions)]
+            dev_hooks(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -60,6 +88,14 @@ pub fn run() {
             commands::core::claude_key_status,
             commands::core::save_claude_key,
             commands::core::clear_claude_key,
+            commands::intake::intake_log_text,
+            commands::intake::intake_log_chip,
+            commands::intake::intake_list_today,
+            commands::intake::intake_totals,
+            commands::intake::intake_set_targets,
+            commands::intake::intake_get_checkin,
+            commands::intake::intake_set_checkin,
+            commands::intake::intake_checkin_question,
             commands::plugins::plugins_list,
             commands::plugins::plugins_model,
             commands::plugins::plugins_set_enabled,

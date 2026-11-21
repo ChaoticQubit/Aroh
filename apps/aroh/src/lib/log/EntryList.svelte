@@ -23,7 +23,7 @@
         <li class="item">
           <div class="main">
             <span class="kind">{KIND_LABEL[entry.kind]}</span>
-            <span class="amount">{formatAmount(entry.amount, entry.unit)}</span>
+            <span class="amount">{formatAmount(entry.amount ?? 0, entry.unit ?? '')}</span>
           </div>
           <div class="meta">
             {#if entry.note}<span class="note">{entry.note}</span>{/if}
