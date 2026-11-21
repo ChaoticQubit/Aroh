@@ -52,3 +52,5 @@ yarn-error.log*
 .nuxt/
 .gradle/
 *.tsbuildinfo
+.svelte-kit/
+.local-state/

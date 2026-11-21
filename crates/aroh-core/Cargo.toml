@@ -1,0 +1,12 @@
+[package]
+name = "aroh-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+rusqlite.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+keyring.workspace = true
