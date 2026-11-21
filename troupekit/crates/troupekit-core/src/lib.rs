@@ -10,3 +10,4 @@ pub mod inmem;
 pub mod message;
 pub mod secret;
 pub mod store;
+pub mod tool;
