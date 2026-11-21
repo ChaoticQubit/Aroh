@@ -34,7 +34,7 @@ calendar_get_reminder_settings() -> ReminderSettings
 calendar_set_reminder_settings(s: ReminderSettings) -> ReminderSettings
 ```
 
-- `ActionView` = the `actions` row plus `goal_title` and `goal_color_index` (0..8, stable hash of `goal_id`), so the UI makes one call per range.
+- `ActionView` = the `actions` row plus `goal_title` and `goal_color_index` (0..7, stable hash of `goal_id`), so the UI makes one call per range.
 - `calendar_list_actions` returns actions whose `[start_at, end_at)` overlaps `[from, to)`, not deleted, ordered by `start_at, seq`. The UI computes `from`/`to` from local midnight in the device timezone, so a DST day is 23 or 25 hours and still correct.
 - Inputs are validated at the command boundary: ids are uuids, timestamps parse as RFC 3339, status is from the allowed list. Bad input returns an error string, never a panic.
 - `pub fn sync_reminders(app: &AppHandle)` is public in the crate. Any pod that changes actions (goals plan approve, replan apply/undo, sync pull) calls it once after its write. That is the one rule other pods need.
