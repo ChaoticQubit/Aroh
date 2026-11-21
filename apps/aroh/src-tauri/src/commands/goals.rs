@@ -214,7 +214,7 @@ pub async fn goals_plan(
     })?;
     let analysis: CourseAnalysis = decode(draft.analysis_json.as_deref()).ok_or("Stored course analysis is unreadable.")?;
     let busy: Vec<agent::Action> = busy.iter().map(agent_action).collect();
-    let (plan, actions) = aroh_agents::generate_plan(&claude, &agent_goal(&goal)?, &analysis, &busy, Utc::now())
+    let (plan, actions) = aroh_agents::generate_plan(&claude, &agent_goal(&goal)?, &analysis, &busy, Utc::now(), *Local::now().offset())
         .await
         .map_err(|e| e.to_string())?;
     let actions: Vec<Action> = actions.into_iter().map(core_action).collect();

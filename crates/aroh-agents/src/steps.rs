@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, NaiveDate, SecondsFormat, TimeDelta, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, SecondsFormat, TimeDelta, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -133,13 +133,15 @@ pub async fn write_questions(
 /// Step 3: plan the goal's actions from the analysis and `goal.answers_json`,
 /// around the `busy` calendar, then validate. Returns a proposed plan at
 /// version 1 (the caller bumps it for a regenerated plan) and its actions
-/// in order, with fresh uuid v7 ids.
+/// in order, with fresh uuid v7 ids. `local_offset` is the owner's UTC
+/// offset, so times of day in the answers land in local time.
 pub async fn generate_plan(
     claude: &Claude,
     goal: &Goal,
     analysis: &CourseAnalysis,
     busy: &[Action],
     now: DateTime<Utc>,
+    local_offset: FixedOffset,
 ) -> Result<(Plan, Vec<Action>), AgentError> {
     let analysis_json = to_json(analysis)?;
     let busy_json = to_json(
@@ -148,7 +150,7 @@ pub async fn generate_plan(
             .map(|a| serde_json::json!({"title": a.title, "start_at": a.start_at, "end_at": a.end_at}))
             .collect::<Vec<_>>(),
     )?;
-    let now_text = now.to_rfc3339_opts(SecondsFormat::Secs, true);
+    let now_text = local_now_text(now, local_offset);
     let values = HashMap::from([
         ("goal_title", goal.title.as_str()),
         ("target_date", goal.target_date.as_str()),
@@ -167,8 +169,8 @@ pub async fn generate_plan(
             goal_id: goal.id.clone(),
             title: p.title.trim().to_owned(),
             notes: p.notes.filter(|n| !n.trim().is_empty()),
-            start_at: p.start_at,
-            end_at: p.end_at,
+            start_at: utc_text(p.start_at),
+            end_at: utc_text(p.end_at),
             est_minutes: p.est_minutes,
             status: ActionStatus::Planned,
             seq: seq as i64,
@@ -184,6 +186,22 @@ pub async fn generate_plan(
         summary: draft.summary.trim().to_owned(),
     };
     Ok((plan, actions))
+}
+
+/// `now` in the owner's local time at `offset`, RFC 3339 with the offset,
+/// so the planner reads times of day in the owner's answers as local.
+fn local_now_text(now: DateTime<Utc>, offset: FixedOffset) -> String {
+    now.with_timezone(&offset).to_rfc3339_opts(SecondsFormat::Secs, false)
+}
+
+/// An RFC 3339 time with any offset rewritten as UTC `Z` text, the form
+/// stored actions use. Text that does not parse is returned unchanged so
+/// [`validate_plan`] rejects it with the action's name.
+fn utc_text(text: String) -> String {
+    match DateTime::parse_from_rfc3339(&text) {
+        Ok(t) => t.with_timezone(&Utc).to_rfc3339_opts(SecondsFormat::Secs, true),
+        Err(_) => text,
+    }
 }
 
 /// `value` as JSON text.
@@ -354,6 +372,21 @@ fn deadline(target_date: &str) -> Result<DateTime<Utc>, AgentError> {
 mod tests {
     use super::*;
     use crate::model::{ActionStatus, GoalKind, GoalStatus};
+
+    #[test]
+    fn planner_now_is_owner_local_time_with_offset() {
+        let now = DateTime::parse_from_rfc3339("2026-11-21T03:16:00Z").unwrap().with_timezone(&Utc);
+        let eastern = FixedOffset::west_opt(5 * 3600).unwrap();
+        assert_eq!(local_now_text(now, eastern), "2026-11-20T22:16:00-05:00");
+        assert_eq!(local_now_text(now, FixedOffset::east_opt(0).unwrap()), "2026-11-21T03:16:00+00:00");
+    }
+
+    #[test]
+    fn planned_times_are_stored_as_utc() {
+        assert_eq!(utc_text("2026-11-21T18:00:00-05:00".into()), "2026-11-21T23:00:00Z");
+        assert_eq!(utc_text("2026-11-21T18:00:00Z".into()), "2026-11-21T18:00:00Z");
+        assert_eq!(utc_text("tomorrow 6pm".into()), "tomorrow 6pm");
+    }
 
     fn goal() -> Goal {
         Goal {

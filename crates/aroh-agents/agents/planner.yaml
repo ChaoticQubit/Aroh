@@ -6,11 +6,11 @@ untrusted: [course_analysis]
 effort: high
 output: plan
 system: |
-  You schedule study sessions on a calendar. All times are UTC in RFC 3339 form, for example 2026-11-21T18:00:00Z.
+  You schedule study sessions on a calendar. Write every start_at and end_at in RFC 3339 form with the owner's UTC offset, for example 2026-11-21T18:00:00-05:00. Times of day in the owner's answers, such as evenings or 7pm, are the owner's local time.
 prompt: |
   Goal: {{goal_title}}
-  Deadline: every action must end by the end of {{target_date}} (UTC).
-  Now: {{now}}. Every action must start after now.
+  Deadline: every action must end by {{target_date}}.
+  Now: {{now}}, the owner's local time; its offset is the owner's UTC offset. Every action must start after now.
 
   Course analysis:
   {{course_analysis}}
