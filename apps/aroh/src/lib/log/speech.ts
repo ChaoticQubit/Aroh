@@ -3,7 +3,8 @@ import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/
 /** Error codes the `aroh-speech` plugin rejects with, plus `unknown` for anything else. */
 export type SpeechErrorCode =
   | 'unsupported'
-  | 'permission_denied'
+  | 'mic_denied'
+  | 'speech_denied'
   | 'on_device_unavailable'
   | 'recognizer_unavailable'
   | 'busy'
@@ -13,7 +14,8 @@ export type SpeechErrorCode =
 
 const KNOWN_CODES: readonly SpeechErrorCode[] = [
   'unsupported',
-  'permission_denied',
+  'mic_denied',
+  'speech_denied',
   'on_device_unavailable',
   'recognizer_unavailable',
   'busy',

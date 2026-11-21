@@ -56,8 +56,6 @@
     gap: 12px;
     max-width: 640px;
     margin: 0 auto;
-    padding: 16px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom))
-      max(16px, env(safe-area-inset-left));
   }
   h2 {
     margin: 0;

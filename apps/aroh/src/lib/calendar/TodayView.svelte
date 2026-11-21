@@ -203,8 +203,6 @@
 	.today {
 		max-width: 640px;
 		margin: 0 auto;
-		padding: calc(env(safe-area-inset-top) + 16px) calc(env(safe-area-inset-right) + 16px)
-			calc(env(safe-area-inset-bottom) + 96px) calc(env(safe-area-inset-left) + 16px);
 		color: var(--cal-ink);
 	}
 	.head {

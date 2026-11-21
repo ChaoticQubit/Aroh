@@ -60,7 +60,7 @@
 		display: grid;
 		grid-template-columns: minmax(0, 1fr);
 		gap: 12px;
-		padding: 12px max(16px, env(safe-area-inset-right)) 12px max(16px, env(safe-area-inset-left));
+		padding: 12px 0;
 		color: var(--aroh-fg);
 		font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 		font-size: 1rem;

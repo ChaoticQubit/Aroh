@@ -4,7 +4,7 @@
 	import { listActions, setStatus, type ActionView, type SettableStatus } from './api';
 	import ActionSheet from './ActionSheet.svelte';
 	import TimeGrid from './TimeGrid.svelte';
-	import { addDays, formatDayTitle, formatMonth, formatWeekday, localRange, sameDay, startOfDay, startOfWeek } from './time';
+	import { addDays, formatDayTitle, formatMonth, formatShortDayTitle, formatWeekday, localRange, sameDay, startOfDay, startOfWeek } from './time';
 
 	type Mode = 'day' | 'week';
 
@@ -24,7 +24,7 @@
 	const strip = $derived(Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)));
 	const days = $derived(mode === 'week' ? strip : [anchor]);
 	const rangeKey = $derived(`${days[0].toISOString()}|${days.length}`);
-	const title = $derived(mode === 'week' ? formatMonth(weekStart) : formatDayTitle(anchor));
+	const title = $derived(mode === 'week' ? formatMonth(weekStart) : formatShortDayTitle(anchor));
 	const sheetAction = $derived(actions.find((a) => a.id === sheetId) ?? null);
 
 	let loadSeq = 0;
@@ -187,9 +187,7 @@
 	.cal {
 		display: flex;
 		flex-direction: column;
-		height: 100dvh;
-		padding: calc(env(safe-area-inset-top) + 8px) calc(env(safe-area-inset-right) + 12px)
-			calc(env(safe-area-inset-bottom) + var(--tabbar, 56px)) calc(env(safe-area-inset-left) + 12px);
+		height: 100%;
 		color: var(--cal-ink);
 		background: var(--cal-surface);
 	}

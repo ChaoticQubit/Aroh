@@ -6,7 +6,7 @@ import UIKit
 import WebKit
 
 /// On-device speech to text for Aroh's log intake.
-/// `start` asks for speech and microphone permission, then streams microphone audio into
+/// `start` asks for microphone and then speech permission, then streams microphone audio into
 /// `SFSpeechRecognizer` with `requiresOnDeviceRecognition`, emitting `partial` events `{text}`.
 /// `stop` ends the audio and resolves `{transcript}` with the final text.
 class SpeechPlugin: Plugin {
@@ -19,6 +19,14 @@ class SpeechPlugin: Plugin {
   private var pendingStop: Invoke?
   private var starting = false
   private var generation = 0
+
+  /// Lets the web layout fill the whole screen. Without this the web view's scroll view
+  /// shrinks the page by the safe areas while CSS `env(safe-area-inset-*)` still reports
+  /// them, so the insets count twice and a blank band shows below the tab bar.
+  override func load(webview: WKWebView) {
+    super.load(webview: webview)
+    webview.scrollView.contentInsetAdjustmentBehavior = .never
+  }
 
   @objc public func start(_ invoke: Invoke) {
     DispatchQueue.main.async {
@@ -64,24 +72,27 @@ class SpeechPlugin: Plugin {
     }
   }
 
+  /// Asks for microphone access, then for speech recognition, in one flow.
+  /// Calls `done(nil)` on the main queue when both are granted, or `done((code, message))`
+  /// naming the permission that is off, so the owner knows which switch to turn on.
   private func authorize(_ done: @escaping ((String, String)?) -> Void) {
-    SFSpeechRecognizer.requestAuthorization { status in
-      guard status == .authorized else {
+    let micDone: (Bool) -> Void = { granted in
+      guard granted else {
         DispatchQueue.main.async {
-          done(("permission_denied", "Speech recognition is off for Aroh. Turn it on in Settings."))
+          done(("mic_denied", "Microphone access is off for Aroh. Turn it on in Settings, Privacy, Microphone."))
         }
         return
       }
-      let micDone: (Bool) -> Void = { granted in
+      SFSpeechRecognizer.requestAuthorization { status in
         DispatchQueue.main.async {
-          done(granted ? nil : ("permission_denied", "Microphone access is off for Aroh. Turn it on in Settings."))
+          done(status == .authorized ? nil : ("speech_denied", "Speech recognition is off for Aroh. Turn it on in Settings, Privacy, Speech Recognition."))
         }
       }
-      if #available(iOS 17.0, *) {
-        AVAudioApplication.requestRecordPermission(completionHandler: micDone)
-      } else {
-        AVAudioSession.sharedInstance().requestRecordPermission(micDone)
-      }
+    }
+    if #available(iOS 17.0, *) {
+      AVAudioApplication.requestRecordPermission(completionHandler: micDone)
+    } else {
+      AVAudioSession.sharedInstance().requestRecordPermission(micDone)
     }
   }
 

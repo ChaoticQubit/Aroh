@@ -1,7 +1,7 @@
 <script lang="ts">
 	import type { ActionView } from './api';
 	import ActionBlock from './ActionBlock.svelte';
-	import { DAY_MINUTES, formatTime, formatWeekday, layoutDay, minutesInDay, sameDay } from './time';
+	import { DAY_MINUTES, formatTime, formatWeekday, layoutDay, minutesInDay, openingMinute, sameDay } from './time';
 
 	interface Props {
 		days: Date[];
@@ -15,7 +15,6 @@
 
 	const HOUR_PX = 64;
 	const PX_PER_MIN = HOUR_PX / 60;
-	const SCROLL_HOUR = 7;
 	const hours = Array.from({ length: 24 }, (_, h) => h);
 
 	let scroller: HTMLDivElement | undefined = $state();
@@ -32,12 +31,21 @@
 	const nowTop = $derived(minutesInDay(now, now) * PX_PER_MIN);
 	const showsToday = $derived(columns.some((c) => c.today));
 
+	const spans = $derived(
+		columns
+			.filter((c) => c.today || !showsToday)
+			.flatMap((c) => c.placed)
+			.filter((p) => !showsToday || p.item.status === 'planned')
+			.map((p) => ({ startMin: p.startMin, endMin: p.endMin }))
+			.sort((a, b) => a.startMin - b.startMin)
+	);
+
 	$effect(() => {
-		const key = days.map((d) => d.toDateString()).join('|');
+		const key = `${days.map((d) => d.toDateString()).join('|')}|${columns.some((c) => c.placed.length > 0)}`;
 		if (!scroller || key === scrolledFor) return;
 		scrolledFor = key;
-		const target = showsToday ? Math.max(0, nowTop - HOUR_PX * 2) : SCROLL_HOUR * HOUR_PX;
-		scroller.scrollTop = target;
+		const minute = openingMinute(spans, showsToday ? minutesInDay(now, now) : null);
+		scroller.scrollTop = minute * PX_PER_MIN;
 	});
 
 	console.assert(DAY_MINUTES * PX_PER_MIN === 24 * HOUR_PX, 'grid height matches 24 hours');

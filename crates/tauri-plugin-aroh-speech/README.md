@@ -24,7 +24,8 @@ Every rejection is `{ code, message }`. `message` is fit to show the owner.
 | Code | When |
 |---|---|
 | `unsupported` | Not iOS. |
-| `permission_denied` | Speech recognition or microphone access is off for the app. |
+| `mic_denied` | Microphone access is off for the app. |
+| `speech_denied` | Speech recognition is off for the app. |
 | `on_device_unavailable` | The device or the current language has no on-device model. Aroh never falls back to server recognition. |
 | `recognizer_unavailable` | The recognizer is temporarily unavailable. |
 | `busy` | `start` while listening, or `stop` while a stop is in progress. |

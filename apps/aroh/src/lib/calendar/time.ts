@@ -41,6 +41,7 @@ export function localRange(d: Date, days = 1): { from: string; to: string } {
 
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const dayTitleFmt = new Intl.DateTimeFormat(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+const shortDayTitleFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
 const weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
 const monthFmt = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
 
@@ -59,6 +60,11 @@ export function formatDayTitle(d: Date): string {
 	return dayTitleFmt.format(d);
 }
 
+/** Compact day title such as `Sat, Nov 21`, for headers that share a row with controls. */
+export function formatShortDayTitle(d: Date): string {
+	return shortDayTitleFmt.format(d);
+}
+
 /** Short weekday such as `Thu`. */
 export function formatWeekday(d: Date): string {
 	return weekdayFmt.format(d);
@@ -75,6 +81,26 @@ export function minutesInDay(t: Date, day: Date): number {
 	if (t.getTime() <= dayStart.getTime()) return 0;
 	if (t.getTime() >= addDays(dayStart, 1).getTime()) return DAY_MINUTES;
 	return t.getHours() * 60 + t.getMinutes() + t.getSeconds() / 60;
+}
+
+/**
+ * The minute of the day a day grid opens scrolled to, 30 minutes before what matters.
+ * `spans` are the day's sessions in start order; `nowMin` is the current minute when the day is today, else null.
+ * Today opens on the next session that has not ended (never more than an hour before now), or on now.
+ * Other days open on their first session, or on 07:00 when empty. Returns a minute in `[0, 1440)`.
+ */
+export function openingMinute(spans: { startMin: number; endMin: number }[], nowMin: number | null): number {
+	const LEAD = 30;
+	let anchor: number;
+	if (nowMin === null) {
+		anchor = spans.length > 0 ? spans[0].startMin : 7 * 60;
+	} else {
+		const next = spans.find((s) => s.endMin > nowMin);
+		anchor = next ? Math.max(next.startMin, nowMin - 60) : nowMin;
+	}
+	const minute = Math.min(DAY_MINUTES - 1, Math.max(0, anchor - LEAD));
+	console.assert(minute >= 0 && minute < DAY_MINUTES, 'opening minute inside the day', minute);
+	return minute;
 }
 
 function pad(n: number): string {

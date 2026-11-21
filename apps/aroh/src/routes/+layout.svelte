@@ -27,6 +27,7 @@
 </script>
 
 <div class="shell">
+	<div class="statusbar" aria-hidden="true"></div>
 	<nav aria-label="Main">
 		<span class="brand">Aroh</span>
 		{#each tabs as tab (tab.href)}
@@ -41,26 +42,35 @@
 
 <style>
 	.shell {
-		min-height: 100vh;
+		position: fixed;
+		inset: 0;
 		display: grid;
-		grid-template-rows: 1fr var(--tabbar);
+		grid-template-rows: env(safe-area-inset-top) minmax(0, 1fr) auto;
+		background: var(--surface);
+	}
+
+	.statusbar {
+		grid-row: 1;
+		background: var(--surface);
 	}
 
 	main {
-		grid-row: 1;
-		padding: var(--space-4) var(--space-3);
-		padding-top: max(var(--space-4), env(safe-area-inset-top));
-		overflow: auto;
+		grid-row: 2;
+		min-height: 0;
+		padding: var(--space-3) max(var(--space-3), env(safe-area-inset-right)) var(--space-4)
+			max(var(--space-3), env(safe-area-inset-left));
+		overflow-y: auto;
+		overscroll-behavior-y: contain;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	nav {
-		grid-row: 2;
-		position: sticky;
-		bottom: 0;
+		grid-row: 3;
 		display: flex;
+		min-height: calc(var(--tabbar) + env(safe-area-inset-bottom));
 		background: var(--surface-raised);
 		border-top: 1px solid var(--line);
-		padding-bottom: env(safe-area-inset-bottom);
+		padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 	}
 
 	.brand {
@@ -69,7 +79,7 @@
 
 	a {
 		flex: 1;
-		min-height: 44px;
+		min-height: var(--tabbar);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -92,7 +102,11 @@
 	@media (min-width: 768px) {
 		.shell {
 			grid-template-rows: none;
-			grid-template-columns: var(--sidebar) 1fr;
+			grid-template-columns: var(--sidebar) minmax(0, 1fr);
+		}
+
+		.statusbar {
+			display: none;
 		}
 
 		main {
@@ -104,9 +118,7 @@
 		nav {
 			grid-row: auto;
 			grid-column: 1;
-			position: sticky;
-			top: 0;
-			height: 100vh;
+			min-height: 0;
 			flex-direction: column;
 			gap: var(--space-1);
 			border-top: none;

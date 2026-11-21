@@ -64,11 +64,16 @@
     starting = begin();
   }
 
+  /**
+   * Ends a press. A long hold stops listening, unless start is still waiting on the
+   * microphone and speech permission prompts: they cancel the touch, so the press then
+   * counts as a tap and listening goes on until the next tap.
+   */
   function release() {
     if (pressedAt !== null) {
       const held = performance.now() - pressedAt;
       pressedAt = null;
-      if (held >= HOLD_MS) void end();
+      if (held >= HOLD_MS && phase !== 'starting') void end();
       return;
     }
     if (active) void end();
@@ -102,7 +107,7 @@
   </button>
   <p class="status" aria-live="polite">
     {#if phase === 'starting'}
-      Starting
+      Starting. If iPhone asks, allow the microphone and speech recognition.
     {:else if phase === 'listening'}
       {partial || 'Listening. Tap again or let go to finish.'}
     {:else if phase === 'stopping'}
