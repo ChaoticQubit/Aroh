@@ -50,8 +50,10 @@ insert into public.knowledge_chunks (user_id, id, goal_id, content, embedding)
   values ('00000000-0000-0000-0000-00000000000a', '0123456789abcdef', '0190f2a0-0000-7000-8000-000000000091', 'protein per meal', array_fill(0.1::real, array[384])::extensions.vector);
 insert into public.memory_logs (user_id, log, position, message)
   values ('00000000-0000-0000-0000-00000000000a', 'goal:setup', 0, '{"role": "user"}');
-insert into public.provider_credentials (user_id, setting_id, ciphertext, nonce, key_version)
-  values ('00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000016', '\x00ff', '\x01', 1);
+insert into public.provider_credentials (user_id, setting_id, ciphertext, nonce, key_version, vendor, last4)
+  values ('00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000016', '\x00ff', '\x01', 1, 'anthropic', 'abcd');
+insert into public.user_keys (user_id, wrapped, nonce, key_version)
+  values ('00000000-0000-0000-0000-00000000000a', '\x00ff', '\x01', 1);
 
 create schema rls_test;
 create table rls_test.fixtures (tbl text primary key, cols text not null, forged jsonb not null);
@@ -66,8 +68,8 @@ declare
 begin
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p');
-  if n <> 25 then
-    raise exception 'expected 25 public tables, found %', n;
+  if n <> 26 then
+    raise exception 'expected 26 public tables, found %', n;
   end if;
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity;
@@ -174,7 +176,7 @@ begin
     end if;
   end loop;
 
-  foreach t in array array['provider_credentials', 'run_checkpoints', 'knowledge_chunks', 'memory_logs'] loop
+  foreach t in array array['provider_credentials', 'user_keys', 'run_checkpoints', 'knowledge_chunks', 'memory_logs'] loop
     begin
       execute format('select count(*) from public.%I', t) into n;
       raise exception 'A read server-only table %', t;

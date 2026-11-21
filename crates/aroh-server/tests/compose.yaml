@@ -1,0 +1,23 @@
+services:
+  pg:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: aroh_template
+    volumes:
+      - ../../../supabase:/aroh/supabase:ro
+      - ./initdb.sh:/docker-entrypoint-initdb.d/aroh.sh:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-d", "aroh_template"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+  test:
+    build:
+      context: ../../..
+      dockerfile: crates/aroh-server/Dockerfile.test
+    environment:
+      AROH_TEST_PG: postgres://postgres:test@pg:5432
+    depends_on:
+      pg:
+        condition: service_healthy

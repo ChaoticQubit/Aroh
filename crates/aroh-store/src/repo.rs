@@ -48,16 +48,8 @@ pub(crate) fn upsert(conn: &Connection, table: &TableDef, row: &WireRow, keep_ex
     Ok(changed)
 }
 
-/// Returns a stamp newer than `previous` (when it is a stamp) and than every stamp
-/// `clock` issued, so a local write always wins over the version it replaces even
-/// when that version came from a device whose clock ran ahead.
 fn stamp_after(clock: &mut Hlc, previous: &str) -> Result<String> {
-    let stamp = match aroh_domain::hlc::parse(previous) {
-        Ok(_) => clock.receive(previous)?,
-        Err(_) => clock.tick(),
-    };
-    assert!(stamp.as_str() > previous, "a local write must carry a newer stamp");
-    Ok(stamp)
+    Ok(clock.stamp_after(previous)?)
 }
 
 /// Stamps `row` with an HLC newer than its current stamp, validates it and inserts

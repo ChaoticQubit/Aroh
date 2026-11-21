@@ -92,6 +92,18 @@ impl Hlc {
         Ok(stamp)
     }
 
+    /// Returns a stamp newer than `previous` (when it is a stamp) and than every stamp this
+    /// clock issued, so a write always wins over the version it replaces even when that
+    /// version came from a node whose clock ran ahead. A non-stamp `previous` just ticks.
+    pub fn stamp_after(&mut self, previous: &str) -> Result<String> {
+        if parse(previous).is_err() {
+            return Ok(self.tick());
+        }
+        let stamp = self.receive(previous)?;
+        assert!(stamp.as_str() > previous, "a write must carry a newer stamp");
+        Ok(stamp)
+    }
+
     fn bump_counter(&mut self) {
         if self.counter >= COUNTER_MAX {
             self.last_ms += 1;
@@ -157,6 +169,16 @@ mod tests {
         assert!(clock.tick() > received);
         assert!(clock.receive("garbage").is_err());
         assert_eq!(clock.node(), "00000000000000aa");
+    }
+
+    #[test]
+    fn stamp_after_beats_previous() {
+        let mut clock = Hlc::with_wall_clock("00000000000000aa", 1_000);
+        let ahead = Hlc::with_wall_clock("00000000000000bb", 9_000_000).tick();
+        let next = clock.stamp_after(&ahead).unwrap();
+        assert!(next > ahead);
+        assert!(clock.stamp_after("").unwrap() > next);
+        assert!(clock.stamp_after("not a stamp").unwrap().ends_with("00000000000000aa"));
     }
 
     #[test]

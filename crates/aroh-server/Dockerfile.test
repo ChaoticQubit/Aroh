@@ -1,0 +1,5 @@
+FROM rust:1-slim
+WORKDIR /src
+COPY . .
+RUN cargo test -p aroh-server --no-run
+CMD ["cargo", "test", "-p", "aroh-server", "--", "--include-ignored", "--test-threads", "4"]

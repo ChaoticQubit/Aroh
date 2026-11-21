@@ -1,0 +1,729 @@
+openapi: 3.1.0
+info:
+  title: Aroh engine API
+  description: 'Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue.'
+  license:
+    name: UNLICENSED
+    identifier: UNLICENSED
+  version: 1.0.0
+paths:
+  /healthz:
+    get:
+      tags: []
+      operationId: health
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /v1/goals:
+    post:
+      tags:
+      - runs
+      operationId: start_goal
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartGoal'
+        required: true
+      responses:
+        '202':
+          description: New-goal run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: no usable provider key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/goals/{goal_id}/replan:
+    post:
+      tags:
+      - runs
+      operationId: start_replan
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartReplan'
+        required: true
+      responses:
+        '202':
+          description: Replan run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/hooks/enqueue:
+    post:
+      tags:
+      - engine
+      operationId: enqueue_hook
+      requestBody:
+        description: Database webhook payload; ignored
+        content:
+          application/json:
+            schema:
+              type: object
+        required: true
+      responses:
+        '200':
+          description: Same as tick (service role only)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TickSummary'
+        '403':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/keys:
+    get:
+      tags:
+      - keys
+      operationId: list_keys
+      responses:
+        '200':
+          description: 'Key status per setting: vendor and last 4 only'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KeyInfo'
+        '401':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/keys/{setting_id}:
+    put:
+      tags:
+      - keys
+      operationId: set_key
+      parameters:
+      - name: setting_id
+        in: path
+        description: provider_settings or search_settings row id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetKey'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfo'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: unknown setting and no model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    delete:
+      tags:
+      - keys
+      operationId: delete_key
+      parameters:
+      - name: setting_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/keys/{setting_id}/test:
+    post:
+      tags:
+      - keys
+      operationId: test_key
+      parameters:
+      - name: setting_id
+        in: path
+        description: provider_settings row id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: One 1-token call with the stored key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyTest'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/logs:
+    post:
+      tags:
+      - runs
+      operationId: submit_log
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitLog'
+        required: true
+      responses:
+        '202':
+          description: Log-intake run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/runs:
+    get:
+      tags:
+      - runs
+      operationId: list_runs
+      parameters:
+      - name: state
+        in: path
+        required: true
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '200':
+          description: The 50 newest runs, for the Inbox
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RunSummary'
+      security:
+      - bearer: []
+  /v1/runs/{run_id}:
+    get:
+      tags:
+      - runs
+      operationId: get_run
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after_seq
+        in: path
+        required: true
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/runs/{run_id}/answers:
+    post:
+      tags:
+      - runs
+      operationId: answer
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Answer'
+        required: true
+      responses:
+        '202':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: not waiting there, answer does not fit, or the run moved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/tick:
+    post:
+      tags:
+      - engine
+      operationId: tick
+      responses:
+        '200':
+          description: 'Step mode: due jobs processed (service role only)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TickSummary'
+        '403':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+components:
+  schemas:
+    Accepted:
+      type: object
+      description: |-
+        Answer of `POST /v1/runs/{run_id}/answers`: the run that was queued.
+        Poll the run for its next step.
+        Answered with 202.
+      required:
+      - run_id
+      properties:
+        run_id:
+          type: string
+          format: uuid
+    Answer:
+      type: object
+      description: |-
+        Body of `POST /v1/runs/{run_id}/answers`: the human node and its answer.
+        Approval nodes take a bool, `questions` takes `[{id, answer}]`, and
+        `change` takes a string.
+      required:
+      - node
+      - answer
+      properties:
+        answer:
+          type: object
+        node:
+          type: string
+      additionalProperties: false
+    ErrorBody:
+      type: object
+      description: |-
+        The body of every error response: a stable code and a short message.
+        Clients branch on `code`; `message` is for people.
+        Serialized as `{"error": {"code", "message"}}`.
+      required:
+      - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+    ErrorDetail:
+      type: object
+      description: |-
+        Code and message of an error response.
+        Codes: bad_request, unauthorized, forbidden, not_found, conflict,
+        setup, internal.
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    Health:
+      type: object
+      description: |-
+        Answer of `GET /healthz`: the process is up.
+        Unauthenticated; carries nothing else.
+        For smoke checks only.
+      required:
+      - ok
+      properties:
+        ok:
+          type: boolean
+    KeyInfo:
+      type: object
+      description: |-
+        What the API shows about a stored key: its setting, vendor, last four
+        characters and when it was set. Never the key itself.
+        Listing never decrypts anything.
+      required:
+      - setting_id
+      - vendor
+      - last4
+      - updated_at
+      properties:
+        last4:
+          type: string
+        setting_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+        vendor:
+          type: string
+    KeyTest:
+      type: object
+      description: |-
+        Result of a key test: whether one 1-token call with the stored key
+        worked, and the provider's error when it did not.
+        The key itself is never part of it.
+      required:
+      - ok
+      properties:
+        error:
+          type:
+          - string
+          - 'null'
+        ok:
+          type: boolean
+    RunSummary:
+      type: object
+      description: |-
+        One row of the run list behind the Inbox: ids, workflow, lifecycle
+        state and times. `waiting_human` runs need the owner.
+        Newest first.
+      required:
+      - run_id
+      - workflow
+      - state
+      - created_at
+      - updated_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        workflow:
+          type: string
+    RunView:
+      type: object
+      description: |-
+        A run as the app reads it: ids, workflow, status (tagged by `status`),
+        what it waits for, usage so far, and the events after `after_seq`
+        (each a core `Event` with `run_id`, `seq`, `at_ms` and `body`).
+      required:
+      - run_id
+      - workflow
+      - status
+      - waiting
+      - usage
+      - events
+      properties:
+        events:
+          type: array
+          items:
+            type: object
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+        status:
+          type: object
+        usage:
+          type: object
+        waiting:
+          type: array
+          items:
+            $ref: '#/components/schemas/Waiting'
+        workflow:
+          type: string
+    SetKey:
+      type: object
+      description: |-
+        Body of `PUT /v1/keys/{setting_id}`: the vendor and the key. When the
+        server has no setting with that id and `model` is given, a provider
+        setting row is created with it, so the key can be used at once.
+      required:
+      - vendor
+      - key
+      properties:
+        is_default:
+          type:
+          - boolean
+          - 'null'
+        key:
+          type: string
+          format: password
+        label:
+          type:
+          - string
+          - 'null'
+        model:
+          type:
+          - string
+          - 'null'
+        vendor:
+          type: string
+      additionalProperties: false
+    StartGoal:
+      type: object
+      description: |-
+        Body of `POST /v1/goals`: the goal to plan. Without `goal_id`, or when
+        the server has no such goal yet, a draft goal row is created with it.
+        `timezone` is the owner's IANA zone, used for every local time.
+      required:
+      - title
+      - timezone
+      properties:
+        autonomy:
+          type:
+          - string
+          - 'null'
+          example: balanced
+        category_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        context:
+          type:
+          - string
+          - 'null'
+        deadline:
+          type:
+          - string
+          - 'null'
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        timezone:
+          type: string
+        title:
+          type: string
+      additionalProperties: false
+    StartReplan:
+      type: object
+      description: |-
+        Body of `POST /v1/goals/{goal_id}/replan`: why to adapt, in the owner's
+        words or the app's (missed actions, drift), and the owner's timezone.
+        The goal's autonomy decides whether the change needs approval.
+      required:
+      - reason
+      - timezone
+      properties:
+        reason:
+          type: string
+        timezone:
+          type: string
+      additionalProperties: false
+    Started:
+      type: object
+      description: |-
+        What a start returns: the goal (none for a log) and the new run.
+        Poll `GET /v1/runs/{run_id}` or listen to `run_events` for progress.
+        Answered with 202.
+      required:
+      - run_id
+      properties:
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+    SubmitLog:
+      type: object
+      description: |-
+        Body of `POST /v1/logs`: one free-text log, when it happened (RFC 3339,
+        default now) and the owner's timezone. The run maps it onto the
+        owner's trackers and stores the entries.
+      required:
+      - text
+      - timezone
+      properties:
+        at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        text:
+          type: string
+        timezone:
+          type: string
+      additionalProperties: false
+    TickSummary:
+      type: object
+      description: |-
+        What a tick did, as `POST /v1/tick` answers it: jobs processed, how
+        many were lost to another worker, and each failure's text.
+        Mirrors Troupekit's `TickReport`.
+      required:
+      - processed
+      - lost
+      - errors
+      properties:
+        errors:
+          type: array
+          items:
+            type: string
+        lost:
+          type: integer
+          minimum: 0
+        processed:
+          type: integer
+          minimum: 0
+    Waiting:
+      type: object
+      description: |-
+        One human node a run waits at: node id, `approval` or `question`, the
+        prompt, and the state keys the node reads (the plan, the questions or
+        the proposal), as the app shows them.
+      required:
+      - node
+      - ask
+      - data
+      properties:
+        ask:
+          type: string
+        data:
+          type: object
+        node:
+          type: string
+        prompt:
+          type:
+          - string
+          - 'null'
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

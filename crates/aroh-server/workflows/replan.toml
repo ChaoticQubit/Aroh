@@ -1,0 +1,104 @@
+name = "replan"
+start = "adapt"
+max_steps = 100
+
+[state]
+goal = "{id: string, title: string, context: string?, deadline: string?, timezone: string, today: string}"
+calendar = "list<{id: string, title: string, start: string, minutes: int, status: string, locked: bool}>"
+reason = "string"
+autonomy = "enum(ask, balanced, auto)"
+proposal = "{summary: string, size: enum(small, big), changes: list<{op: enum(move, resize, create, delete), action_id: string?, title: string, start: string?, minutes: int?}>}"
+proposal_record = "{proposal_id: string, summary: string, size: enum(small, big), touches_locked: bool, changes: list<{op: enum(move, resize, create, delete), action_id: string?, title: string, before: {start_at: string, end_at: string}?, after: {start_at: string, end_at: string}?}>}"
+approved = "bool"
+outcome = "{status: string, applied: int, skipped: int}"
+
+[[nodes]]
+id = "adapt"
+kind = "agent"
+persona = "adaptation-analyst"
+prompt = "Propose the smallest plan change that answers the reason."
+reads = ["goal", "calendar", "reason"]
+writes = "proposal"
+
+[[nodes]]
+id = "record"
+kind = "tool"
+tool = "record_proposal"
+reads = ["goal", "proposal"]
+writes = "proposal_record"
+
+[[nodes]]
+id = "gate"
+kind = "router"
+condition = "autonomy_gate()"
+
+[[nodes]]
+id = "approve"
+kind = "human"
+ask = "approval"
+prompt = "Apply this change to your plan?"
+reads = ["proposal_record"]
+writes = "approved"
+
+[[nodes]]
+id = "decided"
+kind = "router"
+condition = "flag(approved)"
+
+[[nodes]]
+id = "apply"
+kind = "tool"
+tool = "apply_proposal"
+reads = ["proposal_record"]
+writes = "outcome"
+
+[[nodes]]
+id = "reject"
+kind = "tool"
+tool = "reject_proposal"
+reads = ["proposal_record"]
+writes = "outcome"
+
+[[nodes]]
+id = "done"
+kind = "end"
+
+[[edges]]
+from = "adapt"
+to = "record"
+
+[[edges]]
+from = "record"
+to = "gate"
+
+[[edges]]
+from = "gate"
+to = "apply"
+when = "apply"
+
+[[edges]]
+from = "gate"
+to = "approve"
+when = "ask"
+
+[[edges]]
+from = "approve"
+to = "decided"
+
+[[edges]]
+from = "decided"
+to = "apply"
+when = "true"
+
+[[edges]]
+from = "decided"
+to = "reject"
+when = "false"
+
+[[edges]]
+from = "apply"
+to = "done"
+
+[[edges]]
+from = "reject"
+to = "done"
