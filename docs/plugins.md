@@ -67,7 +67,8 @@ The host computes queries. A plugin only names them.
 | `water.today_total` | number | Sum of water entries today, in the tracker unit. |
 | `food.today_total` | number | Count of food entries today. |
 | `workout.today_total` | number | Sum of workout minutes today. |
-| `goal.progress` | number | Done actions of the current goal, as a fraction 0..1. |
+| `goal.progress` | number | Done actions of the current goal. |
+| `goal.actions_total` | number | All actions of the current goal. |
 | `goal.actions_left` | number | Planned actions left in the current goal. |
 | `goal.next_actions` | list | Next planned actions of the current goal. |
 | `today.actions` | list | All actions scheduled today. |
@@ -243,7 +244,7 @@ slots:
     - component: progress-bar
       label: Course done
       value: goal.progress
-      max: 1
+      max: goal.actions_total
     - component: stat-tile
       label: Sessions left
       value: goal.actions_left

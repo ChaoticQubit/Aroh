@@ -15,7 +15,7 @@ slots:
     - component: progress-bar
       label: Course done
       value: goal.progress
-      max: 1
+      max: goal.actions_total
     - component: stat-tile
       label: Sessions left
       value: goal.actions_left

@@ -192,7 +192,8 @@ fn compute_data(conn: &Connection, goal_id: Option<&str>) -> rusqlite::Result<Ma
         let total = number(conn, "SELECT COUNT(*) FROM actions WHERE goal_id = ?1 AND deleted = 0", [goal])?;
         let done = number(conn, "SELECT COUNT(*) FROM actions WHERE goal_id = ?1 AND deleted = 0 AND status = 'done'", [goal])?;
         let left = number(conn, "SELECT COUNT(*) FROM actions WHERE goal_id = ?1 AND deleted = 0 AND status = 'planned'", [goal])?;
-        data.insert("goal.progress".into(), json!(if total > 0.0 { done / total } else { 0.0 }));
+        data.insert("goal.progress".into(), json!(done));
+        data.insert("goal.actions_total".into(), json!(total));
         data.insert("goal.actions_left".into(), json!(left));
         data.insert(
             "goal.next_actions".into(),
@@ -239,7 +240,8 @@ mod tests {
         )
         .expect("seed");
         let data = compute_data(&conn, Some("g")).expect("data");
-        assert_eq!(data["goal.progress"], json!(0.25));
+        assert_eq!(data["goal.progress"], json!(1.0));
+        assert_eq!(data["goal.actions_total"], json!(4.0));
         assert_eq!(data["goal.actions_left"], json!(3.0));
         assert_eq!(data["goal.next_actions"][0]["id"], json!("a2"));
         assert!(compute_data(&conn, None).expect("data").get("goal.progress").is_none());

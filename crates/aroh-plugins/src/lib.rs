@@ -296,11 +296,12 @@ impl QueryType {
     }
 }
 
-const QUERIES: [(&str, QueryType); 7] = [
+const QUERIES: [(&str, QueryType); 8] = [
     ("water.today_total", QueryType::Number),
     ("food.today_total", QueryType::Number),
     ("workout.today_total", QueryType::Number),
     ("goal.progress", QueryType::Number),
+    ("goal.actions_total", QueryType::Number),
     ("goal.actions_left", QueryType::Number),
     ("goal.next_actions", QueryType::List),
     ("today.actions", QueryType::List),
