@@ -158,6 +158,14 @@ fn prompt_helpers_wrap_untrusted_text() {
 }
 
 #[test]
+fn output_schema_avoids_keywords_claude_structured_output_rejects() {
+    let text = output_schema().to_string();
+    for keyword in ["maxItems", "minimum", "maximum", "minLength", "maxLength"] {
+        assert!(!text.contains(keyword), "schema uses unsupported keyword {keyword}");
+    }
+}
+
+#[test]
 fn checkin_time_parses_hh_mm_only() {
     assert_eq!(aroh_intake::parse_checkin_time("20:30"), Ok((20, 30)));
     assert_eq!(aroh_intake::parse_checkin_time(" 07:05 "), Ok((7, 5)));

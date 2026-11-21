@@ -82,14 +82,13 @@ pub fn output_schema() -> Value {
         "properties": {
             "entries": {
                 "type": "array",
-                "maxItems": MAX_ENTRIES,
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
                     "required": ["kind", "amount", "unit", "note"],
                     "properties": {
                         "kind": {"type": "string", "enum": ["food", "water", "workout", "other"]},
-                        "amount": {"type": "number", "minimum": 0},
+                        "amount": {"type": "number"},
                         "unit": {"type": "string"},
                         "note": {"type": ["string", "null"]}
                     }

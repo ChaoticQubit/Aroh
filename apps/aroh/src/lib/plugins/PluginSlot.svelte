@@ -25,6 +25,17 @@
 			});
 	}
 
+	/** Logs a quick-chip tap for a declared water or workout tracker, then reloads the slot data. */
+	function logTracker(tracker: string, amount: number) {
+		const decl = model?.trackers.find((t) => t.id === tracker);
+		if (!decl || (decl.kind !== 'water' && decl.kind !== 'workout')) return;
+		invoke('intake_log_chip', { chip: `${decl.kind} ${amount}${decl.unit}` })
+			.then(() => load(goalId ?? null))
+			.catch((e: unknown) => {
+				error = String(e);
+			});
+	}
+
 	$effect(() => {
 		const goal = goalId ?? null;
 		load(goal);
@@ -38,7 +49,7 @@
 {#if error}
 	<p class="plugin-error" role="alert">Plugins failed to load: {error}</p>
 {:else if model}
-	<Slot {name} {model} {data} />
+	<Slot {name} {model} {data} onlog={logTracker} />
 {/if}
 
 <style>
