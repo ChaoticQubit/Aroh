@@ -37,7 +37,7 @@ Dependencies: `reqwest` (default-features off, `rustls-tls`, `json`), `tokio`, `
 - Keychain (`keyring`), service `aroh`: account `supabase-session` holds the session JSON, account `supabase-config` holds the project URL and anon key. Dev override: env `AROH_SUPABASE_URL`, `AROH_SUPABASE_ANON_KEY`.
 - The project URL must be `https`; `http` only for `localhost` / `127.0.0.1`.
 - Never log tokens or keys. Never commit keys.
-- Public API, Tauri-agnostic: `sign_in_password`, `request_otp`, `verify_otp`, `sign_out`, `sync_now(&mut Connection) -> SyncReport { pushed, pulled, at }`, `status() -> SyncStatus { signed_in, email, last_sync_at, last_error }`.
+- Public API, Tauri-agnostic: `configure(url, anon_key)`, `sign_in_password`, `request_otp`, `verify_otp`, `sign_out`, `sync_now(&mut Connection, on_remote: &mut dyn FnMut(&str)) -> SyncReport { pushed, pulled, at }` where `on_remote` feeds each remote HLC to `Hlc::receive`, `status(&Connection) -> SyncStatus { signed_in, email, last_sync_at, last_error }`. `last_sync_at` (unix millis) and `last_error` live in `sync_state`.
 
 ## Tauri commands
 
