@@ -7,7 +7,7 @@ Tracked record of the MVP contract settled with the owner on 2026-11-20 (questio
 | Area | Decision |
 |---|---|
 | UI | Svelte 5 (runes) + TypeScript, SvelteKit with adapter-static as an SPA inside Tauri 2 |
-| Targets | Mac desktop first; iOS and Android through Tauri 2 mobile, iPhone focus. Website deferred past MVP |
+| Targets | iPhone first (owner correction 2026-11-20): phone-first shell with bottom tabs, safe areas and touch targets, run in the iOS simulator. The Mac desktop app keeps running. Android later through Tauri 2 mobile. Website deferred past MVP |
 | Core | Rust, one Cargo workspace |
 | Agents | Claude only, through Rig (`rig-core`) |
 | Data | Offline-first. Local SQLite per device (`rusqlite`, bundled) |
@@ -56,7 +56,7 @@ Replan `diff_json` is an array of `{action_id, op 'move'|'create'|'delete'|'resi
 
 ## HLC format
 
-`updated_at` is `<unix millis, 13 digits zero-padded>-<counter, 4 hex digits zero-padded>-<node id, 16 lowercase hex>`, for example `1763683200000-0000-9f2c4a1b7e3d5c60`. Fixed width, so plain string comparison is time order (sync uses it in SQLite and in a Postgres trigger). The node id is random per device, stored locally, never synced. `aroh-core` provides `tick` and `receive(remote)`.
+`updated_at` is `<unix millis, 13 digits zero-padded>-<counter, 4 hex digits zero-padded>-<node id, 16 lowercase hex>`, for example `1763683200000-0000-9f2c4a1b7e3d5c60`. Fixed width, so plain string comparison is time order (sync uses it in SQLite and in a Postgres trigger). The node id is random per device, stored locally, never synced. `aroh-core` provides `tick` and `receive(remote)`. Every write gets a strictly increasing, unique HLC: no two rows share an `updated_at`. The helper asserts this.
 
 ## Reserved table names
 

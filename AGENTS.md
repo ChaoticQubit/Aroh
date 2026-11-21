@@ -54,6 +54,14 @@ HOME=/Users/chaoticqubit kiri build -f Dockerfile.test -t aroh-test .
 HOME=/Users/chaoticqubit kiri run --rm aroh-test
 ```
 
+Run the app in the iPhone simulator (primary target). Agent shells have an empty `USER`; set it for xcodegen:
+
+```sh
+cd apps/aroh
+pnpm install
+USER=chaoticqubit pnpm tauri ios dev "iPhone 15 Pro"
+```
+
 Run the app on the Mac:
 
 ```sh
