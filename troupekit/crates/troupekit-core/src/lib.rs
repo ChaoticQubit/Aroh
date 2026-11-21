@@ -5,6 +5,7 @@
 pub mod clock;
 pub mod error;
 pub mod event;
+pub mod http;
 pub mod ids;
 pub mod inmem;
 pub mod message;

@@ -8,7 +8,7 @@ Troupekit is a Rust framework for building LLM agents from persona TOML files: p
 | `troupekit-providers` | available | Anthropic, OpenAI, Gemini and OpenAI-compatible wire protocols, provider catalog with prices, injected transports, retry, fallback and cost-meter middleware |
 | `troupekit-tools` | available | Tool trait, validating registry, typed tools, SSRF-guarded web fetch, web search over Brave and SearXNG, declarative HTTP tools |
 | `troupekit-context` | available | Memory scopes, profile facts, chunking, embeddings, hybrid retrieval and context blocks |
-| `troupekit-agent` | planned | Persona TOML agents |
+| `troupekit-agent` | available | Persona TOML agents: layered loader, checkpointable run state machine, concurrent allowed tools, typed output with one repair round, evals and LLM judge, layered budgets, events |
 | `troupekit-graph` | planned | Durable, checkpointed graph workflows |
 | `troupekit-plugins` | planned | Plugin loading |
 | `troupekit-host` | planned | Hosting runs and streaming events |

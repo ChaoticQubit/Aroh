@@ -1,4 +1,4 @@
-use crate::http::HttpResponse;
+use crate::http::Received;
 
 /// Default cap, in characters, on third-party text handed to a model.
 pub const MAX_TEXT_CHARS: usize = 120_000;
@@ -153,7 +153,7 @@ pub fn fence_capped(source: &str, text: &str, max_chars: usize, cut: bool) -> St
 
 /// Text of a response body: lossy UTF-8, reduced to visible text when the
 /// media type is `text/html`. Returns the text, not yet capped or fenced.
-pub fn response_text(res: &HttpResponse) -> String {
+pub fn response_text(res: &Received) -> String {
     let raw = String::from_utf8_lossy(&res.body);
     if res.content_type == "text/html" {
         html_to_text(&raw)
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn response_text_strips_html_only() {
-        let res = |mime: &str, body: &str| HttpResponse {
+        let res = |mime: &str, body: &str| Received {
             status: 200,
             url: String::new(),
             content_type: mime.into(),

@@ -4,9 +4,9 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
-use troupekit_core::error::ProviderErrorKind;
+use troupekit_core::error::{ProviderError, ProviderErrorKind};
 use troupekit_providers::reqwest_transport::ReqwestTransport;
-use troupekit_providers::transport::{read_body, HttpRequest, Transport};
+use troupekit_providers::transport::{read_body, HttpRequest, Method, Transport};
 
 fn serve_once(reply: &'static str, delay: Duration) -> (String, thread::JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -46,14 +46,14 @@ fn request_complete(seen: &[u8]) -> bool {
 }
 
 fn post(url: &str) -> HttpRequest {
-    HttpRequest {
-        url: url.into(),
-        headers: vec![
+    HttpRequest::post(
+        url,
+        vec![
             ("content-type".into(), "application/json".into()),
             ("x-api-key".into(), "test-key".into()),
         ],
-        body: br#"{"model":"m"}"#.to_vec(),
-    }
+        br#"{"model":"m"}"#.to_vec(),
+    )
 }
 
 #[tokio::test]
@@ -85,7 +85,7 @@ async fn a_silent_server_is_a_stall() {
     let t = ReqwestTransport::with_timeouts(Duration::from_secs(5), Duration::from_millis(200))
         .unwrap();
     assert_eq!(
-        t.send(post(&url)).await.err().unwrap().kind,
+        ProviderError::from(t.send(post(&url)).await.err().unwrap()).kind,
         ProviderErrorKind::Stalled
     );
 }
@@ -103,5 +103,24 @@ async fn a_refused_connection_is_a_network_error() {
         .await
         .err()
         .unwrap();
-    assert_eq!(err.kind, ProviderErrorKind::Network);
+    assert_eq!(ProviderError::from(err).kind, ProviderErrorKind::Network);
+}
+
+#[tokio::test]
+async fn honours_the_request_method() {
+    let (url, server) = serve_once(
+        "HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+        Duration::ZERO,
+    );
+    let req = HttpRequest {
+        method: Method::Put,
+        ..post(&url)
+    };
+    let reply = ReqwestTransport::new().unwrap().send(req).await.unwrap();
+    assert_eq!(reply.status, 204);
+    assert!(reply.url.ends_with("/v1/messages"));
+    assert!(server
+        .join()
+        .unwrap()
+        .starts_with("PUT /v1/messages HTTP/1.1\r\n"));
 }

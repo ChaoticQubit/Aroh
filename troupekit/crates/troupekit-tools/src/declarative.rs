@@ -1,4 +1,4 @@
-use crate::http::{HttpRequest, HttpTransport, Method};
+use crate::http::{receive, HttpRequest, Method, Transport};
 use crate::registry::Toolkit;
 use crate::secrets::SecretSource;
 use crate::text::{fence_capped, response_text, MAX_TEXT_CHARS};
@@ -66,7 +66,7 @@ struct HttpTool {
     method: Method,
     template: Vec<Part>,
     headers: Vec<(String, HeaderValue)>,
-    http: Arc<dyn HttpTransport>,
+    http: Arc<dyn Transport>,
 }
 
 impl std::fmt::Debug for HttpTool {
@@ -80,16 +80,16 @@ impl std::fmt::Debug for HttpTool {
     }
 }
 
-/// Loads declarative HTTP tools from TOML into a toolkit called `toolkit`.
-/// Each `[[tool]]` has `name`, `description`, `method`, `url` with `{arg}`
-/// path placeholders, optional `headers` whose values may hold
-/// `${secret:NAME}` (read from `secrets` now), and a JSON `schema`.
-/// Returns `Config` for any malformed or unsafe definition.
+/// Loads declarative HTTP tools from TOML into a toolkit called `toolkit`:
+/// each `[[tool]]` has `name`, `description`, `method`, `url` with `{arg}`
+/// path placeholders, optional `headers` (values may hold `${secret:NAME}`,
+/// read from `secrets` now) and a JSON `schema`. Returns `Config` for any
+/// malformed or unsafe definition. Pass a `GuardedHttp`, never an unguarded one.
 pub fn http_toolkit_from_toml(
     toolkit: &str,
     text: &str,
     secrets: &dyn SecretSource,
-    http: Arc<dyn HttpTransport>,
+    http: Arc<dyn Transport>,
 ) -> Result<Toolkit, ToolError> {
     let tools = parse_tools(text, secrets, http)?;
     Ok(tools
@@ -100,7 +100,7 @@ pub fn http_toolkit_from_toml(
 fn parse_tools(
     text: &str,
     secrets: &dyn SecretSource,
-    http: Arc<dyn HttpTransport>,
+    http: Arc<dyn Transport>,
 ) -> Result<Vec<HttpTool>, ToolError> {
     let file: ToolsFile =
         toml::from_str(text).map_err(|e| ToolError::Config(format!("http tools: {e}")))?;
@@ -113,7 +113,7 @@ fn parse_tools(
 fn build_tool(
     def: ToolDef,
     secrets: &dyn SecretSource,
-    http: Arc<dyn HttpTransport>,
+    http: Arc<dyn Transport>,
 ) -> Result<HttpTool, ToolError> {
     let name = def.name.clone();
     let err = |m: String| ToolError::Config(format!("{name}: {m}"));
@@ -321,7 +321,7 @@ impl Tool for HttpTool {
     }
 
     async fn call(&self, args: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
-        let res = self.http.send(self.request(args)?).await?;
+        let res = receive(self.http.as_ref(), self.request(args)?).await?;
         let fenced = fence_capped(
             &res.url,
             &response_text(&res),
@@ -339,7 +339,7 @@ impl Tool for HttpTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::http::{FakeHttp, Method};
+    use crate::http::{FakeHttp, HttpError, HttpErrorKind, Method};
     use crate::registry::ToolRegistry;
     use crate::tool::{ToolContext, ToolError, ToolOutput};
     use serde_json::json;
@@ -552,8 +552,9 @@ schema = { type = "object", properties = { id = { type = "integer" }, note = { t
 
     #[tokio::test]
     async fn transport_failure_is_err() {
-        let fake = FakeHttp::new(vec![Err(ToolError::Blocked(
-            "10.0.0.1 is not public".into(),
+        let fake = FakeHttp::new(vec![Err(HttpError::new(
+            HttpErrorKind::Blocked,
+            "10.0.0.1 is not public",
         ))]);
         let out = ToolOutput::from_result(
             registry(fake)

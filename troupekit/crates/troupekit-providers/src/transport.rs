@@ -1,80 +1,21 @@
 use crate::status::decode_error;
 use async_trait::async_trait;
 use std::collections::VecDeque;
-use std::fmt;
 use std::sync::{Mutex, MutexGuard};
-use troupekit_core::error::{ProviderError, ProviderErrorKind};
-
-/// An HTTP POST to a provider: URL, headers and the JSON body bytes.
-/// Headers may carry an API key, so `Debug` prints the URL, the header
-/// names and the body length, never a header value.
-#[derive(Clone, PartialEq, Eq)]
-pub struct HttpRequest {
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
-}
-
-impl HttpRequest {
-    /// Looks up header `name`, ignoring ASCII case.
-    /// Returns its value, or `None` when the request has no such header.
-    /// When a header repeats, the first value wins.
-    pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
-    }
-}
-
-impl fmt::Debug for HttpRequest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let names: Vec<&str> = self.headers.iter().map(|(k, _)| k.as_str()).collect();
-        f.debug_struct("HttpRequest")
-            .field("url", &self.url)
-            .field("headers", &names)
-            .field("body_len", &self.body.len())
-            .finish()
-    }
-}
-
-/// The body of an HTTP reply, read chunk by chunk so streams stay streams.
-/// `chunk` yields the next bytes, then `None` once the body has ended.
-/// Transports implement it over their own body type.
-#[async_trait]
-pub trait Body: Send {
-    async fn chunk(&mut self) -> Result<Option<Vec<u8>>, ProviderError>;
-}
-
-/// An HTTP reply: status code, headers and a body still to be read.
-/// Header names keep the case the transport saw.
-/// Read the body with `read_body` or chunk by chunk.
-pub struct HttpResponse {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: Box<dyn Body>,
-}
-
-/// Sends provider requests. HTTP clients, proxies, in-process runtimes
-/// and test fakes implement it, so models never own an HTTP stack.
-/// Failures are `Network`, or `Stalled` for timeouts.
-#[async_trait]
-pub trait Transport: Send + Sync {
-    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ProviderError>;
-}
+use troupekit_core::error::ProviderError;
+pub use troupekit_core::http::{
+    Body, ChunkBody, HttpError, HttpErrorKind, HttpRequest, HttpResponse, Method, Transport,
+};
 
 /// Reads all of `body` into memory.
 /// Returns the bytes, or `Decode` as soon as more than `limit` bytes
 /// have arrived, so a hostile server cannot exhaust memory.
 pub async fn read_body(body: &mut dyn Body, limit: usize) -> Result<Vec<u8>, ProviderError> {
-    let mut out = Vec::new();
-    while let Some(chunk) = body.chunk().await? {
-        if out.len() + chunk.len() > limit {
-            return Err(decode_error(format!("reply body is over {limit} bytes")));
-        }
-        out.extend_from_slice(&chunk);
+    let (bytes, over) = troupekit_core::http::read_limited(body, limit).await?;
+    if over {
+        return Err(decode_error(format!("reply body is over {limit} bytes")));
     }
-    Ok(out)
+    Ok(bytes)
 }
 
 /// One reply a `ScriptedTransport` gives back: a status with headers and
@@ -87,7 +28,7 @@ pub enum Scripted {
         headers: Vec<(String, String)>,
         chunks: Vec<Vec<u8>>,
     },
-    Fail(ProviderError),
+    Fail(HttpError),
 }
 
 impl Scripted {
@@ -137,15 +78,6 @@ impl Scripted {
     }
 }
 
-struct ChunkBody(VecDeque<Vec<u8>>);
-
-#[async_trait]
-impl Body for ChunkBody {
-    async fn chunk(&mut self) -> Result<Option<Vec<u8>>, ProviderError> {
-        Ok(self.0.pop_front())
-    }
-}
-
 /// A fake transport that replays scripted replies in order and records
 /// every request sent to it, so tests never touch the network.
 /// Once the script runs out, `send` fails with `Network`.
@@ -176,7 +108,8 @@ impl ScriptedTransport {
 
 #[async_trait]
 impl Transport for ScriptedTransport {
-    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ProviderError> {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+        let url = request.url.clone();
         lock(&self.sent).push(request);
         let next = lock(&self.replies).pop_front();
         match next {
@@ -186,12 +119,14 @@ impl Transport for ScriptedTransport {
                 chunks,
             }) => Ok(HttpResponse {
                 status,
+                url,
                 headers,
-                body: Box::new(ChunkBody(chunks.into())),
+                body: Box::new(ChunkBody::new(chunks)),
+                truncated: false,
             }),
             Some(Scripted::Fail(err)) => Err(err),
-            None => Err(ProviderError::new(
-                ProviderErrorKind::Network,
+            None => Err(HttpError::new(
+                HttpErrorKind::Network,
                 "script has no more replies",
             )),
         }

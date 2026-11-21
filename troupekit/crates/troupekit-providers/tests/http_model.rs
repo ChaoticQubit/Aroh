@@ -3,10 +3,10 @@ mod common;
 use common::*;
 use serde_json::Value;
 use std::sync::Arc;
-use troupekit_core::error::{ProviderError, ProviderErrorKind};
+use troupekit_core::error::ProviderErrorKind;
 use troupekit_providers::model::{valid_model_id, Endpoint, HttpModel, Model};
 use troupekit_providers::request::{CompletionRequest, Delta};
-use troupekit_providers::transport::{Scripted, ScriptedTransport};
+use troupekit_providers::transport::{HttpError, HttpErrorKind, Scripted, ScriptedTransport};
 use troupekit_providers::wire::{anthropic, AuthStyle, Protocol, Quirks};
 
 fn endpoint(protocol: Protocol, auth: AuthStyle) -> Endpoint {
@@ -130,7 +130,7 @@ async fn complete_sends_one_unary_request_and_folds_the_body() {
     );
     let sent = transport.sent();
     assert_eq!(sent.len(), 1);
-    let body: Value = serde_json::from_slice(&sent[0].body).unwrap();
+    let body: Value = serde_json::from_slice(sent[0].body.as_deref().unwrap()).unwrap();
     assert_eq!(body["model"], "m-1");
     assert!(body.get("stream").is_none());
 }
@@ -168,10 +168,7 @@ async fn maps_error_statuses_bodies_and_transport_failures() {
                 .with_header("Retry-After", "2"),
             Scripted::body(503, "upstream down"),
             Scripted::body(200, "not json"),
-            Scripted::Fail(ProviderError::new(
-                ProviderErrorKind::Stalled,
-                "read timed out",
-            )),
+            Scripted::Fail(HttpError::new(HttpErrorKind::Timeout, "read timed out")),
         ],
     );
     let req = CompletionRequest::user("hi", 10);

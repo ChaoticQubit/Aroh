@@ -90,7 +90,7 @@ impl Endpoint {
         }
         let body = serde_json::to_vec(&body)
             .map_err(|e| bad_request(format!("request does not serialize: {e}")))?;
-        Ok(HttpRequest { url, headers, body })
+        Ok(HttpRequest::post(url, headers, body))
     }
 }
 

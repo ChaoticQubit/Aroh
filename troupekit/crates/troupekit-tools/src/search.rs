@@ -1,4 +1,4 @@
-use crate::http::{is_public_ip, GuardedHttp, HttpLimits, HttpRequest, HttpTransport};
+use crate::http::{is_public_ip, receive, GuardedHttp, HttpLimits, HttpRequest, Transport};
 use crate::registry::Toolkit;
 use crate::secrets::SecretSource;
 use crate::text::{fence_capped, html_to_text, MAX_TEXT_CHARS};
@@ -44,7 +44,7 @@ pub struct BraveSearch {
     name: String,
     base_url: String,
     key: Secret,
-    http: Arc<dyn HttpTransport>,
+    http: Arc<dyn Transport>,
 }
 
 impl BraveSearch {
@@ -54,7 +54,7 @@ impl BraveSearch {
         name: &str,
         base_url: &str,
         key: Secret,
-        http: Arc<dyn HttpTransport>,
+        http: Arc<dyn Transport>,
     ) -> Result<Self, ToolError> {
         Ok(Self {
             name: name.into(),
@@ -121,17 +121,13 @@ impl SearchProvider for BraveSearch {
 pub struct SearxngSearch {
     name: String,
     base_url: String,
-    http: Arc<dyn HttpTransport>,
+    http: Arc<dyn Transport>,
 }
 
 impl SearxngSearch {
     /// Builds an adapter called `name` for `base_url` using `http`.
     /// Returns `Config` when the base URL is not a plain http or https URL.
-    pub fn new(
-        name: &str,
-        base_url: &str,
-        http: Arc<dyn HttpTransport>,
-    ) -> Result<Self, ToolError> {
+    pub fn new(name: &str, base_url: &str, http: Arc<dyn Transport>) -> Result<Self, ToolError> {
         Ok(Self {
             name: name.into(),
             base_url: check_base(name, base_url)?,
@@ -213,12 +209,12 @@ fn check_base(name: &str, base_url: &str) -> Result<String, ToolError> {
 }
 
 async fn get_json<T: DeserializeOwned>(
-    http: &dyn HttpTransport,
+    http: &dyn Transport,
     provider: &str,
     mut req: HttpRequest,
 ) -> Result<T, ToolError> {
     req.accept = vec!["application/json".into()];
-    let res = http.send(req).await?;
+    let res = receive(http, req).await?;
     if !(200..300).contains(&res.status) {
         return Err(ToolError::Http(format!("{provider}: HTTP {}", res.status)));
     }
@@ -309,14 +305,14 @@ impl SearchToolkit {
             } else {
                 GuardedHttp::new(limits)
             };
-            Arc::new(http) as Arc<dyn HttpTransport>
+            Arc::new(http) as Arc<dyn Transport>
         })
     }
 
     fn from_toml_with(
         text: &str,
         secrets: &dyn SecretSource,
-        mut transport: impl FnMut(bool) -> Arc<dyn HttpTransport>,
+        mut transport: impl FnMut(bool) -> Arc<dyn Transport>,
     ) -> Result<Self, ToolError> {
         let config: SearchConfig =
             toml::from_str(text).map_err(|e| ToolError::Config(format!("search config: {e}")))?;
@@ -474,7 +470,10 @@ mod tests {
         Secret::new(v.into()).unwrap()
     }
 
-    fn json_reply(status: u16, body: &str) -> Result<crate::http::HttpResponse, ToolError> {
+    fn json_reply(
+        status: u16,
+        body: &str,
+    ) -> Result<crate::http::Received, crate::http::HttpError> {
         FakeHttp::reply(status, "application/json", body)
     }
 
@@ -544,7 +543,7 @@ mod tests {
             (json_reply(429, "{}"), "HTTP 429"),
             (json_reply(200, "not json"), "decode"),
             (
-                Ok(crate::http::HttpResponse {
+                Ok(crate::http::Received {
                     status: 200,
                     url: String::new(),
                     content_type: "application/json".into(),
@@ -597,7 +596,7 @@ mod tests {
 
     fn fake_provider(
         name: &str,
-        replies: Vec<Result<crate::http::HttpResponse, ToolError>>,
+        replies: Vec<Result<crate::http::Received, crate::http::HttpError>>,
     ) -> (Arc<dyn SearchProvider>, Arc<FakeHttp>) {
         let fake = FakeHttp::new(replies);
         (
@@ -664,7 +663,7 @@ mod tests {
         let fake = FakeHttp::new(vec![]);
         let kit = SearchToolkit::from_toml_with(CATALOG, &secrets, |private| {
             flags.push(private);
-            fake.clone() as Arc<dyn HttpTransport>
+            fake.clone() as Arc<dyn Transport>
         })
         .unwrap();
         assert_eq!(kit.names(), ["brave", "searxng-local"]);
@@ -678,7 +677,7 @@ mod tests {
         let secrets: HashMap<String, Secret> = HashMap::new();
         let fake = FakeHttp::new(vec![json_reply(200, SEARXNG)]);
         let kit = SearchToolkit::from_toml_with(CATALOG, &secrets, |_| {
-            fake.clone() as Arc<dyn HttpTransport>
+            fake.clone() as Arc<dyn Transport>
         })
         .unwrap();
         assert_eq!(kit.names(), ["searxng-local"]);

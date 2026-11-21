@@ -1,21 +1,21 @@
-use troupekit_core::error::{ProviderError, ProviderErrorKind};
+use troupekit_core::error::ProviderErrorKind;
 use troupekit_providers::transport::{
-    read_body, HttpRequest, Scripted, ScriptedTransport, Transport,
+    read_body, HttpError, HttpErrorKind, HttpRequest, Scripted, ScriptedTransport, Transport,
 };
 
 fn req(url: &str) -> HttpRequest {
-    HttpRequest {
-        url: url.into(),
-        headers: vec![("Authorization".into(), "Bearer sk-test-not-real".into())],
-        body: b"{}".to_vec(),
-    }
+    HttpRequest::post(
+        url,
+        vec![("Authorization".into(), "Bearer sk-test-not-real".into())],
+        b"{}".to_vec(),
+    )
 }
 
 #[tokio::test]
 async fn replays_in_order_and_records_requests() {
     let t = ScriptedTransport::new(vec![
         Scripted::chunked("abcdefg", 3).with_header("x-id", "1"),
-        Scripted::Fail(ProviderError::new(ProviderErrorKind::Network, "down")),
+        Scripted::Fail(HttpError::new(HttpErrorKind::Network, "down")),
     ]);
     let mut reply = t.send(req("https://a.test/1")).await.unwrap();
     assert_eq!(reply.status, 200);
@@ -24,7 +24,7 @@ async fn replays_in_order_and_records_requests() {
     assert_eq!(read_body(reply.body.as_mut(), 100).await.unwrap(), b"defg");
     assert_eq!(
         t.send(req("https://a.test/2")).await.err().unwrap().kind,
-        ProviderErrorKind::Network
+        HttpErrorKind::Network
     );
     assert_eq!(
         t.send(req("https://a.test/3")).await.err().unwrap().message,

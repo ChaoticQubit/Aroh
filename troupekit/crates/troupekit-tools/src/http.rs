@@ -2,69 +2,21 @@ use crate::tool::ToolError;
 use async_trait::async_trait;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, LOCATION, USER_AGENT};
 use reqwest::redirect::Policy;
-use serde::Deserialize;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
+pub use troupekit_core::http::{
+    media_type, read_limited, Body, ChunkBody, HttpError, HttpErrorKind, HttpRequest, HttpResponse,
+    Method, Transport,
+};
 use url::{Host, Url};
 
 const AGENT: &str = concat!("troupekit/", env!("CARGO_PKG_VERSION"));
 
-/// HTTP method of a tool request.
-/// Deserializes from upper-case names such as `GET` and `POST`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
-pub enum Method {
-    Get,
-    Post,
-    Put,
-    Patch,
-    Delete,
-}
-
-/// One outgoing request. `accept` lists the media types a 2xx answer may
-/// have; empty accepts any. Debug prints header names only, so a request
-/// holding an API key can be logged safely.
-#[derive(Clone)]
-pub struct HttpRequest {
-    pub method: Method,
-    pub url: String,
-    pub headers: Vec<(String, String)>,
-    pub body: Option<Vec<u8>>,
-    pub accept: Vec<String>,
-}
-
-impl HttpRequest {
-    /// Builds a GET request for `url` with no headers, no body and any
-    /// accepted media type. Returns the request for further field edits.
-    pub fn get(url: &str) -> Self {
-        Self {
-            method: Method::Get,
-            url: url.to_string(),
-            headers: Vec::new(),
-            body: None,
-            accept: Vec::new(),
-        }
-    }
-}
-
-impl std::fmt::Debug for HttpRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let names: Vec<&str> = self.headers.iter().map(|(n, _)| n.as_str()).collect();
-        f.debug_struct("HttpRequest")
-            .field("method", &self.method)
-            .field("url", &self.url)
-            .field("headers", &names)
-            .field("body_bytes", &self.body.as_ref().map(Vec::len))
-            .field("accept", &self.accept)
-            .finish()
-    }
-}
-
-/// A received answer: status, final URL after redirects, lower-case media
-/// type without parameters, and the body cut at the size limit, with
-/// `truncated` set when bytes were dropped.
+/// A tool's view of an answer read into memory: status, final URL, lower-case
+/// media type without parameters, the body cut at the size limit, and
+/// `truncated` when bytes were dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HttpResponse {
+pub struct Received {
     pub status: u16,
     pub url: String,
     pub content_type: String,
@@ -72,13 +24,21 @@ pub struct HttpResponse {
     pub truncated: bool,
 }
 
-/// Sends tool HTTP requests. `GuardedHttp` is the real one; tests inject
-/// fakes. Returns `Ok` for any status the server sent, and `Err` when the
-/// request was blocked, failed in transport or broke a limit.
-#[async_trait]
-pub trait HttpTransport: Send + Sync {
-    /// Sends `req` and returns the final response.
-    async fn send(&self, req: HttpRequest) -> Result<HttpResponse, ToolError>;
+/// Sends `req` through `http` and reads the whole body into memory, at most
+/// `HttpLimits::default().max_body_bytes` even when the transport has no cap.
+/// Returns the answer, or the transport failure as a `ToolError`.
+pub async fn receive(http: &dyn Transport, req: HttpRequest) -> Result<Received, ToolError> {
+    let mut res = http.send(req).await?;
+    let content_type = res.content_type();
+    let (body, over) =
+        read_limited(res.body.as_mut(), HttpLimits::default().max_body_bytes).await?;
+    Ok(Received {
+        status: res.status,
+        url: res.url,
+        content_type,
+        body,
+        truncated: res.truncated || over,
+    })
 }
 
 /// Limits for one request, redirects included.
@@ -103,7 +63,8 @@ impl Default for HttpLimits {
 /// HTTP client that only reaches allowed addresses, public unicast by
 /// default. Each hop's host is resolved, every address checked and the
 /// connection pinned to a checked address; GET redirects are re-checked and
-/// a cross-origin hop drops all request headers. No proxy is used.
+/// a cross-origin hop drops all request headers. The body is read eagerly
+/// inside the time and size limits. No proxy is used.
 #[derive(Debug, Clone)]
 pub struct GuardedHttp {
     limits: HttpLimits,
@@ -127,9 +88,15 @@ impl GuardedHttp {
         Self { limits, allow }
     }
 
-    async fn follow(&self, req: HttpRequest) -> Result<HttpResponse, ToolError> {
-        let mut url = Url::parse(&req.url)
-            .map_err(|e| ToolError::InvalidArgs(format!("bad url `{}`: {e}", req.url)))?;
+    async fn follow(&self, req: HttpRequest) -> Result<HttpResponse, HttpError> {
+        let mut url = Url::parse(&req.url).map_err(|e| {
+            HttpError::new(
+                HttpErrorKind::Invalid,
+                format!("bad url `{}`: {e}", req.url),
+            )
+        })?;
+        let method = reqwest::Method::from_bytes(req.method.as_str().as_bytes())
+            .map_err(|e| HttpError::new(HttpErrorKind::Invalid, e.to_string()))?;
         let mut headers = req.headers;
         for _ in 0..=self.limits.max_redirects {
             let addr = pinned_addr(&url, self.allow).await?;
@@ -140,11 +107,9 @@ impl GuardedHttp {
             if let Some(Host::Domain(domain)) = url.host() {
                 builder = builder.resolve(domain, addr);
             }
-            let client = builder
-                .build()
-                .map_err(|e| ToolError::Http(e.to_string()))?;
+            let client = builder.build().map_err(|e| network(e.to_string()))?;
             let mut rb = client
-                .request(reqwest_method(req.method), url.clone())
+                .request(method.clone(), url.clone())
                 .header(USER_AGENT, AGENT);
             if !req.accept.is_empty() {
                 rb = rb.header(ACCEPT, req.accept.join(", "));
@@ -158,19 +123,17 @@ impl GuardedHttp {
             let mut response = rb
                 .send()
                 .await
-                .map_err(|e| ToolError::Http(format!("{url}: {}", e.without_url())))?;
+                .map_err(|e| network(format!("{url}: {}", e.without_url())))?;
             let status = response.status();
             if status.is_redirection() && req.method == Method::Get {
                 let location = response
                     .headers()
                     .get(LOCATION)
                     .and_then(|l| l.to_str().ok())
-                    .ok_or_else(|| {
-                        ToolError::Http(format!("{url}: redirect without a valid Location"))
-                    })?;
+                    .ok_or_else(|| network(format!("{url}: redirect without a valid Location")))?;
                 let next = url
                     .join(location)
-                    .map_err(|e| ToolError::Http(format!("bad redirect `{location}`: {e}")))?;
+                    .map_err(|e| network(format!("bad redirect `{location}`: {e}")))?;
                 if next.origin() != url.origin() {
                     headers.clear();
                 }
@@ -181,8 +144,7 @@ impl GuardedHttp {
                 .headers()
                 .get(CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.split(';').next())
-                .map(|v| v.trim().to_ascii_lowercase())
+                .map(media_type)
                 .unwrap_or_default();
             if status.is_success()
                 && !req.accept.is_empty()
@@ -191,18 +153,30 @@ impl GuardedHttp {
                     .iter()
                     .any(|a| a.eq_ignore_ascii_case(&content_type))
             {
-                return Err(ToolError::Http(format!(
-                    "{url}: content type `{content_type}` is not one of {}",
-                    req.accept.join(", ")
-                )));
+                return Err(HttpError::new(
+                    HttpErrorKind::Rejected,
+                    format!(
+                        "{url}: content type `{content_type}` is not one of {}",
+                        req.accept.join(", ")
+                    ),
+                ));
             }
+            let reply_headers = response
+                .headers()
+                .iter()
+                .filter_map(|(k, v)| {
+                    v.to_str()
+                        .ok()
+                        .map(|v| (k.as_str().to_owned(), v.to_owned()))
+                })
+                .collect();
             let max = self.limits.max_body_bytes;
             let mut body = Vec::new();
             let mut truncated = false;
             while let Some(chunk) = response
                 .chunk()
                 .await
-                .map_err(|e| ToolError::Http(format!("{url}: {}", e.without_url())))?
+                .map_err(|e| network(format!("{url}: {}", e.without_url())))?
             {
                 let room = max - body.len();
                 if chunk.len() > room {
@@ -216,59 +190,62 @@ impl GuardedHttp {
             return Ok(HttpResponse {
                 status: status.as_u16(),
                 url: url.to_string(),
-                content_type,
-                body,
+                headers: reply_headers,
+                body: Box::new(ChunkBody::new(vec![body])),
                 truncated,
             });
         }
-        Err(ToolError::Http(format!(
-            "more than {} redirects",
-            self.limits.max_redirects
-        )))
+        Err(HttpError::new(
+            HttpErrorKind::Rejected,
+            format!("more than {} redirects", self.limits.max_redirects),
+        ))
     }
 }
 
 #[async_trait]
-impl HttpTransport for GuardedHttp {
-    async fn send(&self, req: HttpRequest) -> Result<HttpResponse, ToolError> {
+impl Transport for GuardedHttp {
+    async fn send(&self, req: HttpRequest) -> Result<HttpResponse, HttpError> {
         let timeout = self.limits.timeout;
         tokio::time::timeout(timeout, self.follow(req))
             .await
-            .map_err(|_| ToolError::Http(format!("timed out after {} ms", timeout.as_millis())))?
+            .map_err(|_| {
+                HttpError::new(
+                    HttpErrorKind::Timeout,
+                    format!("timed out after {} ms", timeout.as_millis()),
+                )
+            })?
     }
 }
 
-fn reqwest_method(m: Method) -> reqwest::Method {
-    match m {
-        Method::Get => reqwest::Method::GET,
-        Method::Post => reqwest::Method::POST,
-        Method::Put => reqwest::Method::PUT,
-        Method::Patch => reqwest::Method::PATCH,
-        Method::Delete => reqwest::Method::DELETE,
-    }
+fn network(message: String) -> HttpError {
+    HttpError::new(HttpErrorKind::Network, message)
 }
 
-async fn pinned_addr(url: &Url, allow: fn(IpAddr) -> bool) -> Result<SocketAddr, ToolError> {
+fn blocked(message: String) -> HttpError {
+    HttpError::new(HttpErrorKind::Blocked, message)
+}
+
+async fn pinned_addr(url: &Url, allow: fn(IpAddr) -> bool) -> Result<SocketAddr, HttpError> {
     if !matches!(url.scheme(), "http" | "https") {
-        return Err(ToolError::Blocked(format!(
+        return Err(blocked(format!(
             "scheme `{}` is not http or https",
             url.scheme()
         )));
     }
     let port = url
         .port_or_known_default()
-        .ok_or_else(|| ToolError::Blocked(format!("{url}: no port")))?;
+        .ok_or_else(|| blocked(format!("{url}: no port")))?;
     let addrs: Vec<SocketAddr> = match url.host() {
         Some(Host::Ipv4(ip)) => vec![SocketAddr::new(IpAddr::V4(ip), port)],
         Some(Host::Ipv6(ip)) => vec![SocketAddr::new(IpAddr::V6(ip), port)],
         Some(Host::Domain(domain)) => tokio::net::lookup_host((domain, port))
             .await
-            .map_err(|e| ToolError::Http(format!("{domain}: {e}")))?
+            .map_err(|e| network(format!("{domain}: {e}")))?
             .collect(),
-        None => return Err(ToolError::Blocked(format!("{url}: no host"))),
+        None => return Err(blocked(format!("{url}: no host"))),
     };
     if let Some(bad) = addrs.iter().find(|a| !allow(a.ip())) {
-        return Err(ToolError::Blocked(format!(
+        return Err(blocked(format!(
             "{url}: address {} is not public",
             bad.ip()
         )));
@@ -276,7 +253,7 @@ async fn pinned_addr(url: &Url, allow: fn(IpAddr) -> bool) -> Result<SocketAddr,
     addrs
         .first()
         .copied()
-        .ok_or_else(|| ToolError::Http(format!("{url}: host has no address")))
+        .ok_or_else(|| network(format!("{url}: host has no address")))
 }
 
 /// Whether `ip` is a public unicast address a tool may reach.
@@ -326,18 +303,18 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
 }
 
 /// Test transport: answers from a queue and records every request.
-/// An empty queue answers `ToolError::Failed`. A response with an empty
+/// An empty queue answers a `Network` error. A response with an empty
 /// `url` gets the request's URL.
 #[cfg(test)]
 pub(crate) struct FakeHttp {
-    responses: std::sync::Mutex<std::collections::VecDeque<Result<HttpResponse, ToolError>>>,
+    responses: std::sync::Mutex<std::collections::VecDeque<Result<Received, HttpError>>>,
     requests: std::sync::Mutex<Vec<HttpRequest>>,
 }
 
 #[cfg(test)]
 impl FakeHttp {
     /// Builds a fake that returns `responses` in order.
-    pub(crate) fn new(responses: Vec<Result<HttpResponse, ToolError>>) -> std::sync::Arc<Self> {
+    pub(crate) fn new(responses: Vec<Result<Received, HttpError>>) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             responses: std::sync::Mutex::new(responses.into()),
             requests: std::sync::Mutex::new(Vec::new()),
@@ -345,8 +322,8 @@ impl FakeHttp {
     }
 
     /// Builds a response with `status`, media type `mime` and `body`.
-    pub(crate) fn reply(status: u16, mime: &str, body: &str) -> Result<HttpResponse, ToolError> {
-        Ok(HttpResponse {
+    pub(crate) fn reply(status: u16, mime: &str, body: &str) -> Result<Received, HttpError> {
+        Ok(Received {
             status,
             url: String::new(),
             content_type: mime.into(),
@@ -363,8 +340,8 @@ impl FakeHttp {
 
 #[cfg(test)]
 #[async_trait]
-impl HttpTransport for FakeHttp {
-    async fn send(&self, req: HttpRequest) -> Result<HttpResponse, ToolError> {
+impl Transport for FakeHttp {
+    async fn send(&self, req: HttpRequest) -> Result<HttpResponse, HttpError> {
         let url = req.url.clone();
         self.requests.lock().unwrap().push(req);
         let next = self
@@ -372,12 +349,13 @@ impl HttpTransport for FakeHttp {
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| Err(ToolError::Failed("no fake response left".into())));
-        next.map(|mut r| {
-            if r.url.is_empty() {
-                r.url = url;
-            }
-            r
+            .unwrap_or_else(|| Err(network("no fake response left".into())));
+        next.map(|r| HttpResponse {
+            status: r.status,
+            url: if r.url.is_empty() { url } else { r.url },
+            headers: vec![("content-type".into(), r.content_type)],
+            body: Box::new(ChunkBody::new(vec![r.body])),
+            truncated: r.truncated,
         })
     }
 }
@@ -445,11 +423,11 @@ mod tests {
             "http://10.0.0.1/",
             "http://localhost/",
         ] {
-            let err = http.send(HttpRequest::get(url)).await.unwrap_err();
+            let err = receive(&http, HttpRequest::get(url)).await.unwrap_err();
             assert!(matches!(err, ToolError::Blocked(_)), "{url}: {err}");
         }
         assert!(matches!(
-            http.send(HttpRequest::get("not a url")).await,
+            receive(&http, HttpRequest::get("not a url")).await,
             Err(ToolError::InvalidArgs(_))
         ));
     }
@@ -498,8 +476,7 @@ mod tests {
             "http://169.254.169.254/latest",
         ] {
             let (addr, seen) = serve(vec![redirect(target)]).await;
-            let err = local()
-                .send(HttpRequest::get(&format!("http://{addr}/start")))
+            let err = receive(&local(), HttpRequest::get(&format!("http://{addr}/start")))
                 .await
                 .unwrap_err();
             assert_eq!(seen.lock().unwrap().len(), 1, "first hop must be served");
@@ -519,7 +496,7 @@ mod tests {
         .await;
         let mut req = HttpRequest::get(&format!("http://{addr}/start"));
         req.accept = vec!["text/html".into()];
-        let got = local().send(req).await.unwrap();
+        let got = receive(&local(), req).await.unwrap();
         assert_eq!(seen.lock().unwrap().len(), 2);
         assert_eq!(
             (got.status, got.content_type.as_str(), got.body.as_slice()),
@@ -531,8 +508,7 @@ mod tests {
     #[tokio::test]
     async fn too_many_redirects_rejected() {
         let (addr, _) = serve((0..7).map(|_| redirect("/again")).collect()).await;
-        let err = local()
-            .send(HttpRequest::get(&format!("http://{addr}/")))
+        let err = receive(&local(), HttpRequest::get(&format!("http://{addr}/")))
             .await
             .unwrap_err();
         assert!(
@@ -551,7 +527,7 @@ mod tests {
         .await;
         let mut req = HttpRequest::get(&format!("http://{first}/start"));
         req.headers.push(("X-Key".into(), "k-123".into()));
-        let got = local().send(req).await.unwrap();
+        let got = receive(&local(), req).await.unwrap();
         assert_eq!(got.body, b"done");
         let first_log = seen_first.lock().unwrap().clone();
         assert!(
@@ -571,10 +547,12 @@ mod tests {
             max_body_bytes: 1024,
             ..HttpLimits::default()
         };
-        let got = GuardedHttp::with_policy(limits, test_policy)
-            .send(HttpRequest::get(&format!("http://{addr}/")))
-            .await
-            .unwrap();
+        let got = receive(
+            &GuardedHttp::with_policy(limits, test_policy),
+            HttpRequest::get(&format!("http://{addr}/")),
+        )
+        .await
+        .unwrap();
         assert_eq!(got.body.len(), 1024);
         assert!(got.truncated);
     }
@@ -584,7 +562,7 @@ mod tests {
         let (addr, _) = serve(vec![ok("image/png", "png")]).await;
         let mut req = HttpRequest::get(&format!("http://{addr}/"));
         req.accept = vec!["text/html".into()];
-        let err = local().send(req).await.unwrap_err();
+        let err = receive(&local(), req).await.unwrap_err();
         assert!(
             matches!(err, ToolError::Http(ref m) if m.contains("image/png")),
             "{err}"
@@ -599,7 +577,7 @@ mod tests {
             body: Some(b"{}".to_vec()),
             ..HttpRequest::get(&format!("http://{addr}/"))
         };
-        let got = local().send(req).await.unwrap();
+        let got = receive(&local(), req).await.unwrap();
         assert_eq!(got.status, 302);
         assert_eq!(seen.lock().unwrap().len(), 1);
     }
@@ -616,10 +594,12 @@ mod tests {
             timeout: Duration::from_millis(200),
             ..HttpLimits::default()
         };
-        let err = GuardedHttp::with_policy(limits, test_policy)
-            .send(HttpRequest::get(&format!("http://{addr}/")))
-            .await
-            .unwrap_err();
+        let err = receive(
+            &GuardedHttp::with_policy(limits, test_policy),
+            HttpRequest::get(&format!("http://{addr}/")),
+        )
+        .await
+        .unwrap_err();
         assert!(
             matches!(err, ToolError::Http(ref m) if m.contains("timed out")),
             "{err}"

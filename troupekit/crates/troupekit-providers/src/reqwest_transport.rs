@@ -1,11 +1,12 @@
-use crate::transport::{Body, HttpRequest, HttpResponse, Transport};
+use crate::transport::{Body, HttpError, HttpErrorKind, HttpRequest, HttpResponse, Transport};
 use async_trait::async_trait;
 use std::time::Duration;
-use troupekit_core::error::{ProviderError, ProviderErrorKind};
+use troupekit_core::error::ProviderError;
 
-/// The default HTTP transport, on reqwest with rustls.
+/// The default HTTP transport for model providers, on reqwest with rustls.
 /// A connect timeout and a per-read timeout turn a silent server into
-/// `Stalled`; other failures are `Network`, with URLs stripped.
+/// `Timeout`; other failures are `Network`, with URLs stripped. It does not
+/// guard addresses: give tools a guarded transport instead.
 #[derive(Debug, Clone)]
 pub struct ReqwestTransport {
     client: reqwest::Client,
@@ -41,13 +42,19 @@ impl ReqwestTransport {
 
 #[async_trait]
 impl Transport for ReqwestTransport {
-    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ProviderError> {
-        let mut builder = self.client.post(&request.url).body(request.body);
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
+        let method = reqwest::Method::from_bytes(request.method.as_str().as_bytes())
+            .map_err(|e| HttpError::new(HttpErrorKind::Invalid, e.to_string()))?;
+        let mut builder = self.client.request(method, &request.url);
         for (name, value) in &request.headers {
             builder = builder.header(name.as_str(), value.as_str());
         }
+        if let Some(body) = request.body {
+            builder = builder.body(body);
+        }
         let reply = builder.send().await.map_err(map_error)?;
         let status = reply.status().as_u16();
+        let url = reply.url().to_string();
         let headers = reply
             .headers()
             .iter()
@@ -59,8 +66,10 @@ impl Transport for ReqwestTransport {
             .collect();
         Ok(HttpResponse {
             status,
+            url,
             headers,
             body: Box::new(ReqwestBody(reply)),
+            truncated: false,
         })
     }
 }
@@ -69,7 +78,7 @@ struct ReqwestBody(reqwest::Response);
 
 #[async_trait]
 impl Body for ReqwestBody {
-    async fn chunk(&mut self) -> Result<Option<Vec<u8>>, ProviderError> {
+    async fn chunk(&mut self) -> Result<Option<Vec<u8>>, HttpError> {
         Ok(self
             .0
             .chunk()
@@ -79,11 +88,11 @@ impl Body for ReqwestBody {
     }
 }
 
-fn map_error(err: reqwest::Error) -> ProviderError {
+fn map_error(err: reqwest::Error) -> HttpError {
     let kind = if err.is_timeout() {
-        ProviderErrorKind::Stalled
+        HttpErrorKind::Timeout
     } else {
-        ProviderErrorKind::Network
+        HttpErrorKind::Network
     };
     let err = err.without_url();
     let mut message = err.to_string();
@@ -93,5 +102,5 @@ fn map_error(err: reqwest::Error) -> ProviderError {
         message.push_str(&cause.to_string());
         source = cause.source();
     }
-    ProviderError::new(kind, message)
+    HttpError::new(kind, message)
 }

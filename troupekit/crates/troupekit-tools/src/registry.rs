@@ -121,19 +121,7 @@ impl ToolRegistry {
             .get(name)
             .map(|&i| &self.entries[i])
             .ok_or_else(|| ToolError::UnknownTool(name.to_string()))?;
-        let errors: Vec<String> = entry
-            .validator
-            .iter_errors(&args)
-            .take(MAX_REPORTED_ERRORS)
-            .map(|e| {
-                let path = e.instance_path().to_string();
-                if path.is_empty() {
-                    e.to_string()
-                } else {
-                    format!("{path}: {e}")
-                }
-            })
-            .collect();
+        let errors = schema_errors(&entry.validator, &args);
         if !errors.is_empty() {
             return Err(ToolError::InvalidArgs(errors.join("; ")));
         }
@@ -141,11 +129,18 @@ impl ToolRegistry {
     }
 }
 
-fn check_name(name: &str) -> Result<(), ToolError> {
+/// Reports whether `name` is a valid tool name: 1 to 64 characters of
+/// `[A-Za-z0-9_-]`. The registry refuses any other name, and persona
+/// loaders check tool lists with it.
+pub fn valid_tool_name(name: &str) -> bool {
     let ok_chars = name
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
-    if name.is_empty() || name.len() > MAX_NAME_LEN || !ok_chars {
+    !name.is_empty() && name.len() <= MAX_NAME_LEN && ok_chars
+}
+
+fn check_name(name: &str) -> Result<(), ToolError> {
+    if !valid_tool_name(name) {
         return Err(ToolError::InvalidSpec(format!(
             "tool name `{name}` must be 1 to {MAX_NAME_LEN} of [A-Za-z0-9_-]"
         )));
@@ -153,7 +148,28 @@ fn check_name(name: &str) -> Result<(), ToolError> {
     Ok(())
 }
 
-fn compile_schema(schema: &Value) -> Result<jsonschema::Validator, String> {
+/// Lists why `value` breaks the schema of `validator`, at most five
+/// messages, each prefixed with the JSON pointer of the bad value.
+/// Returns an empty list when the value is valid.
+pub fn schema_errors(validator: &jsonschema::Validator, value: &Value) -> Vec<String> {
+    validator
+        .iter_errors(value)
+        .take(MAX_REPORTED_ERRORS)
+        .map(|e| {
+            let path = e.instance_path().to_string();
+            if path.is_empty() {
+                e.to_string()
+            } else {
+                format!("{path}: {e}")
+            }
+        })
+        .collect()
+}
+
+/// Compiles an object `schema` into a validator, with no remote or file
+/// `$ref` resolution. Returns an error message when the top level is not
+/// `"type": "object"` or the schema does not compile.
+pub fn compile_schema(schema: &Value) -> Result<jsonschema::Validator, String> {
     if schema.get("type").and_then(Value::as_str) != Some("object") {
         return Err("schema must be an object schema with \"type\": \"object\"".into());
     }

@@ -32,7 +32,7 @@ async fn connect_with_returns_a_metered_model_for_the_vendor() {
     let sent = &transport.sent()[0];
     assert_eq!(sent.url, "https://api.anthropic.com/v1/messages");
     assert_eq!(sent.header("x-api-key"), Some("test-key"));
-    let body: Value = serde_json::from_slice(&sent.body).unwrap();
+    let body: Value = serde_json::from_slice(sent.body.as_deref().unwrap()).unwrap();
     assert_eq!(body["model"], "claude-opus-5-5");
     assert!(body.get("temperature").is_none());
 }

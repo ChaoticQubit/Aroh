@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde_json::Value;
+use troupekit_core::http::{HttpError, HttpErrorKind};
 use troupekit_core::ids::RunId;
 use troupekit_core::tool::ToolSpec;
 
@@ -70,6 +71,16 @@ pub enum ToolError {
     Decode(String),
     #[error("failed: {0}")]
     Failed(String),
+}
+
+impl From<HttpError> for ToolError {
+    fn from(e: HttpError) -> Self {
+        match e.kind {
+            HttpErrorKind::Invalid => ToolError::InvalidArgs(e.message),
+            HttpErrorKind::Blocked => ToolError::Blocked(e.message),
+            _ => ToolError::Http(e.message),
+        }
+    }
 }
 
 /// A capability an agent can call: a spec the model sees and an async call.
