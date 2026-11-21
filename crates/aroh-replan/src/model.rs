@@ -168,6 +168,7 @@ pub struct Infeasible {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Proposal {
     pub diff: Vec<DiffOp>,
+    #[serde(default)]
     pub infeasible: Vec<Infeasible>,
 }
 
@@ -192,4 +193,5 @@ pub enum Violation {
     OutsideWindow { action_id: String },
     AfterDeadline { action_id: String },
     Overlap { action_id: String, other_id: String },
+    BadJson { message: String },
 }

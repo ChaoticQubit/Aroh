@@ -8,6 +8,8 @@ pub use plan::plan;
 pub use validate::validate;
 
 use chrono::{DateTime, Duration, Utc};
+mod agent;
+pub use agent::*;
 
 /// Small iff at most 3 ops and every op is a move or resize; else Big.
 pub fn classify(diff: &[DiffOp]) -> Size {

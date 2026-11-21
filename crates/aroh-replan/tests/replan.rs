@@ -225,3 +225,28 @@ fn detects_missed_after_grace() {
     ];
     assert_eq!(detect_missed(&actions, t("2026-11-23T10:00:00Z"), 15), vec!["early".to_string(), "late".to_string()]);
 }
+
+#[test]
+fn check_llm_output_rejects_overlap_and_bad_json() {
+    let input = week_input();
+    let json = r#"{"diff":[{"action_id":"a24","op":"move",
+        "before":{"start_at":"2026-11-24T09:00:00Z","end_at":"2026-11-24T10:00:00Z","est_minutes":60},
+        "after":{"start_at":"2026-11-23T09:30:00Z","end_at":"2026-11-23T10:30:00Z","est_minutes":60}}]}"#;
+    let violations = check_llm_output(&input, json).unwrap_err();
+    assert!(violations.contains(&Violation::Overlap { action_id: "a24".into(), other_id: "a23".into() }));
+    assert!(matches!(check_llm_output(&input, "not json").unwrap_err()[0], Violation::BadJson { .. }));
+    let good = serde_json::to_string(&plan(&input)).unwrap();
+    assert_eq!(check_llm_output(&input, &good).unwrap(), plan(&input));
+}
+
+#[test]
+fn deterministic_agent_returns_deterministic_proposal() {
+    let input = week_input();
+    let deterministic = plan(&input);
+    let got = futures_lite_block_on(DeterministicAgent.propose(&input, deterministic.clone()));
+    assert_eq!(got, deterministic);
+}
+
+fn futures_lite_block_on<F: std::future::Future>(future: F) -> F::Output {
+    tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(future)
+}
