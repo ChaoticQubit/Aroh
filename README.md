@@ -39,7 +39,7 @@ pnpm tauri dev
 
 `pnpm tauri dev` serves the UI on port 1420 and opens the app window. For a debug app without a dev server, run `pnpm tauri build --debug --no-bundle` and start `target/debug/aroh` from the repo root. Windows 768 px and wider show the sidebar layout; narrower ones show the phone tab bar. On the Mac, reminders come from an in-app timer, so they only fire while the app runs.
 
-Debug builds read two optional variables: `AROH_DEV_CLAUDE_KEY` saves a Claude key to the keychain, and `AROH_DEV_SCRIPT` names a JavaScript file that runs in the window 3 s after start. Release builds contain neither.
+Debug builds read one optional variable: `AROH_DEV_SCRIPT` names a JavaScript file that runs in the window 3 s after start. A script can run `window.__TAURI_INTERNALS__.invoke("app_dev_seed")` to load the six-pack sample. Release builds contain neither.
 
 ## Run in the iOS simulator
 

@@ -1,4 +1,6 @@
-import type { ActionView, CategorySlot, ChatMessage, ComponentSpec, Point, Ring, ViewSpec } from '../contract';
+import { catalog } from '$lib/app/catalog';
+import type { ActionView, CategorySlot, ChatMessage, ComponentSpec, Point, Ring, SpecOf, ViewSpec } from '../contract';
+import type { GoalHeader, GoalRow, InboxItem, ProviderView, SearchView, SettingsView } from '../screens/types';
 
 /** Zone every mockup formats times in. Sample instants are written in this zone. */
 export const mockZone = 'UTC';
@@ -239,18 +241,57 @@ export const sixpackView: ViewSpec = {
 	]
 };
 
-/** Model providers the owner can pick in Settings. */
-export const providerCatalog: { id: string; name: string; protocol: string; models: string[]; keySet: boolean; selfHosted: boolean }[] = [
-	{ id: 'anthropic', name: 'Anthropic', protocol: 'anthropic', models: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'], keySet: true, selfHosted: false },
-	{ id: 'openai', name: 'OpenAI', protocol: 'openai', models: ['gpt-5', 'gpt-5-mini'], keySet: false, selfHosted: false },
-	{ id: 'gemini', name: 'Google Gemini', protocol: 'gemini', models: ['gemini-2.5-pro', 'gemini-2.5-flash'], keySet: false, selfHosted: false },
-	{ id: 'openrouter', name: 'OpenRouter', protocol: 'openai-compatible', models: ['openrouter/auto'], keySet: false, selfHosted: false },
-	{ id: 'groq', name: 'Groq', protocol: 'openai-compatible', models: ['llama-3.3-70b-versatile'], keySet: false, selfHosted: false },
-	{ id: 'ollama', name: 'Ollama (self-hosted)', protocol: 'ollama', models: ['qwen3:8b', 'llama3.1:8b'], keySet: true, selfHosted: true }
-];
+/** Model providers the owner can pick in Settings, with sample key flags. */
+export const providerCatalog: ProviderView[] = catalog.map((p) => ({ ...p, keySet: p.id === 'anthropic' || p.id === 'ollama' }));
 
 /** Web search providers configured in Settings, in fallback order. */
-export const searchProviders: { name: string; detail: string; keySet: boolean }[] = [
+export const searchProviders: SearchView[] = [
 	{ name: 'Brave Search', detail: 'API key', keySet: true },
 	{ name: 'SearXNG', detail: 'https://search.home.lan', keySet: true }
 ];
+
+/** The Settings screen's sample values. */
+export const sixpackSettings: SettingsView = {
+	providers: providerCatalog,
+	providerId: 'anthropic',
+	model: 'claude-opus-5-5',
+	search: searchProviders,
+	serverUrl: 'https://aroh-engine.example.com',
+	budgetAll: 20,
+	budgetGoal: 8,
+	calendars: true,
+	health: false
+};
+
+/** The Goal screen's header facts for the sample goal. */
+export const sixpackHeader: GoalHeader = {
+	id: sixpackGoal.id,
+	title: sixpackGoal.title,
+	category: sixpackGoal.category,
+	slot: sixpackGoal.slot,
+	deadline: sixpackGoal.deadline,
+	autonomy: sixpackGoal.autonomy,
+	personas: sixpackGoal.personas,
+	lead: { unit: 'kg', now: sixpackGoal.trackers[0].now, target: sixpackGoal.trackers[0].target }
+};
+
+/** The Goals list: the sample goal plus the two goals its busy blocks come from. */
+export const sixpackGoals: GoalRow[] = [
+	{ id: sixpackGoal.id, title: sixpackGoal.title, category: sixpackGoal.category, slot: sixpackGoal.slot, deadline: sixpackGoal.deadline, autonomy: sixpackGoal.autonomy },
+	{ id: 'g-piano', title: 'Learn piano', category: 'Hobby and Skill', slot: 4, deadline: null, autonomy: 'Ask' },
+	{ id: 'g-save', title: 'Save $10k', category: 'Financial', slot: 3, deadline: '2027-06-30T00:00:00Z', autonomy: 'Balanced' }
+];
+
+/** Inbox cards keyed by a sample row id, in the groups the Inbox screen lists. */
+export const sixpackInboxItems: { approvals: InboxItem[]; suggestions: InboxItem[]; insights: InboxItem[] } = {
+	approvals: sixpackInbox.approvals.map((spec, i) => ({ id: `p-${i}`, spec })),
+	suggestions: sixpackInbox.suggestions.map((spec, i) => ({ id: `s-${i}`, spec })),
+	insights: sixpackInbox.insights.map((spec, i) => ({ id: `i-${i}`, spec }))
+};
+
+/** The Log screen's sample: the weight check-in, one text waiting for the engine and recent meals. */
+export const sixpackLog: { checkIns: { trackerId: string; spec: ComponentSpec }[]; waiting: SpecOf<'log_list'>; recent: SpecOf<'log_list'> } = {
+	checkIns: [{ trackerId: 't-weight', spec: weightCheckIn }],
+	waiting: { kind: 'log_list', label: 'Waiting for the engine', entries: [{ at: '2026-11-26T08:05:00Z', text: 'Coffee with oat milk and a banana' }] },
+	recent: { kind: 'log_list', label: 'Recent entries', entries: sixpackEntries.meals }
+};

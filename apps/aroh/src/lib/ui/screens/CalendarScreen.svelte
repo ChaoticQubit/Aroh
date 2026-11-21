@@ -7,20 +7,23 @@
 	import CalendarGrid from './CalendarGrid.svelte';
 	import { getClock } from '$lib/ui/clock';
 	import { daysBetween, formatDate, formatYmd, mondayOf, shiftDay, shiftMonth } from '$lib/ui/format';
-	import { categories, sixpackActions } from '$lib/ui/mockdata/sixpack';
+	import type { ActionView } from '$lib/ui/contract';
+	import type { CategoryView } from './types';
 
 	/**
 	 * Calendar: toolbar with Today, previous, next and the Day, Week, Month switch, category chips,
 	 * then a week hour grid on wide containers or a week strip over a day grid on phones.
 	 */
+	let { actions, categories }: { actions: ActionView[]; categories: CategoryView[] } = $props();
+
 	const { now, zone } = getClock();
 	const today = formatYmd(now, zone);
 	const monday = mondayOf(today);
 	let view = $state<'day' | 'week' | 'month'>('week');
 	let anchor = $state(today);
 	let hidden = $state<number[]>([]);
-	const used = categories.filter((c) => sixpackActions.some((a) => a.category === c.slot));
-	const visible = $derived(sixpackActions.filter((a) => !hidden.includes(a.category)));
+	const used = $derived(categories.filter((c) => actions.some((a) => a.category === c.slot)));
+	const visible = $derived(actions.filter((a) => !hidden.includes(a.category)));
 	const weekStart = $derived(shiftDay(monday, Math.floor(daysBetween(monday, anchor) / 7) * 7));
 	const week = $derived(Array.from({ length: 7 }, (_, i) => shiftDay(weekStart, i)));
 	const monthStart = $derived(shiftMonth(anchor, 0));

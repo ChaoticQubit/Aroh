@@ -1,0 +1,124 @@
+import { invoke } from '@tauri-apps/api/core';
+
+/** A goal category row. */
+export type Category = { id: string; name: string; color: string; seeded: boolean };
+
+/** A goal row. `deadline` is "YYYY-MM-DD". */
+export type Goal = {
+	id: string;
+	category_id: string | null;
+	title: string;
+	context: string | null;
+	deadline: string | null;
+	status: 'draft' | 'active' | 'paused' | 'done' | 'archived';
+	autonomy: 'ask' | 'balanced' | 'auto';
+	created_at: string;
+};
+
+/** An action row; times are RFC 3339 UTC. */
+export type Action = {
+	id: string;
+	goal_id: string;
+	series_id: string | null;
+	occurrence: string | null;
+	title: string;
+	notes: string | null;
+	start_at: string;
+	end_at: string;
+	status: 'planned' | 'done' | 'missed' | 'skipped';
+	locked: boolean;
+	done_at: string | null;
+};
+
+/** One field of a tracker's schema. */
+export type TrackerField = { key: string; label: string; kind: 'number' | 'text' | 'bool' | 'choice'; unit: string | null; choices: string[] };
+
+/** A tracker row with its check-in cadence; weekdays are "Mon" to "Sun", `at` is local "HH:MM". */
+export type Tracker = {
+	id: string;
+	goal_id: string;
+	name: string;
+	fields: TrackerField[];
+	cadence: { freq: 'daily' | 'weekly'; weekdays: string[]; at: string } | null;
+};
+
+/** A tracker entry row: values keyed by field key. */
+export type TrackerEntry = { id: string; tracker_id: string; data: Record<string, unknown>; source: 'check_in' | 'log' | 'health'; raw_text: string | null; logged_at: string };
+
+/** A plan change awaiting the owner; `diff` follows the shape in the pod 10 plan. */
+export type Proposal = { id: string; goal_id: string; summary: string; diff: unknown; size: 'small' | 'big'; status: string; created_at: string };
+
+/** A suggested user preference. */
+export type Preference = { id: string; fact: string; source: string; noted_at: string; confirmed: boolean };
+
+/** A persona row; only its name and goal are shown. */
+export type Persona = { id: string; goal_id: string | null; name: string };
+
+/** The chosen model provider. Keys never come back from the store. */
+export type ProviderSetting = { id: string; vendor: string; model: string; is_default: boolean };
+
+/** A configured web search provider. */
+export type SearchSetting = { id: string; label: string; provider: string; base_url: string | null; priority: number; enabled: boolean };
+
+/** A spend limit row. */
+export type Budget = { id: string; scope: 'call' | 'run' | 'goal_month' | 'user_month'; goal_id: string | null; limit_usd_micros: number };
+
+/** Every row the screens read, as `app_snapshot` returns it. */
+export type Snapshot = {
+	user_id: string;
+	categories: Category[];
+	goals: Goal[];
+	actions: Action[];
+	trackers: Tracker[];
+	entries: TrackerEntry[];
+	proposals: Proposal[];
+	preferences: Preference[];
+	personas: Persona[];
+	providers: ProviderSetting[];
+	search: SearchSetting[];
+	budgets: Budget[];
+	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health', string>>;
+	pending_logs: { text: string; at: string }[];
+};
+
+/** What a free-text log became. */
+export type Logged = { kind: 'entry'; entry: TrackerEntry } | { kind: 'queued' };
+
+/** Reads the snapshot with actions overlapping `[from, to)`. */
+export const snapshot = (from: string, to: string) => invoke<Snapshot>('app_snapshot', { from, to });
+
+/** Runs the start-up tick (seed, materialize, mark missed) now. */
+export const tick = () => invoke<{ seeded: number; materialized: number; missed: number }>('app_tick');
+
+/** Sets an action to planned, done or skipped. */
+export const setActionStatus = (id: string, status: 'planned' | 'done' | 'skipped') => invoke<Action>('app_set_action_status', { id, status });
+
+/** Writes a check-in answer: values keyed by tracker field key. */
+export const addEntry = (trackerId: string, data: Record<string, unknown>) => invoke<TrackerEntry>('app_add_entry', { trackerId, data });
+
+/** Logs free text as an entry, or queues it for the engine. */
+export const logText = (text: string) => invoke<Logged>('app_log_text', { text });
+
+/** Applies or rejects an open proposal. */
+export const decideProposal = (id: string, apply: boolean) => invoke<Proposal>('app_decide_proposal', { id, apply });
+
+/** Confirms or dismisses a suggested preference. */
+export const decidePreference = (id: string, confirm: boolean) => invoke<null>('app_decide_preference', { id, confirm });
+
+/** Sets a goal's autonomy level. */
+export const setAutonomy = (goalId: string, autonomy: Goal['autonomy']) => invoke<Goal>('app_set_autonomy', { goalId, autonomy });
+
+/** Makes a vendor and model the default provider. Never takes a key. */
+export const saveProvider = (vendor: string, model: string) => invoke<ProviderSetting>('app_save_provider', { vendor, model });
+
+/** Sets the monthly budget over all goals in US dollars; null removes it. */
+export const saveBudget = (usd: number | null) => invoke<null>('app_save_budget', { usd });
+
+/** Stores one device setting. */
+export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health', value: string) => invoke<null>('app_set_setting', { name, value });
+
+/** Asks for notification permission once and reports whether it is granted. */
+export const notificationPermission = () => invoke<boolean>('app_notification_permission');
+
+/** Debug builds only: loads the six-pack sample into an empty store. */
+export const devSeed = () => invoke<boolean>('app_dev_seed');

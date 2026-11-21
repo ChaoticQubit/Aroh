@@ -19,17 +19,12 @@ tauri = { version = "2", features = [] }
 serde.workspace = true
 serde_json.workspace = true
 rusqlite.workspace = true
-aroh-core.workspace = true
-aroh-reminders = { path = "../../../crates/aroh-reminders" }
+aroh-app.workspace = true
+aroh-domain.workspace = true
+aroh-store.workspace = true
 tauri-plugin-notification = "2.7"
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono.workspace = true
+chrono-tz.workspace = true
 time = "0.3"
-uuid.workspace = true
-aroh-sync.workspace = true
-aroh-intake = { path = "../../../crates/aroh-intake" }
-aroh-agents = { path = "../../../crates/aroh-agents" }
 tauri-plugin-aroh-speech = { path = "../../../crates/tauri-plugin-aroh-speech" }
-aroh-plugins = { path = "../../../crates/aroh-plugins" }
-aroh-replan = { path = "../../../crates/aroh-replan" }
-chrono-tz = { version = "0.10", default-features = false }
 iana-time-zone = "0.1"

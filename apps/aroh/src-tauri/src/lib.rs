@@ -1,22 +1,31 @@
-//! Aroh Tauri app: opens the local database and registers every pod's commands.
+//! Aroh Tauri app: opens the rebuild store, runs the start-up tick and registers the commands.
 
 mod commands;
+mod notify;
 
-use aroh_core::hlc::{self, Hlc};
+use aroh_domain::hlc::{self, Hlc};
+use chrono::Utc;
+use chrono_tz::Tz;
 use rusqlite::Connection;
 use std::path::Path;
 use std::sync::Mutex;
 use tauri::Manager;
 
-/// Database connection and HLC clock shared by all commands. Lock `core` for every read or write.
+/// Store connection, clock and local user shared by all commands. Lock `core` for every read or write.
 pub struct AppState {
     pub core: Mutex<Core>,
 }
 
-/// The local SQLite connection and this device's clock.
+/// The local SQLite connection, this device's clock and the local user id.
 pub struct Core {
     pub conn: Connection,
     pub clock: Hlc,
+    pub user_id: String,
+}
+
+/// The device's IANA zone, or UTC when the OS does not report a known one.
+pub fn zone() -> Tz {
+    iana_time_zone::get_timezone().ok().and_then(|name| name.parse().ok()).unwrap_or(Tz::UTC)
 }
 
 fn load_node_id(dir: &Path) -> std::io::Result<String> {
@@ -34,41 +43,29 @@ fn load_node_id(dir: &Path) -> std::io::Result<String> {
 fn open_core(app: &tauri::App) -> Result<Core, Box<dyn std::error::Error>> {
     let dir = app.path().app_data_dir()?;
     std::fs::create_dir_all(&dir)?;
-    let conn = aroh_core::db::open(&dir.join("aroh.sqlite3"))?;
+    let conn = aroh_store::db::open(&dir.join("aroh-store.sqlite3"))?;
     let clock = Hlc::new(load_node_id(&dir)?);
-    Ok(Core { conn, clock })
+    let user_id = aroh_app::local::user_id(&conn)?;
+    Ok(Core { conn, clock, user_id })
 }
 
-/// Reschedules reminders. Runs at app start and on resume.
+/// Runs the start-up tick (seed, materialize, mark missed) and reschedules reminders.
+/// Runs at app start and on resume; the UI also calls `app_tick` when the date changes.
 fn on_start_or_resume(app: &tauri::AppHandle) {
-    if let Err(e) = commands::calendar::sync_reminders(app) {
-        eprintln!("aroh: sync_reminders failed: {e}");
+    let state = app.state::<AppState>();
+    if let Err(e) = commands::with_core(&state, |c| aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now())) {
+        eprintln!("aroh: tick failed: {e}");
+    }
+    if let Err(e) = notify::sync(app) {
+        eprintln!("aroh: reminders not scheduled: {e}");
     }
 }
 
-/// On resume, replans missed actions in the background; check_missed reschedules reminders itself.
-/// At start the UI's ReplanWatcher calls check_missed once its event listeners exist.
-#[cfg(mobile)]
-fn on_resume(app: &tauri::AppHandle) {
-    on_start_or_resume(app);
-    let app = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = commands::replan::check_missed(app).await {
-            eprintln!("aroh: check_missed failed: {e}");
-        }
-    });
-}
-
-/// Debug builds only: saves `AROH_DEV_CLAUDE_KEY` to the keychain and, three seconds after start,
-/// evaluates the JavaScript file at `AROH_DEV_SCRIPT` in the main window. Simulator checks use it
-/// to drive the real UI where no tap tool exists. Release builds do not contain it.
+/// Debug builds only: three seconds after start, evaluates the JavaScript file at
+/// `AROH_DEV_SCRIPT` in the main window. Simulator checks use it to drive the real UI
+/// where no tap tool exists. Release builds do not contain it.
 #[cfg(debug_assertions)]
-fn dev_hooks(app: &tauri::App) {
-    if let Ok(key) = std::env::var("AROH_DEV_CLAUDE_KEY") {
-        if let Err(e) = aroh_core::keychain::set_claude_api_key(key.trim()) {
-            eprintln!("dev key not saved: {e}");
-        }
-    }
+fn dev_script(app: &tauri::App) {
     let Ok(path) = std::env::var("AROH_DEV_SCRIPT") else { return };
     let Some(window) = app.get_webview_window("main") else { return };
     std::thread::spawn(move || {
@@ -89,68 +86,33 @@ pub fn run() {
         .setup(|app| {
             let core = open_core(app)?;
             app.manage(AppState { core: Mutex::new(core) });
-            app.manage(commands::calendar::ReminderState::default());
-            if let Err(e) = commands::intake::sync_checkin(app.handle(), &app.state::<AppState>()) {
-                eprintln!("daily check-in not scheduled: {e}");
-            }
+            app.manage(notify::ReminderState::default());
             on_start_or_resume(app.handle());
             #[cfg(debug_assertions)]
-            dev_hooks(app);
+            dev_script(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::core::list_goals,
-            commands::core::create_goal,
-            commands::core::update_goal,
-            commands::core::delete_goal,
-            commands::core::list_actions,
-            commands::core::create_action,
-            commands::core::update_action,
-            commands::core::delete_action,
-            commands::core::claude_key_status,
-            commands::core::save_claude_key,
-            commands::core::clear_claude_key,
-            commands::calendar::calendar_list_actions,
-            commands::calendar::calendar_set_status,
-            commands::calendar::calendar_move_action,
-            commands::calendar::calendar_get_reminder_settings,
-            commands::calendar::calendar_set_reminder_settings,
-            commands::calendar::calendar_ensure_notification_permission,
-            commands::sync::sync_configure,
-            commands::sync::sync_sign_in,
-            commands::sync::sync_sign_out,
-            commands::sync::sync_now,
-            commands::sync::sync_status,
-            commands::intake::intake_log_text,
-            commands::intake::intake_log_chip,
-            commands::intake::intake_list_today,
-            commands::intake::intake_totals,
-            commands::intake::intake_set_targets,
-            commands::intake::intake_get_checkin,
-            commands::intake::intake_set_checkin,
-            commands::intake::intake_checkin_question,
-            commands::plugins::plugins_list,
-            commands::plugins::plugins_model,
-            commands::plugins::plugins_set_enabled,
-            commands::plugins::plugins_data,
-            commands::replan::check_missed,
-            commands::replan::replan_list_proposed,
-            commands::replan::replan_apply,
-            commands::replan::replan_reject,
-            commands::replan::replan_undo,
-            commands::goals::goals_create,
-            commands::goals::goals_analyze,
-            commands::goals::goals_plan,
-            commands::goals::goals_approve,
-            commands::goals::goals_detail,
+            commands::app::app_snapshot,
+            commands::app::app_tick,
+            commands::app::app_set_action_status,
+            commands::app::app_add_entry,
+            commands::app::app_log_text,
+            commands::app::app_decide_proposal,
+            commands::app::app_decide_preference,
+            commands::app::app_set_autonomy,
+            commands::app::app_save_provider,
+            commands::app::app_save_budget,
+            commands::app::app_set_setting,
+            commands::app::app_notification_permission,
+            commands::app::app_dev_seed,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app, _event| {
             #[cfg(mobile)]
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } = _event {
-                on_resume(_app);
-                commands::sync::on_resume(_app);
+                on_start_or_resume(_app);
             }
         });
 }

@@ -1,23 +1,30 @@
 <script lang="ts">
-	import Camera from '@lucide/svelte/icons/camera';
-	import Mic from '@lucide/svelte/icons/mic';
-	import Send from '@lucide/svelte/icons/send';
-	import { Button } from '$lib/ui/primitives/button';
 	import Render from '../components/Render.svelte';
+	import QuickLog from '../components/QuickLog.svelte';
 	import { getClock } from '$lib/ui/clock';
 	import { formatDate, formatDuration, formatTime, formatYmd } from '$lib/ui/format';
-	import { sixpackActions, sixpackInbox, weightCheckIn } from '$lib/ui/mockdata/sixpack';
+	import type { ActionView, ComponentSpec, OnChange } from '$lib/ui/contract';
 
-	/** Today: date header, next action, check-in, today's actions, one insight and the quick-log bar. */
+	/**
+	 * Today: date header, next action, check-in, today's actions, one insight and the quick-log bar.
+	 * `onaction` gets `{ id, status }`, `oncheckin` the answer, `onlog` the quick-log text.
+	 */
+	let {
+		actions,
+		checkIn = null,
+		insight = null,
+		onaction,
+		oncheckin,
+		onlog
+	}: { actions: ActionView[]; checkIn?: ComponentSpec | null; insight?: ComponentSpec | null; onaction?: OnChange; oncheckin?: OnChange; onlog?: (text: string) => void } = $props();
+
 	const { now, zone } = getClock();
 	const todayYmd = formatYmd(now, zone);
-	const today = sixpackActions.filter((a) => formatYmd(a.start, zone) === todayYmd);
-	const next = today.find((a) => a.status === 'planned' && Date.parse(a.start) > Date.parse(now));
-	const left = today.filter((a) => a.status === 'planned').length;
+	const today = $derived(actions.filter((a) => formatYmd(a.start, zone) === todayYmd));
+	const next = $derived(today.find((a) => a.status === 'planned' && Date.parse(a.start) > Date.parse(now)));
+	const left = $derived(today.filter((a) => a.status === 'planned').length);
 	const heading = formatDate(todayYmd, { weekday: 'long', day: 'numeric', month: 'long' });
-	const minutesTo = next ? Math.round((Date.parse(next.start) - Date.parse(now)) / 60_000) : 0;
-	const id = $props.id();
-	let draft = $state("");
+	const minutesTo = $derived(next ? Math.round((Date.parse(next.start) - Date.parse(now)) / 60_000) : 0);
 </script>
 
 <div class="flex min-h-full flex-col">
@@ -30,21 +37,13 @@
 		</div>
 		<div class="grid gap-4 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
 			<div class="flex flex-col gap-4">
-				<Render spec={{ kind: 'action_list', label: "Today's actions", actions: today }} />
+				<Render spec={{ kind: 'action_list', label: "Today's actions", actions: today }} onchange={onaction} />
 			</div>
 			<div class="flex flex-col gap-4">
-				<Render spec={weightCheckIn} />
-				<Render spec={sixpackInbox.insights[0]} />
+				{#if checkIn}<Render spec={checkIn} onchange={oncheckin} />{/if}
+				{#if insight}<Render spec={insight} />{/if}
 			</div>
 		</div>
 	</div>
-	<form class="sticky bottom-0 border-t border-border bg-bg p-2" onsubmit={(e) => { e.preventDefault(); draft = ''; }}>
-		<div class="flex max-w-5xl items-center gap-1">
-			<label for={id} class="sr-only">Quick log</label>
-			<input {id} bind:value={draft} placeholder="Log a meal, weight or note" class="h-11 min-w-0 flex-1 rounded-sm border border-input bg-transparent px-3 text-lg outline-none placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" />
-			<Button variant="ghost" size="icon-touch" type="button" aria-label="Speak a log entry"><Mic /></Button>
-			<Button variant="ghost" size="icon-touch" type="button" aria-label="Log with a photo"><Camera /></Button>
-			<Button size="icon-touch" type="submit" aria-label="Log" disabled={!draft.trim()}><Send /></Button>
-		</div>
-	</form>
+	<QuickLog {onlog} />
 </div>

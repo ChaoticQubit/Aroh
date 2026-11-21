@@ -67,13 +67,4 @@
 }
 :root {
 	--danger: var(--status-missed);
-	--surface-raised: var(--bg);
-	--ink: var(--fg);
-	--ink-muted: var(--muted);
-	--line: var(--border);
-	--accent-ink: var(--accent-fg);
-	--agent: var(--cat-4);
-	--radius: var(--radius-sm);
-	--ok: var(--status-done);
-	--warn: var(--status-warn);
 }

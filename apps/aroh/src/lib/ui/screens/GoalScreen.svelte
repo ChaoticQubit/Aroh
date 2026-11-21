@@ -7,26 +7,47 @@
 	import Segmented from '../components/Segmented.svelte';
 	import { getClock } from '$lib/ui/clock';
 	import { formatDay, formatNumber } from '$lib/ui/format';
-	import { sixpackGoal, sixpackView } from '$lib/ui/mockdata/sixpack';
+	import type { ViewSpec } from '$lib/ui/contract';
+	import type { AutonomyLabel, GoalHeader } from './types';
 
-	/** Goal dashboard built from the goal's view spec, with the persona chat entry and autonomy level. */
+	/**
+	 * Goal dashboard built from the goal's view spec, with the persona chat entry and autonomy level.
+	 * `onautonomy` gets the picked level, `onchat` fires on the chat button; `chatStatus` shows under it.
+	 */
+	let {
+		goal,
+		view,
+		chatStatus = null,
+		onautonomy,
+		onchat
+	}: { goal: GoalHeader; view: ViewSpec; chatStatus?: string | null; onautonomy?: (level: AutonomyLabel) => void; onchat?: () => void } = $props();
+
 	const { zone } = getClock();
-	let autonomy = $state(sixpackGoal.autonomy);
+	let picked = $state<AutonomyLabel | null>(null);
+	const autonomy = $derived(picked ?? goal.autonomy);
 	const AUTONOMY = {
 		Ask: 'Every change waits for your approval.',
 		Balanced: 'Small changes apply on their own with undo. Big ones ask first.',
 		Auto: 'All changes apply with undo, plus a daily digest.'
 	} as const;
-	const weight = sixpackGoal.trackers[0];
+	const lead = $derived(goal.lead);
+
+	/** Records the picked level and reports it. */
+	function pick(level: AutonomyLabel) {
+		picked = level;
+		onautonomy?.(level);
+	}
 </script>
 
 <div class="flex w-full max-w-5xl flex-col gap-4 p-4 @3xl:p-6">
 	<div class="flex flex-col gap-1">
 		<p class="flex items-center gap-2 text-xs font-medium text-muted">
-			<span class="size-2 rounded-full" style="background: var(--cat-{sixpackGoal.slot})"></span>{sixpackGoal.category}
+			<span class="size-2 rounded-full" style="background: var(--cat-{goal.slot})"></span>{goal.category}
 		</p>
-		<h2 class="text-xl font-semibold">{sixpackView.title}</h2>
-		<p class="text-sm text-muted">Due {formatDay(sixpackGoal.deadline, zone)} · {formatNumber(weight.now, weight.unit)} now, {formatNumber(weight.target, weight.unit)} target</p>
+		<h2 class="text-xl font-semibold">{view.title}</h2>
+		{#if goal.deadline || lead}
+			<p class="text-sm text-muted">{#if goal.deadline}Due {formatDay(goal.deadline, zone)}{/if}{#if goal.deadline && lead}{' · '}{/if}{#if lead}{formatNumber(lead.now, lead.unit)} now{#if lead.target !== undefined}, {formatNumber(lead.target, lead.unit)} target{/if}{/if}</p>
+		{/if}
 	</div>
 
 	<div class="grid gap-4 @3xl:grid-cols-2">
@@ -36,18 +57,19 @@
 				<MessageSquare class="size-4 text-muted" aria-hidden="true" />
 			</div>
 			<div class="flex flex-wrap gap-x-4 gap-y-2">
-				{#each sixpackGoal.personas as p (p)}<Persona name={p} />{/each}
+				{#each goal.personas as p (p)}<Persona name={p} />{/each}
 			</div>
-			<div><Button variant="outline" size="touch" class="@3xl:h-8">Chat with your personas</Button></div>
+			<div><Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => onchat?.()}>Chat with your personas</Button></div>
+			{#if chatStatus}<p class="text-sm text-muted" role="status">{chatStatus}</p>{/if}
 		</Card.Root>
 		<Card.Root size="sm" class="gap-3 px-4">
 			<p class="text-sm font-medium">How much can agents change on their own?</p>
-			<Segmented label="Autonomy level" bind:value={autonomy} options={[{ value: 'Ask', label: 'Ask' }, { value: 'Balanced', label: 'Balanced' }, { value: 'Auto', label: 'Auto' }]} />
+			<Segmented label="Autonomy level" bind:value={() => autonomy, pick} options={[{ value: 'Ask', label: 'Ask' }, { value: 'Balanced', label: 'Balanced' }, { value: 'Auto', label: 'Auto' }]} />
 			<p class="text-sm text-muted">{AUTONOMY[autonomy]} Locked and hand-edited actions are never moved without asking.</p>
 		</Card.Root>
 	</div>
 
-	{#each sixpackView.sections as section (section.title)}
+	{#each view.sections as section (section.title)}
 		<section class="flex flex-col gap-3" aria-label={section.title}>
 			<h3 class="text-sm font-semibold text-fg">{section.title}</h3>
 			<div class="grid gap-4 @3xl:grid-cols-2">

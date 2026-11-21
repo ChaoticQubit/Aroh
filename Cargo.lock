@@ -51,13 +51,9 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "aroh"
 version = "0.1.0"
 dependencies = [
- "aroh-agents",
- "aroh-core",
- "aroh-intake",
- "aroh-plugins",
- "aroh-reminders",
- "aroh-replan",
- "aroh-sync",
+ "aroh-app",
+ "aroh-domain",
+ "aroh-store",
  "chrono",
  "chrono-tz",
  "iana-time-zone",
@@ -69,7 +65,6 @@ dependencies = [
  "tauri-plugin-aroh-speech",
  "tauri-plugin-notification",
  "time",
- "uuid",
 ]
 
 [[package]]
@@ -87,6 +82,21 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "aroh-app"
+version = "0.1.0"
+dependencies = [
+ "aroh-domain",
+ "aroh-reminders",
+ "aroh-store",
+ "chrono",
+ "chrono-tz",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

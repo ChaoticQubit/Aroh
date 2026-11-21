@@ -7,21 +7,59 @@
 	import { Switch } from '$lib/ui/primitives/switch';
 	import Field from '../components/Field.svelte';
 	import StatusChip from '../components/StatusChip.svelte';
-	import { providerCatalog, searchProviders } from '$lib/ui/mockdata/sixpack';
+	import type { SettingsView } from './types';
 
 	/**
 	 * Settings: model provider, model and key (the key goes to the server, never stored on the device),
 	 * search providers, server URL, monthly budgets, and calendar and Apple Health access.
+	 * `ontest` sends the typed key to the engine and resolves to the status line; the rest report edits.
 	 */
+	let {
+		settings,
+		onprovider,
+		ontest,
+		onsetting,
+		onbudget
+	}: {
+		settings: SettingsView;
+		onprovider?: (providerId: string, model: string) => void;
+		ontest?: (providerId: string, key: string) => Promise<string>;
+		onsetting?: (key: 'server_url' | 'calendars' | 'health', value: string) => void;
+		onbudget?: (scope: 'all' | 'goal', usd: number | null) => void;
+	} = $props();
+
 	const id = $props.id();
-	let providerId = $state(providerCatalog[0].id);
+	const providerCatalog = $derived(settings.providers);
+	let providerId = $derived(settings.providerId);
 	const provider = $derived(providerCatalog.find((p) => p.id === providerId) ?? providerCatalog[0]);
-	let model = $derived(provider.models[0]);
+	let model = $derived(provider.id === settings.providerId && provider.models.includes(settings.model) ? settings.model : provider.models[0]);
 	let key = $state('');
 	let status = $state<string | null>(null);
-	let calendars = $state(true);
-	let health = $state(false);
+	let calendars = $derived(settings.calendars);
+	let health = $derived(settings.health);
 	const input = 'h-11 text-lg';
+
+	/** Reports a picked provider with its first model. */
+	function pickProvider(next: string) {
+		status = null;
+		const p = providerCatalog.find((c) => c.id === next);
+		if (p) onprovider?.(p.id, p.models[0]);
+	}
+
+	/** Sends the typed key to the engine through `ontest`, or shows the offline status line. */
+	async function test() {
+		if (!ontest) {
+			status = provider.keySet || key ? 'Test sent to the server. The result appears here.' : 'Enter a key first.';
+			return;
+		}
+		status = await ontest(provider.id, key);
+	}
+
+	/** Parses a dollar input: empty is null, anything else a non-negative number or null. */
+	function dollars(text: string): number | null {
+		const n = Number(text);
+		return text.trim() === '' || !Number.isFinite(n) || n < 0 ? null : n;
+	}
 </script>
 
 <div class="flex w-full max-w-2xl flex-col gap-6 p-4 @3xl:p-6">
@@ -29,7 +67,7 @@
 		<h2 id="{id}-model" class="text-sm font-semibold text-fg">Model provider</h2>
 		<Card.Root size="sm" class="gap-4 px-4">
 			<Field label="Provider" labelId="{id}-provider">
-				<Select.Root type="single" bind:value={providerId} onValueChange={() => (status = null)}>
+				<Select.Root type="single" bind:value={providerId} onValueChange={pickProvider}>
 					<Select.Trigger class="h-11! w-full text-base" aria-labelledby="{id}-provider">{provider.name}</Select.Trigger>
 					<Select.Content>
 						{#each providerCatalog as p (p.id)}<Select.Item value={p.id} label={p.name} class="min-h-11">{p.name}</Select.Item>{/each}
@@ -37,7 +75,7 @@
 				</Select.Root>
 			</Field>
 			<Field label="Model" labelId="{id}-modelname">
-				<Select.Root type="single" bind:value={model}>
+				<Select.Root type="single" bind:value={model} onValueChange={(m) => onprovider?.(provider.id, m)}>
 					<Select.Trigger class="h-11! w-full text-sm" aria-labelledby="{id}-modelname">{model}</Select.Trigger>
 					<Select.Content>
 						{#each provider.models as m (m)}<Select.Item value={m} label={m} class="min-h-11">{m}</Select.Item>{/each}
@@ -49,7 +87,7 @@
 				<p id="{id}-keyhelp" class="text-xs text-muted">Saved on the server, never on this device.</p>
 			</Field>
 			<div class="flex flex-wrap items-center gap-3">
-				<Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => (status = provider.keySet || key ? 'Test sent to the server. The result appears here.' : 'Enter a key first.')}>Test connection</Button>
+				<Button variant="outline" size="touch" class="@3xl:h-8" onclick={test}>Test connection</Button>
 				{#if status}<p class="text-sm text-muted" role="status">{status}</p>{/if}
 			</div>
 		</Card.Root>
@@ -60,32 +98,36 @@
 			<h2 id="{id}-search" class="text-sm font-semibold text-fg">Search providers</h2>
 			<Button variant="outline" size="touch" class="@3xl:h-8"><Plus />Add</Button>
 		</div>
-		<Card.Root size="sm" class="gap-0 divide-y divide-border px-4 py-0">
-			{#each searchProviders as s, i (s.name)}
-				<div class="flex min-h-14 items-center gap-3 py-2">
-					<span class="w-5 text-xs text-muted tabular-nums">{i + 1}</span>
-					<div class="flex flex-1 flex-col">
-						<span class="text-sm font-medium">{s.name}</span>
-						<span class="text-xs text-muted">{s.detail}</span>
+		{#if settings.search.length}
+			<Card.Root size="sm" class="gap-0 divide-y divide-border px-4 py-0">
+				{#each settings.search as s, i (s.name)}
+					<div class="flex min-h-14 items-center gap-3 py-2">
+						<span class="w-5 text-xs text-muted tabular-nums">{i + 1}</span>
+						<div class="flex flex-1 flex-col">
+							<span class="text-sm font-medium">{s.name}</span>
+							<span class="text-xs text-muted">{s.detail}</span>
+						</div>
+						<StatusChip tone={s.keySet ? 'done' : 'warn'} label={s.keySet ? 'Ready' : 'Needs key'} />
 					</div>
-					<StatusChip tone={s.keySet ? 'done' : 'warn'} label={s.keySet ? 'Ready' : 'Needs key'} />
-				</div>
-			{/each}
-		</Card.Root>
+				{/each}
+			</Card.Root>
+		{:else}
+			<p class="text-sm text-muted">No search providers yet.</p>
+		{/if}
 	</section>
 
 	<section class="flex flex-col gap-3" aria-labelledby="{id}-server">
 		<h2 id="{id}-server" class="text-sm font-semibold text-fg">Server and budget</h2>
 		<Card.Root size="sm" class="gap-4 px-4">
 			<Field label="Server URL" id="{id}-url">
-				<Input id="{id}-url" type="url" inputmode="url" value="https://aroh-engine.example.com" class="{input} text-sm" />
+				<Input id="{id}-url" type="url" inputmode="url" placeholder="https://aroh-engine.example.com" value={settings.serverUrl} onchange={(e) => onsetting?.('server_url', e.currentTarget.value.trim())} class="{input} text-sm" />
 			</Field>
 			<div class="grid gap-4 @md:grid-cols-2">
 				<Field label="Monthly budget, all goals" id="{id}-budget">
-					<Input id="{id}-budget" type="number" inputmode="decimal" value="20" class={input} />
+					<Input id="{id}-budget" type="number" inputmode="decimal" value={settings.budgetAll ?? ''} onchange={(e) => onbudget?.('all', dollars(e.currentTarget.value))} class={input} />
 				</Field>
 				<Field label="Monthly budget per goal" id="{id}-goalbudget">
-					<Input id="{id}-goalbudget" type="number" inputmode="decimal" value="8" class={input} />
+					<Input id="{id}-goalbudget" type="number" inputmode="decimal" value={settings.budgetGoal ?? ''} onchange={(e) => onbudget?.('goal', dollars(e.currentTarget.value))} class={input} />
 				</Field>
 			</div>
 			<p class="text-xs text-muted">In US dollars. Agents pause and ask when a budget is reached.</p>
@@ -97,11 +139,11 @@
 		<Card.Root size="sm" class="gap-0 divide-y divide-border px-4 py-0">
 			<label class="flex min-h-14 cursor-pointer items-center gap-3 py-2" for="{id}-cal">
 				<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Calendars</span><span class="text-xs text-muted">Read device calendars as busy time. Nothing is written back.</span></span>
-				<Switch id="{id}-cal" bind:checked={calendars} />
+				<Switch id="{id}-cal" bind:checked={calendars} onCheckedChange={(v) => onsetting?.('calendars', String(v))} />
 			</label>
 			<label class="flex min-h-14 cursor-pointer items-center gap-3 py-2" for="{id}-health">
 				<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Apple Health</span><span class="text-xs text-muted">Import weight, workouts and steps on iPhone.</span></span>
-				<Switch id="{id}-health" bind:checked={health} />
+				<Switch id="{id}-health" bind:checked={health} onCheckedChange={(v) => onsetting?.('health', String(v))} />
 			</label>
 		</Card.Root>
 	</section>

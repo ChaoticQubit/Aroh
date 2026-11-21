@@ -16,7 +16,7 @@ export default defineConfig({
 		})
 	],
 	resolve: { alias: { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) } },
-	test: { include: ['src/lib/ui/**/*.test.ts'] },
+	test: { include: ['src/lib/**/*.test.ts'] },
 	clearScreen: false,
 	server: {
 		port: 1420,

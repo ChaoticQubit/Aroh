@@ -11,6 +11,9 @@ license = "UNLICENSED"
 [workspace.dependencies]
 aroh-core = { path = "crates/aroh-core" }
 aroh-domain = { path = "crates/aroh-domain" }
+aroh-store = { path = "crates/aroh-store" }
+aroh-reminders = { path = "crates/aroh-reminders" }
+aroh-app = { path = "crates/aroh-app" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = "0.10"
 rrule = "0.14"
@@ -22,4 +25,3 @@ thiserror = "2"
 keyring = { version = "3", features = ["apple-native", "linux-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 tokio = { version = "1", features = ["rt", "macros"] }
-aroh-sync = { path = "crates/aroh-sync" }

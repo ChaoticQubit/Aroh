@@ -16,9 +16,25 @@
 	import NewGoalScreen from '$lib/ui/screens/NewGoalScreen.svelte';
 	import InboxScreen from '$lib/ui/screens/InboxScreen.svelte';
 	import SettingsScreen from '$lib/ui/screens/SettingsScreen.svelte';
+	import GoalsScreen from '$lib/ui/screens/GoalsScreen.svelte';
+	import LogScreen from '$lib/ui/screens/LogScreen.svelte';
 	import { setClock } from '$lib/ui/clock';
 	import { gallery } from '$lib/ui/mockdata/gallery';
-	import { categories, mockNow, mockZone, sixpackChat, sixpackInbox } from '$lib/ui/mockdata/sixpack';
+	import {
+		categories,
+		mockNow,
+		mockZone,
+		sixpackActions,
+		sixpackChat,
+		sixpackGoals,
+		sixpackHeader,
+		sixpackInbox,
+		sixpackInboxItems,
+		sixpackLog,
+		sixpackSettings,
+		sixpackView,
+		weightCheckIn
+	} from '$lib/ui/mockdata/sixpack';
 
 	setClock({ now: mockNow, zone: mockZone });
 
@@ -32,13 +48,15 @@
 		{ value: 'screens-phone', label: 'Screens (phone)' },
 		{ value: 'screens-desktop', label: 'Screens (desktop)' }
 	];
-	const SCREENS: { name: string; title: string; tab: TabId | 'settings'; screen: Component }[] = [
-		{ name: 'Today', title: 'Today', tab: 'today', screen: TodayScreen },
-		{ name: 'Calendar', title: 'Calendar', tab: 'calendar', screen: CalendarScreen },
-		{ name: 'Goal', title: 'Goals', tab: 'goals', screen: GoalScreen },
-		{ name: 'New goal', title: 'New goal', tab: 'goals', screen: NewGoalScreen },
-		{ name: 'Inbox', title: 'Inbox', tab: 'inbox', screen: InboxScreen },
-		{ name: 'Settings', title: 'Settings', tab: 'settings', screen: SettingsScreen }
+	const SCREENS: { name: string; title: string; tab: TabId | 'settings'; screen: Component<any>; props: Record<string, unknown> }[] = [
+		{ name: 'Today', title: 'Today', tab: 'today', screen: TodayScreen, props: { actions: sixpackActions, checkIn: weightCheckIn, insight: sixpackInbox.insights[0] } },
+		{ name: 'Calendar', title: 'Calendar', tab: 'calendar', screen: CalendarScreen, props: { actions: sixpackActions, categories } },
+		{ name: 'Goals', title: 'Goals', tab: 'goals', screen: GoalsScreen, props: { goals: sixpackGoals } },
+		{ name: 'Goal', title: 'Goals', tab: 'goals', screen: GoalScreen, props: { goal: sixpackHeader, view: sixpackView } },
+		{ name: 'New goal', title: 'New goal', tab: 'goals', screen: NewGoalScreen, props: { messages: sixpackChat } },
+		{ name: 'Inbox', title: 'Inbox', tab: 'inbox', screen: InboxScreen, props: { ...sixpackInboxItems, runs: sixpackInbox.runs } },
+		{ name: 'Log', title: 'Log', tab: 'log', screen: LogScreen, props: sixpackLog },
+		{ name: 'Settings', title: 'Settings', tab: 'settings', screen: SettingsScreen, props: { settings: sixpackSettings } }
 	];
 	const COLORS = ['bg', 'surface', 'surface-2', 'border', 'border-strong', 'fg', 'muted', 'accent', 'status-done', 'status-planned', 'status-warn', 'status-missed', 'status-skipped', 'series-1', 'series-2', 'series-3', 'series-4', 'series-5', 'series-6', 'cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6'];
 	const TYPE = ['text-xs', 'text-sm', 'text-md', 'text-lg', 'text-xl'];
@@ -151,7 +169,7 @@
 				{#each SCREENS as s (s.name)}
 					<li class="flex shrink-0 flex-col items-center gap-2">
 						<div class="box-content h-[844px] w-[390px] overflow-hidden rounded-md border border-border bg-bg">
-							<PhoneShell title={s.title} tab={s.tab} {inboxCount}><s.screen /></PhoneShell>
+							<PhoneShell title={s.title} tab={s.tab} {inboxCount}><s.screen {...s.props} /></PhoneShell>
 						</div>
 						<p class="text-sm font-medium">{s.name}</p>
 					</li>
@@ -164,7 +182,7 @@
 						<p class="text-sm font-medium">{s.name}</p>
 						<div class="overflow-x-auto pb-2">
 							<div class="box-content h-[800px] w-[1280px] overflow-hidden rounded-md border border-border bg-bg">
-								<DesktopShell title={s.title} tab={s.tab} {inboxCount} {categories}><s.screen /></DesktopShell>
+								<DesktopShell title={s.title} tab={s.tab} {inboxCount} {categories}><s.screen {...s.props} /></DesktopShell>
 							</div>
 						</div>
 					</li>

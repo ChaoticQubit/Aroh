@@ -17,7 +17,7 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col bg-bg text-fg">
-	<header class="flex h-14 shrink-0 items-center justify-between border-b border-border px-4 pt-[env(safe-area-inset-top)]">
+	<header class="box-content flex h-14 shrink-0 items-center justify-between border-b border-border px-4 pt-[env(safe-area-inset-top)]">
 		<h1 class="text-lg font-semibold">{title}</h1>
 		<button type="button" class="-mr-3 flex size-11 items-center justify-center rounded-sm text-muted outline-none hover:text-fg focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Settings" aria-current={tab === 'settings' ? 'page' : undefined} onclick={() => onnavigate?.('settings')}>
 			<Settings class="size-4" />

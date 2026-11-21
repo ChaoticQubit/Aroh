@@ -34,7 +34,7 @@ Every rejection is `{ code, message }`. `message` is fit to show the owner.
 
 ## Guest bindings
 
-The app imports `apps/aroh/src/lib/log/speech.ts`, which wraps both commands and the `partial` event and maps rejections to a `SpeechError` with a typed `code`. It is the only log-screen file that imports `@tauri-apps/api`.
+The plugin stays registered in the app. Its MVP guest wrapper went with the MVP log screen in pod 10; the rebuild quick-log bar has a mic button that is not wired to it yet.
 
 ## Wiring into the app
 
