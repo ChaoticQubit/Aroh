@@ -5,7 +5,8 @@ pub use aroh_core::models::{Action, ActionStatus, DiffOp as Op, DiffSlot as Slot
 
 /// One entry of `replans.diff_json`. `before` is null for create, `after`
 /// is null for delete. `goal_id` and `title` are set only on create, so
-/// apply can build the new action row.
+/// apply can build the new action row. `revive` marks a move or resize of a
+/// missed action: apply makes it planned again and undo makes it missed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiffOp {
     pub action_id: String,
@@ -16,6 +17,8 @@ pub struct DiffOp {
     pub goal_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub revive: bool,
 }
 
 /// Minutes since local midnight, serialized as "HH:MM" (00:00 to 24:00).
@@ -115,4 +118,5 @@ pub enum Violation {
     AfterDeadline { action_id: String },
     Overlap { action_id: String, other_id: String },
     BadJson { message: String },
+    OverDailyCap { goal_id: String, date: String },
 }

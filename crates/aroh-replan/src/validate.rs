@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Checks a diff against the current actions, independent of plan():
 /// ops match current rows, new slots are in the future, inside one window,
-/// before the goal deadline and clear of every planned action.
+/// before the goal deadline and clear of every planned action. A missed
+/// action may only be moved or resized with `revive` set.
 /// Returns every violation found, or Ok when there are none.
 pub fn validate(input: &PlanInput, diff: &[DiffOp]) -> Result<(), Vec<Violation>> {
     let mut violations = Vec::new();
@@ -32,7 +33,8 @@ pub fn validate(input: &PlanInput, diff: &[DiffOp]) -> Result<(), Vec<Violation>
         };
         let after = op.after.as_ref().map(|s| (parse_slot(s), s.est_minutes));
         let after_ok = after.map_or(true, |(times, est)| times.is_some() && est >= 0);
-        if !shape_ok || !after_ok || missed.contains(op.action_id.as_str()) {
+        let revive_ok = op.revive == missed.contains(op.action_id.as_str()) && (!op.revive || matches!(op.op, Op::Move | Op::Resize));
+        if !shape_ok || !after_ok || !revive_ok {
             violations.push(Violation::BadShape { action_id: id.clone() });
             continue;
         }
@@ -87,7 +89,7 @@ fn overlaps(input: &PlanInput, diff: &[DiffOp], missed: &BTreeSet<&str>) -> Vec<
     let applied = parsed::actions(&crate::apply(&input.actions, diff));
     let live: Vec<&PAction> = applied
         .iter()
-        .filter(|a| a.status == ActionStatus::Planned && !missed.contains(a.id.as_str()))
+        .filter(|a| a.status == ActionStatus::Planned && (!missed.contains(a.id.as_str()) || touched.contains(a.id.as_str())))
         .collect();
     let mut found = Vec::new();
     for a in live.iter().filter(|a| touched.contains(a.id.as_str())) {

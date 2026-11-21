@@ -5,7 +5,10 @@ export interface Slot {
   est_minutes: number;
 }
 
-/** One replan diff entry, matching `replans.diff_json`. `goal_id` and `title` are set on create. */
+/**
+ * One replan diff entry, matching `replans.diff_json`. `goal_id` and `title` are set on create.
+ * `revive` marks a move or resize that puts a missed action back into the plan.
+ */
 export interface DiffOp {
   action_id: string;
   op: 'move' | 'create' | 'delete' | 'resize';
@@ -13,6 +16,7 @@ export interface DiffOp {
   after: Slot | null;
   goal_id?: string;
   title?: string;
+  revive?: boolean;
 }
 
 /** Minutes of a goal's missed work that found no room before its deadline. */

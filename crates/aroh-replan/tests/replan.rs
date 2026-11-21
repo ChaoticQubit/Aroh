@@ -93,17 +93,74 @@ fn overlaps(actions: &[Action]) -> Vec<(String, String)> {
 }
 
 #[test]
-fn keeps_missed_45_minutes_whole_on_the_next_free_day() {
+fn one_missed_45_minute_action_is_one_small_move_into_tomorrows_free_time() {
     let mut input = week_input();
     input.actions[0] = action("missed", "a", "2026-11-22T09:00:00Z", "2026-11-22T09:45:00Z", ActionStatus::Missed);
     let proposal = plan(&input);
     assert!(proposal.infeasible.is_empty());
     assert_eq!(proposal.diff.len(), 1);
     let op = &proposal.diff[0];
-    assert_eq!(op.op, Op::Resize);
-    assert_eq!(op.action_id, "a23");
-    assert_eq!(op.after.as_ref().unwrap().est_minutes, 105);
+    assert_eq!((op.op, op.action_id.as_str(), op.revive), (Op::Move, "missed", true));
+    let after = op.after.as_ref().unwrap();
+    assert_eq!((after.start_at.as_str(), after.end_at.as_str(), after.est_minutes), ("2026-11-23T10:00:00Z", "2026-11-23T10:45:00Z", 45));
+    assert_eq!(classify(&proposal.diff), Size::Small);
     assert!(validate(&input, &proposal.diff).is_ok());
+    let applied = apply(&input.actions, &proposal.diff);
+    assert_eq!(applied.iter().find(|a| a.id == "missed").unwrap().status, ActionStatus::Planned);
+    assert!(overlaps(&applied).is_empty());
+    assert_eq!(undo(&applied, &proposal.diff), input.actions);
+}
+
+fn six_missed_hours() -> PlanInput {
+    let mut actions = Vec::new();
+    for day in 17..=22 {
+        actions.push(action(&format!("m{day}"), "a", &format!("2026-11-{day}T18:00:00Z"), &format!("2026-11-{day}T19:00:00Z"), ActionStatus::Missed));
+    }
+    for day in 23..=30 {
+        actions.push(action(&format!("a{day}"), "a", &format!("2026-11-{day}T18:00:00Z"), &format!("2026-11-{day}T19:00:00Z"), ActionStatus::Planned));
+    }
+    PlanInput {
+        goals: vec![goal("a", "2026-11-30")],
+        missed_ids: actions.iter().filter(|a| a.status == ActionStatus::Missed).map(|a| a.id.clone()).collect(),
+        actions,
+        availability: every_day("18:00", "21:00"),
+        now: t("2026-11-23T08:00:00Z"),
+    }
+}
+
+fn goal_minutes_per_day(actions: &[Action]) -> std::collections::BTreeMap<String, i64> {
+    let mut days = std::collections::BTreeMap::new();
+    for a in actions.iter().filter(|a| a.status == ActionStatus::Planned && !a.deleted) {
+        *days.entry(a.start_at[..10].to_string()).or_insert(0) += (t(&a.end_at) - t(&a.start_at)).num_minutes();
+    }
+    days
+}
+
+#[test]
+fn six_missed_hours_spread_over_at_least_three_days_under_the_daily_cap() {
+    let input = six_missed_hours();
+    let proposal = plan(&input);
+    assert!(proposal.infeasible.is_empty());
+    assert!(validate(&input, &proposal.diff).is_ok());
+    let before = goal_minutes_per_day(&input.actions);
+    let after = goal_minutes_per_day(&apply(&input.actions, &proposal.diff));
+    assert_eq!(after.values().sum::<i64>(), 6 * 60 + 8 * 60);
+    assert!(after.values().all(|m| *m <= 120), "{after:?}");
+    let grown = after.iter().filter(|(day, m)| **m > before.get(*day).copied().unwrap_or(0)).count();
+    assert!(grown >= 3, "{after:?}");
+}
+
+#[test]
+fn check_llm_output_rejects_a_day_over_the_cap() {
+    let input = six_missed_hours();
+    let json = r#"{"diff":[{"action_id":"a23","op":"resize",
+        "before":{"start_at":"2026-11-23T18:00:00Z","end_at":"2026-11-23T19:00:00Z","est_minutes":60},
+        "after":{"start_at":"2026-11-23T18:00:00Z","end_at":"2026-11-23T21:00:00Z","est_minutes":180}}]}"#;
+    assert!(validate(&input, &serde_json::from_str::<Proposal>(json).unwrap().diff).is_ok());
+    let violations = check_llm_output(&input, json).unwrap_err();
+    assert!(violations.contains(&Violation::OverDailyCap { goal_id: "a".into(), date: "2026-11-23".into() }), "{violations:?}");
+    let good = serde_json::to_string(&plan(&input)).unwrap();
+    assert!(check_llm_output(&input, &good).is_ok());
 }
 
 #[test]
@@ -161,14 +218,9 @@ fn never_overlaps_across_two_goals() {
     let proposal = plan(&input);
     assert!(proposal.infeasible.is_empty());
     let applied = apply(&input.actions, &proposal.diff);
-    let planned: Vec<Action> = applied.into_iter().filter(|a| !input.missed_ids.contains(&a.id)).collect();
-    assert!(overlaps(&planned).is_empty());
-    let added: i64 = proposal
-        .diff
-        .iter()
-        .map(|op| op.after.as_ref().unwrap().est_minutes - op.before.as_ref().map_or(0, |b| b.est_minutes))
-        .sum();
-    assert_eq!(added, 100);
+    assert!(overlaps(&applied).is_empty());
+    let planned = |actions: &[Action]| goal_minutes_per_day(actions).values().sum::<i64>();
+    assert_eq!(planned(&applied) - planned(&input.actions), 100);
     assert!(validate(&input, &proposal.diff).is_ok());
 }
 
@@ -181,6 +233,7 @@ fn op(kind: Op) -> DiffOp {
         after: if kind == Op::Delete { None } else { Some(slot) },
         goal_id: None,
         title: None,
+        revive: false,
     }
 }
 
@@ -198,7 +251,7 @@ fn apply_then_undo_is_identity() {
     let input = week_input();
     let mut diff = plan(&input).diff;
     let slot = Slot { start_at: "2026-11-28T09:00:00Z".into(), end_at: "2026-11-28T09:30:00Z".into(), est_minutes: 30 };
-    diff.push(DiffOp { action_id: "new".into(), op: Op::Create, before: None, after: Some(slot), goal_id: Some("a".into()), title: Some("Catch up".into()) });
+    diff.push(DiffOp { action_id: "new".into(), op: Op::Create, before: None, after: Some(slot), goal_id: Some("a".into()), title: Some("Catch up".into()), revive: false });
     let a27 = input.actions.iter().find(|a| a.id == "a27").unwrap();
     diff.push(DiffOp {
         action_id: "a27".into(),
@@ -207,6 +260,7 @@ fn apply_then_undo_is_identity() {
         after: None,
         goal_id: None,
         title: None,
+        revive: false,
     });
     let applied = apply(&input.actions, &diff);
     assert_ne!(applied, input.actions);
@@ -223,6 +277,7 @@ fn validate_rejects_overlap() {
         after: Some(Slot { start_at: "2026-11-23T09:30:00Z".into(), end_at: "2026-11-23T10:30:00Z".into(), est_minutes: 60 }),
         goal_id: None,
         title: None,
+        revive: false,
     }];
     let violations = validate(&input, &diff).unwrap_err();
     assert!(violations.contains(&Violation::Overlap { action_id: "a24".into(), other_id: "a23".into() }));
@@ -268,13 +323,14 @@ fn futures_lite_block_on<F: std::future::Future>(future: F) -> F::Output {
 fn creates_catch_up_action_with_uuid_v7_id() {
     let input = PlanInput {
         goals: vec![goal("a", "2026-11-23")],
-        actions: vec![action("missed", "a", "2026-11-22T09:00:00Z", "2026-11-22T09:30:00Z", ActionStatus::Missed)],
-        availability: every_day("09:00", "10:00"),
+        actions: vec![action("missed", "a", "2026-11-22T09:00:00Z", "2026-11-22T10:00:00Z", ActionStatus::Missed)],
+        availability: every_day("09:00", "09:40"),
         now: t("2026-11-23T08:00:00Z"),
         missed_ids: vec!["missed".into()],
     };
     let proposal = plan(&input);
     assert_eq!(proposal.diff.len(), 1);
+    assert_eq!(proposal.infeasible, vec![Infeasible { goal_id: "a".into(), unplaced_minutes: 25 }]);
     let op = &proposal.diff[0];
     assert_eq!(op.op, Op::Create);
     assert_eq!(op.after.as_ref().unwrap().start_at, "2026-11-23T09:00:00Z");

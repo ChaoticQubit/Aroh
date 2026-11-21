@@ -1,3 +1,4 @@
+mod cap;
 mod model;
 mod parsed;
 mod plan;
@@ -24,7 +25,8 @@ pub fn classify(diff: &[DiffOp]) -> Size {
 }
 
 /// Returns `actions` with `diff` applied. Delete tombstones the row,
-/// create appends a planned row. Unknown ids are skipped.
+/// create appends a planned row, a revive op makes its action planned.
+/// Unknown ids are skipped.
 pub fn apply(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
     let mut out = actions.to_vec();
     for op in diff {
@@ -47,7 +49,7 @@ pub fn apply(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
                     deleted: false,
                 });
             }
-            (Op::Move | Op::Resize, Some(slot)) => set_slot(&mut out, &op.action_id, slot),
+            (Op::Move | Op::Resize, Some(slot)) => set_slot(&mut out, &op.action_id, slot, op.revive.then_some(ActionStatus::Planned)),
             (Op::Delete, _) => {
                 if let Some(a) = out.iter_mut().find(|a| a.id == op.action_id) {
                     a.deleted = true;
@@ -60,13 +62,14 @@ pub fn apply(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
 }
 
 /// Reverts `diff` on actions it was applied to: ops run in reverse,
-/// creates are removed, deletes revived, slots set back to `before`.
+/// creates are removed, deletes revived, slots set back to `before` and
+/// revived actions marked missed again.
 pub fn undo(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
     let mut out = actions.to_vec();
     for op in diff.iter().rev() {
         match (op.op, &op.before) {
             (Op::Create, _) => out.retain(|a| a.id != op.action_id),
-            (Op::Move | Op::Resize, Some(slot)) => set_slot(&mut out, &op.action_id, slot),
+            (Op::Move | Op::Resize, Some(slot)) => set_slot(&mut out, &op.action_id, slot, op.revive.then_some(ActionStatus::Missed)),
             (Op::Delete, _) => {
                 if let Some(a) = out.iter_mut().find(|a| a.id == op.action_id) {
                     a.deleted = false;
@@ -78,12 +81,14 @@ pub fn undo(actions: &[Action], diff: &[DiffOp]) -> Vec<Action> {
     out
 }
 
-/// Sets start, end and estimate of the action with `id`, if present.
-fn set_slot(actions: &mut [Action], id: &str, slot: &Slot) {
+/// Sets start, end and estimate of the action with `id`, and its status
+/// when `status` is Some, if the action is present.
+fn set_slot(actions: &mut [Action], id: &str, slot: &Slot, status: Option<ActionStatus>) {
     if let Some(a) = actions.iter_mut().find(|a| a.id == id) {
         a.start_at = slot.start_at.clone();
         a.end_at = slot.end_at.clone();
         a.est_minutes = slot.est_minutes;
+        a.status = status.unwrap_or(a.status);
     }
 }
 

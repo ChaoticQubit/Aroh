@@ -1,3 +1,4 @@
+use crate::cap::{span_minutes, Caps};
 use crate::model::{ActionStatus, DiffOp, Infeasible, Op, PlanInput, Proposal, Slot};
 use crate::parsed::{self, format_time, PAction, PGoal};
 use crate::time::{day_windows, deadline, inside_window, local_date, Span};
@@ -12,6 +13,7 @@ struct Ctx<'a> {
     input: &'a PlanInput,
     goals: BTreeMap<String, PGoal>,
     missed: BTreeSet<&'a str>,
+    caps: Caps,
 }
 
 impl Ctx<'_> {
@@ -20,13 +22,26 @@ impl Ctx<'_> {
         self.goals.get(goal_id).map(|g| deadline(g, &self.input.availability))
     }
 
-    /// True when the action blocks time: planned and not a missed one.
+    /// True when the action blocks time: planned and not a missed one, or revived.
     fn occupies(&self, action: &PAction) -> bool {
-        action.status == ActionStatus::Planned && !self.missed.contains(action.id.as_str())
+        (action.status == ActionStatus::Planned && !self.missed.contains(action.id.as_str())) || action.revived
+    }
+
+    /// Minutes of the goal's blocking actions on local `day`, skipping indexes in `exclude`.
+    fn day_load(&self, current: &[PAction], goal_id: &str, day: NaiveDate, exclude: &BTreeSet<usize>) -> i64 {
+        current
+            .iter()
+            .enumerate()
+            .filter(|(i, a)| !exclude.contains(i) && a.goal_id == goal_id && self.occupies(a))
+            .filter(|(_, a)| local_date(a.start_at, &self.input.availability) == day)
+            .map(|(_, a)| span_minutes(a))
+            .sum()
     }
 }
 
-/// Moves each goal's missed minutes to its earliest free days and returns
+/// Moves each goal's missed actions whole into free time when a day has
+/// room under the goal's daily cap, then spreads the rest over its earliest
+/// days, and returns
 /// the diff plus minutes that fit nowhere. Created actions get fresh uuid v7
 /// ids; everything else is deterministic. Output always passes validate().
 pub fn plan(input: &PlanInput) -> Proposal {
@@ -34,6 +49,7 @@ pub fn plan(input: &PlanInput) -> Proposal {
         input,
         goals: parsed::goals(&input.goals).into_iter().map(|g| (g.id.clone(), g)).collect(),
         missed: input.missed_ids.iter().map(String::as_str).collect(),
+        caps: Caps::new(input),
     };
     let mut current = parsed::actions(&input.actions);
     let mut need: BTreeMap<String, i64> = BTreeMap::new();
@@ -56,8 +72,13 @@ pub fn plan(input: &PlanInput) -> Proposal {
     }
     let proposal = Proposal { diff: diff_of(&current), infeasible };
     debug_assert_eq!(crate::validate(input, &proposal.diff), Ok(()));
+    debug_assert_eq!(crate::cap::over_cap(input, &proposal.diff), vec![]);
     proposal
 }
+
+/// Days from today on, today included, where a missed action may move whole,
+/// so it lands near its place in the goal's order instead of after it.
+const MOVE_DAYS: usize = 3;
 
 /// Shortest piece of work placed on one day, unless the whole segment is shorter.
 const CHUNK_MIN: i64 = 25;
@@ -93,7 +114,8 @@ impl Block {
 }
 
 /// Places up to `minutes` of the goal's missed work and returns minutes placed.
-/// The missed work goes first and the goal's movable actions follow in order,
+/// First each missed action moves whole into the earliest free gap in the
+/// next MOVE_DAYS days whose day stays under the goal's daily cap. For the rest, the missed work goes first and the goal's movable actions follow in order,
 /// each day filled as far as it holds, so a full day pushes the goal's later
 /// actions forward a day, up to the deadline. Minutes that do not fit are
 /// cut from the missed work, never from the existing plan.
@@ -104,9 +126,29 @@ fn place_goal(ctx: &Ctx, current: &mut Vec<PAction>, goal: &PGoal, minutes: i64)
         .map(|n| first + Duration::days(n))
         .take_while(|d| *d <= goal.target_date)
         .collect();
+    let mut waiting: Vec<usize> = (0..current.len())
+        .filter(|i| {
+            let a = &current[*i];
+            a.goal_id == goal.id && ctx.missed.contains(a.id.as_str()) && a.est_minutes > 0 && !a.revived
+        })
+        .collect();
+    waiting.sort_by(|a, b| (current[*a].start_at, &current[*a].id).cmp(&(current[*b].start_at, &current[*b].id)));
+    let mut moved = 0;
+    for index in waiting {
+        let length = current[index].est_minutes;
+        if let Some((start_at, end_at)) = free_slot(ctx, current, goal, &days[..days.len().min(MOVE_DAYS)], length) {
+            let action = &mut current[index];
+            action.start_at = start_at;
+            action.end_at = end_at;
+            action.revived = true;
+            moved += length;
+        }
+    }
+    assert!(moved <= minutes);
+    let minutes = minutes - moved;
     let mut missed: Vec<&PAction> = current
         .iter()
-        .filter(|a| a.goal_id == goal.id && ctx.missed.contains(a.id.as_str()) && a.est_minutes > 0)
+        .filter(|a| a.goal_id == goal.id && ctx.missed.contains(a.id.as_str()) && a.est_minutes > 0 && !a.revived)
         .collect();
     missed.sort_by(|a, b| (a.start_at, &a.id).cmp(&(b.start_at, &b.id)));
     let missed: Vec<(String, i64)> = missed.iter().map(|a| (a.title.clone(), a.est_minutes)).collect();
@@ -146,17 +188,42 @@ fn place_goal(ctx: &Ctx, current: &mut Vec<PAction>, goal: &PGoal, minutes: i64)
             for (day, blocks) in plans {
                 commit(ctx, current, goal, &exclude, &segments, day, &blocks);
             }
-            return minutes - cut;
+            return moved + minutes - cut;
         }
         assert!(overflow > 0);
         if cut >= minutes {
-            return 0;
+            return moved;
         }
         cut = (cut + overflow).min(minutes);
     }
 }
 
-/// Fills days in order from the segment queue. Returns each day's blocks
+/// Earliest slot of `minutes` on one of `days` that is free now, keeps the
+/// day under the goal's daily cap and ends by the goal's deadline.
+fn free_slot(ctx: &Ctx, current: &[PAction], goal: &PGoal, days: &[NaiveDate], minutes: i64) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+    assert!(minutes > 0);
+    let now = ctx.input.now;
+    let limit = deadline(goal, &ctx.input.availability);
+    let occupied: Vec<Span> = current.iter().filter(|a| ctx.occupies(a)).map(|a| (a.start_at, a.end_at)).collect();
+    for day in days {
+        if ctx.day_load(current, &goal.id, *day, &BTreeSet::new()) + minutes > ctx.caps.allowed(&goal.id, *day) {
+            continue;
+        }
+        let windows: Vec<Span> = day_windows(*day, &ctx.input.availability)
+            .into_iter()
+            .filter(|w| w.1 > now)
+            .map(|w| (w.0.max(now), w.1))
+            .collect();
+        let Some(first) = windows.first() else { continue };
+        if let Some(start) = earliest_fit(&windows, &occupied, first.0, minutes, limit) {
+            return Some((start, start + Duration::minutes(minutes)));
+        }
+    }
+    None
+}
+
+/// Fills days in order from the segment queue, keeping each day's goal
+/// minutes under its daily cap. Returns each day's blocks
 /// and the minutes left unplaced after the last day.
 fn fill(ctx: &Ctx, current: &[PAction], goal: &PGoal, exclude: &BTreeSet<usize>, segments: &[Segment], days: &[NaiveDate]) -> (Vec<(NaiveDate, Vec<Block>)>, i64) {
     let mut remaining: Vec<i64> = segments.iter().map(|s| s.minutes).collect();
@@ -167,10 +234,14 @@ fn fill(ctx: &Ctx, current: &[PAction], goal: &PGoal, exclude: &BTreeSet<usize>,
             break;
         }
         let mut pieces: Vec<Piece> = Vec::new();
+        let room = ctx.caps.allowed(&goal.id, *day) - ctx.day_load(current, &goal.id, *day, exclude);
         while next < segments.len() && segments[next].first_day.is_none_or(|d| d <= *day) {
             let rest = remaining[next];
             let first = rest == segments[next].minutes;
             let fits = |m: i64| {
+                if pieces.iter().map(|p| p.minutes).sum::<i64>() + m > room {
+                    return false;
+                }
                 let mut trial = pieces.clone();
                 trial.push(Piece { segment: next, minutes: m, first });
                 layout(ctx, current, *day, goal, exclude, segments, &blocks_of(segments, &trial)).is_some()
@@ -359,6 +430,7 @@ fn commit(ctx: &Ctx, current: &mut Vec<PAction>, goal: &PGoal, exclude: &BTreeSe
                     est_minutes: length,
                     status: ActionStatus::Planned,
                     original: None,
+                    revived: false,
                 });
             }
         }
@@ -378,12 +450,21 @@ fn diff_of(current: &[PAction]) -> Vec<DiffOp> {
                 after: Some(after),
                 goal_id: Some(action.goal_id.clone()),
                 title: Some(action.title.clone()),
+                revive: false,
             }),
             Some(before) => {
                 let times = parsed::parse_slot(before).expect("parsed on input");
                 let changed = times != (action.start_at, action.end_at) || before.est_minutes != action.est_minutes;
                 let op = if before.est_minutes == action.est_minutes { Op::Move } else { Op::Resize };
-                changed.then(|| DiffOp { action_id: action.id.clone(), op, before: Some(before.clone()), after: Some(after), goal_id: None, title: None })
+                changed.then(|| DiffOp {
+                    action_id: action.id.clone(),
+                    op,
+                    before: Some(before.clone()),
+                    after: Some(after),
+                    goal_id: None,
+                    title: None,
+                    revive: action.revived,
+                })
             }
         };
         diff.extend(entry.map(|e| (action.start_at, e)));

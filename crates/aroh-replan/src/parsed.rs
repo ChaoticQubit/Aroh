@@ -10,6 +10,7 @@ pub(crate) struct PGoal {
 
 /// An action with parsed UTC times. `original` holds the stored slot for
 /// rows read from the input, None for rows created by the planner.
+/// `revived` marks a missed action the planner moved back into the plan.
 #[derive(Clone)]
 pub(crate) struct PAction {
     pub id: String,
@@ -20,6 +21,7 @@ pub(crate) struct PAction {
     pub est_minutes: i64,
     pub status: ActionStatus,
     pub original: Option<Slot>,
+    pub revived: bool,
 }
 
 /// Parses an ISO 8601 UTC instant; None when malformed.
@@ -68,6 +70,7 @@ pub(crate) fn actions(actions: &[Action]) -> Vec<PAction> {
                 est_minutes: a.est_minutes,
                 status: a.status,
                 original: Some(original),
+                revived: false,
             })
         })
         .collect()
