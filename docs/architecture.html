@@ -86,7 +86,7 @@ pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; backgr
       <h1>Aroh Architecture</h1>
       <div class="meta">
         <span>Status: <span class="pill proposed">Proposed</span></span>
-        <span>Version 0.3, 2026-11-21</span>
+        <span>Version 0.4, 2026-11-21</span>
         <span>Branch <code>docs/engine-architecture</code></span>
         <span>Source of decisions: <code>docs/agent-decisions.md</code></span>
       </div>
@@ -668,7 +668,7 @@ supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
           <tr><td><code>troupekit-core</code></td><td>1</td><td><span class="pill built">Built</span></td><td>0cbe06e, 18 tests, boundary check</td></tr>
           <tr><td><code>troupekit-providers</code> (4 protocols, catalog)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
           <tr><td><code>troupekit-tools</code> (fetch, search with 2 adapters)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td>SSRF guard salvaged from MVP</td></tr>
-          <tr><td><code>troupekit-context</code> (memory, RAG on pgvector)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
+          <tr><td><code>troupekit-context</code> (memory, RAG on pgvector)</td><td>1</td><td><span class="pill built">Built</span></td><td>b3ebe78, 43 tests; pgvector store lands with aroh-server</td></tr>
           <tr><td><code>troupekit-agent</code> (persona TOML, evals, budgets)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
           <tr><td><code>troupekit-graph</code> (durable runs)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
           <tr><td><code>troupekit-host</code> step mode on Vercel</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
@@ -684,6 +684,7 @@ supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
       <table>
         <thead><tr><th>Date</th><th>Version</th><th>Change</th></tr></thead>
         <tbody>
+          <tr><td>2026-11-21</td><td>0.4</td><td>troupekit-context merged (e5-small, 384 dims, hybrid retrieval).</td></tr>
           <tr><td>2026-11-21</td><td>0.3</td><td>troupekit-core merged. Design pod building.</td></tr>
           <tr><td>2026-11-21</td><td>0.2</td><td>Framework named Troupekit.</td></tr>
           <tr><td>2026-11-21</td><td>0.1</td><td>First proposal from the grill session (Q1 to Q40).</td></tr>
