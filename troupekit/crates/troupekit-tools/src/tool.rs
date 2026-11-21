@@ -6,10 +6,24 @@ use troupekit_core::tool::ToolSpec;
 
 /// Per-call context handed to every tool.
 /// Cheap to clone, so typed tool closures can own a copy across awaits.
-/// `run_id` names the agent run that made the call, when there is one.
+/// `run_id` names the run that made the call; `idempotency_key` is the same
+/// for a replayed call and new for every other, for tools that dedupe.
 #[derive(Debug, Clone, Default)]
 pub struct ToolContext {
     pub run_id: Option<RunId>,
+    pub idempotency_key: Option<String>,
+}
+
+impl ToolContext {
+    /// Builds the context for call `index` of step `step` of run `run_id`.
+    /// The key is `"{run_id}:{step}:{index}"`, so replaying a step from its
+    /// checkpoint gives the same keys and the next step new ones.
+    pub fn for_call(run_id: RunId, step: u64, index: usize) -> ToolContext {
+        ToolContext {
+            run_id: Some(run_id),
+            idempotency_key: Some(format!("{run_id}:{step}:{index}")),
+        }
+    }
 }
 
 /// What a tool returns to the model.
@@ -94,4 +108,26 @@ pub trait Tool: Send + Sync {
     /// Runs the tool with JSON `args` and the per-call `ctx`.
     /// Returns the model-facing output or a `ToolError`.
     async fn call(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn for_call_builds_stable_keys() {
+        let run = RunId::new();
+        let a = ToolContext::for_call(run, 3, 1);
+        assert_eq!(a.run_id, Some(run));
+        assert_eq!(a.idempotency_key, Some(format!("{run}:3:1")));
+        assert_eq!(
+            ToolContext::for_call(run, 3, 1).idempotency_key,
+            a.idempotency_key
+        );
+        assert_ne!(
+            ToolContext::for_call(run, 4, 1).idempotency_key,
+            a.idempotency_key
+        );
+        assert_eq!(ToolContext::default().idempotency_key, None);
+    }
 }

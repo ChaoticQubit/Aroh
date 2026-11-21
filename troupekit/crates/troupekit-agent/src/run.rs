@@ -469,12 +469,10 @@ impl AgentRun {
                 },
             );
         }
-        let ctx = ToolContext {
-            run_id: Some(self.run_id),
-        };
+        let (run_id, step) = (self.run_id, self.steps);
         let allowed = &self.spec.tools;
-        let outputs = join_all(calls.iter().map(|c| {
-            let ctx = &ctx;
+        let outputs = join_all(calls.iter().enumerate().map(|(i, c)| {
+            let ctx = ToolContext::for_call(run_id, step, i);
             async move {
                 if !allowed.contains(&c.name) {
                     return ToolOutput::error(format!(
@@ -482,7 +480,7 @@ impl AgentRun {
                         c.name
                     ));
                 }
-                ToolOutput::from_result(io.tools().call(&c.name, c.arguments.clone(), ctx).await)
+                ToolOutput::from_result(io.tools().call(&c.name, c.arguments.clone(), &ctx).await)
             }
         }))
         .await;

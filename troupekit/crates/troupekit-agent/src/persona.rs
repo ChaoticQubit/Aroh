@@ -323,7 +323,10 @@ fn usd_micros(usd: Option<f64>) -> Result<Option<u64>, String> {
     Ok(Some((usd * 1_000_000.0).round() as u64))
 }
 
-fn toml_error(file: &str, text: &str, e: &toml::de::Error) -> PersonaError {
+/// Turns a TOML decode error `e` on `text` read from `file` into a
+/// `PersonaError` naming the field: the missing or unknown key, else the
+/// key on the failing line, else `toml`. Workflow files reuse it.
+pub fn toml_error(file: &str, text: &str, e: &toml::de::Error) -> PersonaError {
     let message = e.message().to_string();
     let named = ["missing field `", "unknown field `"]
         .iter()

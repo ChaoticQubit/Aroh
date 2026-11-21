@@ -891,3 +891,50 @@ async fn http_model_end_to_end() {
         .unwrap()
         .contains("sk-test-not-real"));
 }
+
+#[tokio::test]
+async fn tool_calls_carry_idempotency_keys() {
+    let keys = Arc::new(Mutex::new(Vec::<String>::new()));
+    let seen = keys.clone();
+    let mut tools = ToolRegistry::new();
+    tools
+        .register(Arc::new(typed_tool(
+            "echo",
+            "test tool",
+            move |_args: Q, ctx: ToolContext| {
+                let seen = seen.clone();
+                async move {
+                    seen.lock()
+                        .unwrap()
+                        .push(ctx.idempotency_key.clone().unwrap());
+                    Ok(ToolOutput::text("ok"))
+                }
+            },
+        )))
+        .unwrap();
+    let model = FakeModel::new(vec![
+        calls(&[("c1", "echo"), ("c2", "echo")]),
+        calls(&[("c3", "echo")]),
+        text("done"),
+    ]);
+    let io = SimpleIo::new(tools).with_model("fake/m", model, PRICE);
+    let p = persona("tools = ['echo']");
+    let mut run = AgentRun::new(&p, ask(), Limits::default(), &io)
+        .await
+        .unwrap();
+    let id = run.run_id();
+    assert_eq!(run.step(&io).await, StepOutcome::Continue);
+    let before_tools = run.checkpoint();
+    assert_eq!(run.step(&io).await, StepOutcome::Continue);
+    assert_eq!(
+        *keys.lock().unwrap(),
+        vec![format!("{id}:2:0"), format!("{id}:2:1")]
+    );
+    let mut replay = AgentRun::from_checkpoint(&before_tools).unwrap();
+    assert_eq!(replay.step(&io).await, StepOutcome::Continue);
+    let after_replay = keys.lock().unwrap().clone();
+    assert_eq!(after_replay[2..], after_replay[..2]);
+    assert_eq!(run.step(&io).await, StepOutcome::Continue);
+    assert_eq!(run.step(&io).await, StepOutcome::Continue);
+    assert_eq!(keys.lock().unwrap()[4], format!("{id}:4:0"));
+}

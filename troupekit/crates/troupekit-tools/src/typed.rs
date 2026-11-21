@@ -143,6 +143,7 @@ mod tests {
         });
         let ctx = ToolContext {
             run_id: Some(RunId::new()),
+            idempotency_key: None,
         };
         assert_eq!(
             tool.call(json!({"city":"x"}), &ctx).await.unwrap().content,
