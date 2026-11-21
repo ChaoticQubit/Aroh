@@ -46,7 +46,7 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 | Q26-27 | Hosting | Deployment layer with host adapters, switchable between providers. One engine core, two run modes: worker (always-on loop: Mac, Fly, VPS) and step (each checkpointed graph step is one request, triggered by Supabase `pg_cron` plus `pg_net` and enqueue webhooks: Vercel, Cloud Run, Lambda). First host: Vercel step mode (Rust runtime or Container runtime). |
 | Q28 | App to server | Typed JSON HTTPS API (OpenAPI from Rust types) authed with the Supabase user JWT. Run events written to a `run_events` table, streamed to the app through Supabase Realtime. |
 | Q29 | Migration | Rebuild in this repo, salvage proven parts with their tests: HLC plus LWW sync plus RLS, deterministic replan planner (becomes a tool), SSRF-safe fetch, Apple Speech plugin, reminder timing. Old YAML agent steps, YAML slot plugins and old screens are deleted once replaced. |
-| Q30 | Framework layout | `framework/` is its own Cargo workspace of small crates, own README, CI, versioning, crates.io publishing, zero Aroh imports enforced by CI. Aroh depends on it by path, later by version. |
+| Q30 | Framework layout | `troupekit/` is its own Cargo workspace of small crates, own README, CI, versioning, crates.io publishing, zero Aroh imports enforced by CI. Aroh depends on it by path, later by version. |
 | Q31 | License | MIT OR Apache-2.0. |
 | Q32 | Spend | Layered budgets: per call, per run, per goal per month, per user per month, priced from the provider catalog. Crossing a limit pauses at an approval node. Settings shows spend per goal and provider. |
 | Q33 | Guardrails | testy-style per persona: strict typed output with one repair round, deterministic evals (no overlap, before deadline, within availability, daily cap), optional LLM-judge evals, guardrails (allowed tools, public URLs only, health and finance safety rules). A failed eval blocks the output. |
@@ -59,9 +59,10 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 | Q40 | First slice | Framework spine (4 provider protocols plus catalog, fetch and search trait with 2 adapters, durable graph with checkpoints, persona TOML loader, memory and RAG on pgvector, step mode on Vercel) plus app (tokens and gallery for the four component families, Settings for provider, model and key, New Goal chat, Goals, Today, Calendar, Inbox), proved end to end on one fitness goal ("six pack by Feb 1") with check-ins and adaptation. Health, calendar triage, push and other categories follow. |
 
 | Q41 | Visual direction | Simple, professional, enterprise grade, intuitive. Calendar-first layout in the style of a plain web calendar, with cards layered on top. Neutral palette, one accent, no flair. |
-| Q42 | Code shape | Simple modules. One copy of every function: shared logic lives in one common module (`fw-core`, `aroh-domain`, `apps/aroh/src/lib/ui`) and is imported, never duplicated. ponytail, software-practices and tiger-style still apply. |
+| Q42 | Code shape | Simple modules. One copy of every function: shared logic lives in one common module (`troupekit-core`, `aroh-domain`, `apps/aroh/src/lib/ui`) and is imported, never duplicated. ponytail, software-practices and tiger-style still apply. |
 | Q43 | Mockup review | Mockups are shown to the owner as an artifact; the owner approves before implementation. |
 | Q44 | Live architecture | `docs/architecture.html`, published at https://claude.ai/artifact/2GvdWKx4cyoC3WmqY8emDU, updated as pods land (build status table and change log). |
+| Q46 | Framework name | Troupekit: folder `troupekit/`, crates `troupekit-<layer>`. Free on crates.io, PyPI and npm, no GitHub repo of that name (checked 2026-11-21). Chosen over Dramaturg (hard to say), Rolecast, Castwork, Cuework. |
 | Q45 | Android and web | Deferred, timing decided at implementation. |
 
 ### Rejected alternatives
@@ -89,9 +90,8 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 - A "six pack by Feb 1" goal goes from one input to an approved plan with trackers and a dashboard view built from library components.
 - Check-ins collect weight and meals; a missed action or a tracker rule triggers an adaptation proposal in Inbox, applied per the goal's autonomy level.
 - A graph run survives a server restart mid-run and resumes from its last checkpoint.
-- `framework/` builds and tests with no Aroh imports.
+- `troupekit/` builds and tests with no Aroh imports.
 
 ### Unresolved
 
-- Framework name: candidates Dramaturg, Prosopon, Maskwork (crates.io free on 2026-11-21); owner to pick.
 - `docs/decisions.md` still holds the MVP contract and must be rewritten to match this record.

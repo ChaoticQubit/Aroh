@@ -86,7 +86,7 @@ pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; backgr
       <h1>Aroh Architecture</h1>
       <div class="meta">
         <span>Status: <span class="pill proposed">Proposed</span></span>
-        <span>Version 0.1, 2026-11-21</span>
+        <span>Version 0.2, 2026-11-21</span>
         <span>Branch <code>docs/engine-architecture</code></span>
         <span>Source of decisions: <code>docs/agent-decisions.md</code></span>
       </div>
@@ -172,7 +172,7 @@ pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; backgr
         <text class="t-sub" x="830" y="244">persona library, workflows</text>
         <text class="t-sub" x="830" y="262">toolkits: actions, trackers, calendar</text>
         <rect class="box-accent" x="816" y="284" width="248" height="146" rx="6"/>
-        <text class="t-title" x="830" y="304">Agent framework</text>
+        <text class="t-title" x="830" y="304">Troupekit framework</text>
         <text class="t-sub" x="830" y="324">providers and dialect catalog</text>
         <text class="t-sub" x="830" y="342">tools, search, fetch, MCP</text>
         <text class="t-sub" x="830" y="360">context: memory, RAG, embeddings</text>
@@ -239,8 +239,8 @@ pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; backgr
   </section>
 
   <section id="framework">
-    <h2>Framework layers (published separately)</h2>
-    <p class="lead">The framework is its own Cargo workspace in <code>framework/</code>, with no Aroh imports. Each layer depends only on the layers below it. The folder name stays a placeholder until you pick a name.</p>
+    <h2>Troupekit framework layers (published separately)</h2>
+    <p class="lead">The framework is its own Cargo workspace in <code>troupekit/</code>, with no Aroh imports. Each layer depends only on the layers below it.</p>
     <figure>
       <div class="scroll">
       <svg viewBox="0 0 1000 470" role="img" aria-label="Framework crates in five layers: host and plugins on top, then graph, then agent, then providers, tools and context, then core at the bottom. Each layer depends only on the layers below.">
@@ -248,39 +248,39 @@ pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; backgr
           <marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
         </defs>
         <rect class="box" x="20" y="20" width="470" height="70" rx="6"/>
-        <text class="t-title" x="36" y="44">fw-host</text>
+        <text class="t-title" x="36" y="44">troupekit-host</text>
         <text class="t-sub" x="36" y="64">worker mode loop, step mode handler</text>
         <text class="t-sub" x="36" y="80">Vercel, Fly, VPS or Mac adapters</text>
         <rect class="box" x="510" y="20" width="470" height="70" rx="6"/>
-        <text class="t-title" x="526" y="44">fw-plugins</text>
+        <text class="t-title" x="526" y="44">troupekit-plugins</text>
         <text class="t-sub" x="526" y="64">bundle manifest: trackers, view tree, personas, tools</text>
         <text class="t-sub" x="526" y="80">validate, version, enable</text>
 
         <rect class="box-accent" x="20" y="110" width="960" height="70" rx="6"/>
-        <text class="t-title" x="36" y="134">fw-graph</text>
+        <text class="t-title" x="36" y="134">troupekit-graph</text>
         <text class="t-sub" x="36" y="154">workflows in TOML: steps, fan-out and join, human approval nodes</text>
         <text class="t-sub" x="36" y="170">checkpointer after every step, resume after crash or deploy</text>
 
         <rect class="box" x="20" y="200" width="960" height="70" rx="6"/>
-        <text class="t-title" x="36" y="224">fw-agent</text>
+        <text class="t-title" x="36" y="224">troupekit-agent</text>
         <text class="t-sub" x="36" y="244">persona TOML loader (goal folder, user library, built in), run state machine</text>
         <text class="t-sub" x="36" y="260">typed output with one repair round, guardrails, evals, layered budgets</text>
 
         <rect class="box" x="20" y="290" width="300" height="70" rx="6"/>
-        <text class="t-title" x="36" y="314">fw-providers</text>
+        <text class="t-title" x="36" y="314">troupekit-providers</text>
         <text class="t-sub" x="36" y="334">wire encode, decoder, transport</text>
         <text class="t-sub" x="36" y="350">dialect catalog, middleware</text>
         <rect class="box" x="350" y="290" width="300" height="70" rx="6"/>
-        <text class="t-title" x="366" y="314">fw-tools</text>
+        <text class="t-title" x="366" y="314">troupekit-tools</text>
         <text class="t-sub" x="366" y="334">Tool trait, toolkits, MCP client</text>
         <text class="t-sub" x="366" y="350">TOML HTTP tools, search, fetch</text>
         <rect class="box" x="680" y="290" width="300" height="70" rx="6"/>
-        <text class="t-title" x="696" y="314">fw-context</text>
+        <text class="t-title" x="696" y="314">troupekit-context</text>
         <text class="t-sub" x="696" y="334">memory scopes, ingest, chunk</text>
         <text class="t-sub" x="696" y="350">embed (ONNX), hybrid retrieval</text>
 
         <rect class="box" x="20" y="380" width="960" height="70" rx="6"/>
-        <text class="t-title" x="36" y="404">fw-core</text>
+        <text class="t-title" x="36" y="404">troupekit-core</text>
         <text class="t-sub" x="36" y="424">messages and content parts, tool calls, Secret, error types, event enum, ids, clock</text>
         <text class="t-sub" x="36" y="440">store traits (checkpoint, memory, vector, blob) that apps implement</text>
 
@@ -295,7 +295,7 @@ pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; backgr
         <line class="wire" x1="830" y1="360" x2="830" y2="378" marker-end="url(#fa)"/>
       </svg>
       </div>
-      <figcaption>Arrows mean "depends on". Storage is a trait in <code>fw-core</code>: Aroh implements it on Postgres, pgvector and Supabase Storage, and the framework ships in-memory and SQLite versions for tests and examples.</figcaption>
+      <figcaption>Arrows mean "depends on". Storage is a trait in <code>troupekit-core</code>: Aroh implements it on Postgres, pgvector and Supabase Storage, and the framework ships in-memory and SQLite versions for tests and examples.</figcaption>
     </figure>
   </section>
 
@@ -604,33 +604,33 @@ stateDiagram-v2
   <section id="code">
     <h2>Code layout</h2>
     <p class="lead">One copy of every function. Shared code lives in one module and is imported everywhere it is needed.</p>
-<pre class="tree">framework/                 own Cargo workspace, publishable, no Aroh imports
-  crates/fw-core           messages, Secret, errors, events, store traits
-  crates/fw-providers      wire, decoder, transport, catalog, middleware
-  crates/fw-tools          Tool trait, toolkits, MCP, TOML tools, search, fetch
-  crates/fw-context        memory, ingest, chunk, embed, retrieve
-  crates/fw-agent          persona loader, run state machine, evals, budgets
-  crates/fw-graph          workflows, checkpointer, human nodes
-  crates/fw-plugins        bundle manifest and validation
-  crates/fw-host           worker and step adapters
-  catalog/                 providers.toml, search.toml
+<pre class="tree">troupekit/                    own Cargo workspace, publishable, no Aroh imports
+  crates/troupekit-core       messages, Secret, errors, events, store traits
+  crates/troupekit-providers  wire, decoder, transport, catalog, middleware
+  crates/troupekit-tools      Tool trait, toolkits, MCP, TOML tools, search, fetch
+  crates/troupekit-context    memory, ingest, chunk, embed, retrieve
+  crates/troupekit-agent      persona loader, run state machine, evals, budgets
+  crates/troupekit-graph      workflows, checkpointer, human nodes
+  crates/troupekit-plugins    bundle manifest and validation
+  crates/troupekit-host       worker and step adapters
+  catalog/                    providers.toml, search.toml
   examples/
 crates/
-  aroh-domain              row types, HLC, validation, shared by both engines
-  aroh-store               SQLite and Postgres repositories, sync
-  aroh-server              HTTPS API, jobs, store-trait impls, Aroh toolkits
-  aroh-app                 app engine: commands, reminders, recurrence, offline queue
+  aroh-domain                 row types, HLC, validation, shared by both engines
+  aroh-store                  SQLite and Postgres repositories, sync
+  aroh-server                 HTTPS API, jobs, store-trait impls, Aroh toolkits
+  aroh-app                    app engine: commands, reminders, recurrence, offline queue
   tauri-plugin-aroh-native HealthKit, EventKit, Speech, push token
-personas/                  built-in persona TOML library
-workflows/                 built-in workflow TOML (setup, adaptation, review)
-apps/aroh/                 Tauri shell and Svelte app
-  src/lib/ui/tokens        design tokens, one source
-  src/lib/ui/components    inputs, data display, planning, agent surfaces
-  src/lib/ui/renderer      plugin view tree to components
-  src/lib/api              typed command client, the only bridge to Rust
-  src/routes/              today, calendar, goals, inbox, log, settings, gallery
-  src/routes/mockups/      approved-design mockups, ported from here
-supabase/                  migrations, RLS, pg_cron jobs, tests</pre>
+personas/                     built-in persona TOML library
+workflows/                    built-in workflow TOML (setup, adaptation, review)
+apps/aroh/                    Tauri shell and Svelte app
+  src/lib/ui/tokens           design tokens, one source
+  src/lib/ui/components       inputs, data display, planning, agent surfaces
+  src/lib/ui/renderer         plugin view tree to components
+  src/lib/api                 typed command client, the only bridge to Rust
+  src/routes/                 today, calendar, goals, inbox, log, settings, gallery
+  src/routes/mockups/         approved-design mockups, ported from here
+supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
   </section>
 
   <section id="rules">
@@ -639,7 +639,7 @@ supabase/                  migrations, RLS, pg_cron jobs, tests</pre>
       <div class="card">
         <h3>One copy of everything</h3>
         <ul>
-          <li>Shared logic lives in one module (<code>fw-core</code>, <code>aroh-domain</code>, <code>src/lib/ui</code>) and is imported, never copied.</li>
+          <li>Shared logic lives in one module (<code>troupekit-core</code>, <code>aroh-domain</code>, <code>src/lib/ui</code>) and is imported, never copied.</li>
           <li>Before adding a helper, search for an existing one. Two call sites with the same logic move into the common module.</li>
           <li>The UI reaches Rust only through <code>src/lib/api</code>. Components never call Tauri directly.</li>
           <li>Plugin views are TOML trees that the renderer maps to components, so the UI stays replaceable.</li>
@@ -665,13 +665,13 @@ supabase/                  migrations, RLS, pg_cron jobs, tests</pre>
         <thead><tr><th>Part</th><th>Slice</th><th>Status</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td>Design tokens and component gallery</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td>mockup first, simple calendar-style look</td></tr>
-          <tr><td><code>fw-core</code></td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
-          <tr><td><code>fw-providers</code> (4 protocols, catalog)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
-          <tr><td><code>fw-tools</code> (fetch, search with 2 adapters)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td>SSRF guard salvaged from MVP</td></tr>
-          <tr><td><code>fw-context</code> (memory, RAG on pgvector)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
-          <tr><td><code>fw-agent</code> (persona TOML, evals, budgets)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
-          <tr><td><code>fw-graph</code> (durable runs)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
-          <tr><td><code>fw-host</code> step mode on Vercel</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
+          <tr><td><code>troupekit-core</code></td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
+          <tr><td><code>troupekit-providers</code> (4 protocols, catalog)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
+          <tr><td><code>troupekit-tools</code> (fetch, search with 2 adapters)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td>SSRF guard salvaged from MVP</td></tr>
+          <tr><td><code>troupekit-context</code> (memory, RAG on pgvector)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
+          <tr><td><code>troupekit-agent</code> (persona TOML, evals, budgets)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
+          <tr><td><code>troupekit-graph</code> (durable runs)</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
+          <tr><td><code>troupekit-host</code> step mode on Vercel</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
           <tr><td>Aroh domain, store, sync</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td>HLC and LWW sync salvaged</td></tr>
           <tr><td>Settings, New Goal chat, Goals, Today, Calendar, Inbox</td><td>1</td><td><span class="pill proposed">Proposed</span></td><td>six-pack goal end to end</td></tr>
           <tr><td>Apple Health, calendar triage, push</td><td>2</td><td><span class="pill proposed">Proposed</span></td><td></td></tr>
@@ -684,6 +684,7 @@ supabase/                  migrations, RLS, pg_cron jobs, tests</pre>
       <table>
         <thead><tr><th>Date</th><th>Version</th><th>Change</th></tr></thead>
         <tbody>
+          <tr><td>2026-11-21</td><td>0.2</td><td>Framework named Troupekit.</td></tr>
           <tr><td>2026-11-21</td><td>0.1</td><td>First proposal from the grill session (Q1 to Q40).</td></tr>
         </tbody>
       </table>
