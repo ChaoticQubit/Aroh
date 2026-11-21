@@ -1,0 +1,39 @@
+aroh_plugin: 1
+name: water-tracker
+version: 0.1.0
+title: Water tracker
+description: Log water with one tap and see today's total.
+order: 100
+
+trackers:
+  - id: water
+    kind: water
+    unit: ml
+    chips: [250, 500, 750]
+    daily_target: 2500
+
+slots:
+  today.sidebar:
+    - component: stat-tile
+      label: Water today
+      value: water.today_total
+      unit: ml
+    - component: quick-chips
+      tracker: water
+      label: Add water
+  log.trackers:
+    - component: progress-bar
+      label: Water vs target
+      value: water.today_total
+      max: 2500
+    - component: quick-chips
+      tracker: water
+
+agents:
+  - name: hydration-coach
+    purpose: Nudge me when I am behind on water.
+    tools: [read_trackers, notify]
+    variables: [today_total, daily_target]
+    prompt: |
+      I have had {{today_total}} ml of water today. My target is {{daily_target}} ml.
+      If I am behind for the time of day, write one short, friendly nudge. Otherwise reply OK.

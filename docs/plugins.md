@@ -24,7 +24,7 @@ slots:
 |---|---|---|---|
 | `aroh_plugin` | yes | integer | DSL version. Only `1` exists. |
 | `name` | yes | string | `^[a-z][a-z0-9-]{1,39}$`. Unique across all loaded plugins. |
-| `version` | yes | string | Semver `MAJOR.MINOR.PATCH`. |
+| `version` | yes | string | Semver `MAJOR.MINOR.PATCH`, digits only, no leading zeros, no pre-release or build suffix. |
 | `title` | yes | string | 1 to 80 characters. |
 | `description` | no | string | Up to 500 characters. |
 | `order` | no | integer | 0 to 1000, default 500. Lower renders first inside a slot. |
@@ -53,7 +53,7 @@ Each instance is a map with `component` plus that component's props. Props marke
 | `progress-bar` | `label` (text, required), `value` (number query, required), `max` (number literal greater than 0, or number query, required) | Fills `value / max`, clamped to 0..1. |
 | `checklist` | `label` (text, required), `items` (list query, required) | Rows with a done box. |
 | `action-list` | `label` (text, required), `items` (list query, required), `limit` (integer 1 to 20, default 5) | Calendar actions with time and status. |
-| `quick-chips` | `tracker` (tracker id, required), `label` (text, optional) | One tap button per chip of that tracker. Tap logs an entry. |
+| `quick-chips` | `tracker` (tracker id declared by any loaded plugin, required), `label` (text, optional) | One tap button per chip of that tracker. Tap logs an entry. |
 | `text-note` | `text` (text, required, up to 500 characters) | Plain text, never HTML or Markdown. |
 
 Text props are 1 to 80 characters unless stated.
@@ -90,7 +90,7 @@ trackers:
 | `id` | yes | `^[a-z][a-z0-9_]{1,31}$`, unique across all loaded plugins. |
 | `kind` | yes | One of `food`, `water`, `workout`, `other` (the `tracker_entries.kind` values). |
 | `unit` | yes | 1 to 16 characters, for example `ml`, `min`, `kcal`. |
-| `chips` | no | 1 to 8 positive numbers. Each one is a quick-tap amount. |
+| `chips` | no | Up to 8 positive numbers. Each one is a quick-tap amount. |
 | `daily_target` | no | Positive number. |
 
 ## Agents
@@ -118,7 +118,7 @@ agents:
 | `system` | no | 1 to 8192 bytes. Same `{{name}}` rules as `prompt`. |
 | `prompt` | yes | 1 to 8192 bytes. `{{name}}` inserts a variable. |
 
-Every `{{name}}` in `prompt` or `system` must be declared in `variables`, and every declared variable must appear in one of them. The host fills the values; the plugin never does. The host wraps `untrusted` values in `<untrusted_data name="...">` tags and strips those tags from inside the value. The model is always Claude, chosen by the host; a plugin cannot pick it.
+Every `{{...}}` in `prompt` or `system` must hold a valid variable name. Every `{{name}}` in `prompt` or `system` must be declared in `variables`, and every declared variable must appear in one of them. The host fills the values; the plugin never does. The host wraps `untrusted` values in `<untrusted_data name="...">` tags and strips those tags from inside the value. The model is always Claude, chosen by the host; a plugin cannot pick it.
 
 `aroh-agents` uses the same struct for its built-in agents: `aroh_plugins::AgentDecl`, parsed from a single-agent YAML document with `aroh_plugins::parse_agent`. A standalone agent file has the agent keys at the top level and nothing else.
 
@@ -148,8 +148,10 @@ Every `{{name}}` in `prompt` or `system` must be declared in `variables`, and ev
 The loader rejects the whole file on the first error and reports the file, the path inside the document, and the line when it is known:
 
 ```
-water.yaml:14: slots.today.sidebar[1]: unknown component `pie-chart`; expected one of stat-tile, progress-bar, checklist, action-list, quick-chips, text-note
+water.yaml:21: slots.today.sidebar[1].component: unknown variant `pie-chart`, expected one of `stat-tile`, `progress-bar`, `checklist`, `action-list`, `quick-chips`, `text-note`
 ```
+
+The path is `.` for the document root. Syntax, unknown key, missing key, wrong type, unknown slot, unknown component and unknown tool errors carry the YAML parser's wording and line. For the other classes the line is the first line that contains the offending value.
 
 Error classes: YAML syntax, unknown key, missing key, wrong type, unknown slot, unknown component, unknown query, query type mismatch, `goal.*` query outside `goal.detail`, unknown tracker in `quick-chips`, unknown tool, undeclared or unused prompt variable, bad name or version, size limit, and duplicate plugin name, tracker id or agent name across plugins.
 
@@ -175,7 +177,7 @@ The engine turns all enabled plugins into one JSON render model. The UI reads on
 }
 ```
 
-Every slot appears in `slots`, empty or not. Inside a slot, instances sort by plugin `order`, then plugin `name`, then position in the file. Query props become `{ "query": "<name>" }`; literal props stay as they are. Defaults are filled in.
+Every slot appears in `slots`, empty or not. Inside a slot, instances sort by plugin `order`, then plugin `name`, then position in the file. Query props become `{ "query": "<name>" }`; literal props stay as they are. Defaults are filled in: `limit` 5 on `action-list`, `chips` `[]` and `daily_target` `null` on trackers, and `untrusted` `[]`, `effort` `medium`, `output` `null`, `system` `null` on agents. Optional props without a default (`unit`, a `quick-chips` `label`) are left out of `props` when absent. `plugins`, `trackers` and `agents` follow the same plugin order as slots.
 
 ## Example: water tracker
 
