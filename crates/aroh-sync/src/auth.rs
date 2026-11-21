@@ -67,10 +67,10 @@ async fn token(config: &Config, grant: &str, body: serde_json::Value) -> Result<
         .json(&body)
         .send()
         .await?;
-    store(check(response).await?.json().await?)
+    parse(check(response).await?.json().await?)
 }
 
-fn store(t: TokenResponse) -> Result<Session, Error> {
+fn parse(t: TokenResponse) -> Result<Session, Error> {
     if t.access_token.is_empty() || t.refresh_token.is_empty() {
         return Err(Error::Auth("empty token in response".into()));
     }
@@ -80,13 +80,24 @@ fn store(t: TokenResponse) -> Result<Session, Error> {
         expires_at: t.expires_at.unwrap_or_else(|| now_secs() + t.expires_in),
         email: t.user.and_then(|u| u.email),
     };
-    config::write(SESSION_ACCOUNT, &serde_json::to_string(&session).expect("session serializes"))?;
     Ok(session)
 }
 
 /// Signs in with email and password and stores the session.
 pub async fn sign_in_password(email: &str, password: &str) -> Result<Session, Error> {
-    token(&config::load()?, "password", json!({"email": email, "password": password})).await
+    let session = password_session(&config::load()?, email, password).await?;
+    save(&session)?;
+    Ok(session)
+}
+
+/// Signs in with email and password against `config` and returns the
+/// session without touching the keychain. Used by tests and tools.
+pub async fn password_session(config: &Config, email: &str, password: &str) -> Result<Session, Error> {
+    token(config, "password", json!({"email": email, "password": password})).await
+}
+
+fn save(session: &Session) -> Result<(), Error> {
+    config::write(SESSION_ACCOUNT, &serde_json::to_string(session).expect("session serializes"))
 }
 
 /// Sends a one-time sign-in code to `email`.
@@ -111,7 +122,9 @@ pub async fn verify_otp(email: &str, code: &str) -> Result<Session, Error> {
         .json(&json!({"type": "email", "email": email, "token": code.trim()}))
         .send()
         .await?;
-    store(check(response).await?.json().await?)
+    let session = parse(check(response).await?.json().await?)?;
+    save(&session)?;
+    Ok(session)
 }
 
 /// Revokes the session on the server when reachable and always removes it
@@ -146,7 +159,7 @@ pub(crate) async fn valid_session(config: &Config) -> Result<Session, Error> {
     let mut fresh = token(config, "refresh_token", json!({"refresh_token": session.refresh_token})).await?;
     if fresh.email.is_none() {
         fresh.email = session.email;
-        config::write(SESSION_ACCOUNT, &serde_json::to_string(&fresh).expect("session serializes"))?;
     }
+    save(&fresh)?;
     Ok(fresh)
 }

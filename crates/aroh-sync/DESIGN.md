@@ -37,7 +37,7 @@ Dependencies: `reqwest` (default-features off, `rustls-tls`, `json`), `tokio`, `
 - Keychain (`keyring`), service `aroh`: account `supabase-session` holds the session JSON, account `supabase-config` holds the project URL and anon key. Dev override: env `AROH_SUPABASE_URL`, `AROH_SUPABASE_ANON_KEY`.
 - The project URL must be `https`; `http` only for `localhost` / `127.0.0.1`.
 - Never log tokens or keys. Never commit keys.
-- Public API, Tauri-agnostic: `configure(url, anon_key)`, `sign_in_password`, `request_otp`, `verify_otp`, `sign_out`, `sync_now(&mut Connection, on_remote: &mut dyn FnMut(&str)) -> SyncReport { pushed, pulled, at }` where `on_remote` feeds each remote HLC to `Hlc::receive`, `status(&Connection) -> SyncStatus { signed_in, email, last_sync_at, last_error }`. `last_sync_at` (unix millis) and `last_error` live in `sync_state`.
+- Public API, Tauri-agnostic: `configure(url, anon_key)`, `sign_in_password`, `request_otp`, `verify_otp`, `sign_out`, `sync_now(&mut Connection, on_remote: &mut (dyn FnMut(&str) + Send)) -> SyncReport { pushed, pulled, at }` where `on_remote` feeds each remote HLC to `Hlc::receive`, `status(&Connection) -> SyncStatus { signed_in, email, last_sync_at, last_error }`. `last_sync_at` (unix millis) and `last_error` live in `sync_state`.
 
 ## Tauri commands
 
@@ -52,3 +52,10 @@ Dependencies: `reqwest` (default-features off, `rustls-tls`, `json`), `tokio`, `
 ## Known limits
 
 - `server_seq` gaps from concurrent transactions can make a pull skip a row committed late. Single user makes this rare; upgrade to a commit-time watermark if multi-device writes become concurrent.
+- Android has no keychain backend: `keyring` v3 is built with `apple-native` (macOS and iOS Keychain) and `linux-native` only, so session and config storage fails on Android. Add an Android Keystore backend before shipping Android.
+- `sync_now` is safe to call on every app resume: a second call while one runs in the same process returns `Error::Busy` at once and writes nothing. A call with nothing to push sends no push requests, one pull request per table, and refreshes the token only when it expires within a minute. Two processes sharing one database are not guarded.
+- A device re-pushes rows it pulled once, because the push cursor only tracks local `updated_at`. The server trigger skips these equal-stamp writes, so the cost is upload bandwidth only.
+
+## Live test
+
+`crates/aroh-sync/tests/live.rs` is `#[ignore]`d and never runs in `test.sh`. `crates/aroh-sync/live.sh` reads keychain service `aroh`, accounts `supabase-config` (JSON `{url, anon_key}`) and `supabase-test-login` (`email:password`), and runs it on the host. It signs in with `auth::password_session` and syncs with `remote::sync_all`, so it never writes the keychain.

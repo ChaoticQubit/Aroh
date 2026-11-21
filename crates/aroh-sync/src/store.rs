@@ -131,7 +131,7 @@ pub fn apply_page(
     table: &Table,
     rows: &[Row],
     cursor: i64,
-    on_remote: &mut dyn FnMut(&str),
+    on_remote: &mut (dyn FnMut(&str) + Send),
 ) -> Result<usize, Error> {
     let tx = conn.transaction()?;
     let local_sql = format!(

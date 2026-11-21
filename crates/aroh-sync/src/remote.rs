@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-use crate::auth::{check, http, valid_session};
+use crate::auth::{check, http};
 use crate::config::Config;
 use crate::store::{self, Row, Table, TABLES};
 use crate::Error;
@@ -16,24 +16,30 @@ pub struct Moved {
 }
 
 /// Pushes then pulls every synced table.
-/// Input: the open database, the project config and a callback receiving
-/// every remote HLC. Output: rows pushed and rows written locally.
-pub async fn sync_all(conn: &mut Connection, config: &Config, on_remote: &mut dyn FnMut(&str)) -> Result<Moved, Error> {
+/// Input: the open database, the project config, a valid GoTrue access
+/// token and a callback receiving every remote HLC.
+/// Output: rows pushed and rows written locally.
+pub async fn sync_all(
+    conn: &mut Connection,
+    config: &Config,
+    token: &str,
+    on_remote: &mut (dyn FnMut(&str) + Send),
+) -> Result<Moved, Error> {
+    assert!(!token.is_empty());
     store::ensure_state(conn)?;
-    let token = valid_session(config).await?.access_token;
     let client = http();
     let mut moved = Moved::default();
     for table in &TABLES {
-        moved.pushed += push(conn, &client, config, &token, table).await?;
+        moved.pushed += push(conn, &client, config, token, table).await?;
     }
     for table in &TABLES {
-        moved.pulled += pull(conn, &client, config, &token, table, on_remote).await?;
+        moved.pulled += pull(conn, &client, config, token, table, on_remote).await?;
     }
     Ok(moved)
 }
 
 async fn push(
-    conn: &Connection,
+    conn: &mut Connection,
     client: &reqwest::Client,
     config: &Config,
     token: &str,
@@ -71,7 +77,7 @@ async fn pull(
     config: &Config,
     token: &str,
     table: &Table,
-    on_remote: &mut dyn FnMut(&str),
+    on_remote: &mut (dyn FnMut(&str) + Send),
 ) -> Result<usize, Error> {
     let key = format!("pull:{}", table.name);
     let mut pulled = 0;

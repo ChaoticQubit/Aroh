@@ -30,6 +30,31 @@ pub enum Error {
     Http(#[from] reqwest::Error),
     #[error("server answered {0}: {1}")]
     Status(u16, String),
+    #[error("a sync is already running")]
+    Busy,
+}
+
+static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Holds the process-wide sync slot until dropped, so cursors are only ever
+/// written by one sync at a time.
+struct SyncGuard;
+
+impl SyncGuard {
+    fn acquire() -> Option<SyncGuard> {
+        use std::sync::atomic::Ordering;
+        RUNNING
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok()
+            .map(|_| SyncGuard)
+    }
+}
+
+impl Drop for SyncGuard {
+    fn drop(&mut self) {
+        let was = RUNNING.swap(false, std::sync::atomic::Ordering::Release);
+        assert!(was);
+    }
 }
 
 /// What one `sync_now` call did. `at` is unix milliseconds.
@@ -55,13 +80,18 @@ fn now_millis() -> i64 {
 }
 
 /// Pushes local changes, pulls remote ones and records the outcome in
-/// `sync_state` (`last_sync_at` or `last_error`).
+/// `sync_state` (`last_sync_at` or `last_error`). Returns `Error::Busy` at
+/// once, writing nothing, when another sync in this process is running.
 /// Input: the open database and a callback that feeds each remote HLC to the
 /// local clock (`aroh-core` `Hlc::receive`).
-pub async fn sync_now(conn: &mut Connection, on_remote: &mut dyn FnMut(&str)) -> Result<SyncReport, Error> {
+pub async fn sync_now(conn: &mut Connection, on_remote: &mut (dyn FnMut(&str) + Send)) -> Result<SyncReport, Error> {
+    let _guard = SyncGuard::acquire().ok_or(Error::Busy)?;
     store::ensure_state(conn)?;
     let outcome = match config::load() {
-        Ok(config) => remote::sync_all(conn, &config, on_remote).await,
+        Ok(config) => match auth::valid_session(&config).await {
+            Ok(session) => remote::sync_all(conn, &config, &session.access_token, on_remote).await,
+            Err(e) => Err(e),
+        },
         Err(e) => Err(e),
     };
     match outcome {
@@ -89,4 +119,26 @@ pub fn status(conn: &Connection) -> Result<SyncStatus, Error> {
         last_sync_at: store::get_state(conn, "last_sync_at")?.and_then(|v| v.parse().ok()),
         last_error: store::get_state(conn, "last_error")?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn second_sync_while_one_runs_is_refused() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let held = SyncGuard::acquire().unwrap();
+        assert!(matches!(sync_now(&mut conn, &mut |_| {}).await, Err(Error::Busy)));
+        assert!(SyncGuard::acquire().is_none());
+        drop(held);
+        assert!(SyncGuard::acquire().is_some());
+    }
+
+    #[test]
+    fn sync_future_is_send() {
+        fn send<T: Send>(_: T) {}
+        let mut conn = Connection::open_in_memory().unwrap();
+        send(sync_now(&mut conn, &mut |_| {}));
+    }
 }
