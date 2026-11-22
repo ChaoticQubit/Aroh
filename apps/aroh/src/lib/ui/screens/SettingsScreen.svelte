@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import Plus from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/ui/primitives/button';
 	import * as Card from '$lib/ui/primitives/card';
@@ -13,6 +14,7 @@
 	 * Settings: account sign-in, model provider, model and key (the key goes to the server, never
 	 * stored on the device), search providers, server URL, monthly budgets, and calendar and Apple
 	 * Health access. `ontest`, `onsignin` and `onhealth` resolve to a status line; the rest report edits.
+	 * With `oncoaches`, a Coaches row opens the coach (persona) library.
 	 */
 	let {
 		settings,
@@ -22,7 +24,8 @@
 		onbudget,
 		onsignin,
 		onsignout,
-		onhealth
+		onhealth,
+		oncoaches
 	}: {
 		settings: SettingsView;
 		onprovider?: (providerId: string, model: string) => void;
@@ -32,6 +35,7 @@
 		onsignin?: (email: string, password: string, create: boolean) => Promise<string>;
 		onsignout?: () => void;
 		onhealth?: (on: boolean) => Promise<string>;
+		oncoaches?: () => void;
 	} = $props();
 
 	const id = $props.id();
@@ -151,6 +155,18 @@
 			</div>
 		</Card.Root>
 	</section>
+
+	{#if oncoaches}
+		<section class="flex flex-col gap-3" aria-labelledby="{id}-coaches">
+			<h2 id="{id}-coaches" class="text-sm font-semibold text-fg">Coaches</h2>
+			<Card.Root size="sm" class="gap-0 px-0 py-0">
+				<button type="button" class="flex min-h-14 w-full items-center gap-3 rounded-md px-4 py-2 text-left outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset" onclick={() => oncoaches?.()}>
+					<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Coach library</span><span class="text-xs text-muted">See every coach by team. Copy one to change its name, style and rules.</span></span>
+					<ChevronRight class="size-4 shrink-0 text-muted" aria-hidden="true" />
+				</button>
+			</Card.Root>
+		</section>
+	{/if}
 
 	<section class="flex flex-col gap-3" aria-labelledby="{id}-search">
 		<div class="flex items-center justify-between">

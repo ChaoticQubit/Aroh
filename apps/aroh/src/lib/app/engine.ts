@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ChatMessage, ComponentSpec } from '$lib/ui/contract';
+import type { CoachFields } from '$lib/ui/screens/types';
+import { editError, type PersonaView } from './personas';
 
 /** Shown wherever an action needs the server engine (Q3) and the app is not connected to it. */
 export const NEEDS_ENGINE = 'This needs a connection to the engine. Sign in and set the server URL in Settings. Everything else works offline.';
@@ -16,8 +18,8 @@ export type Call = (method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, bod
 /** A stored key as `GET /v1/keys` lists it: setting row, vendor and last 4 characters. */
 export type KeyInfo = { setting_id: string; vendor: string; last4: string; updated_at: string };
 
-/** One run of `GET /v1/runs`. */
-export type RunSummary = { run_id: string; goal_id: string | null; workflow: string; state: string; created_at: string; updated_at: string };
+/** One run of `GET /v1/runs`; `personas` are the slugs of the coaches its snapshot holds. */
+export type RunSummary = { run_id: string; goal_id: string | null; workflow: string; state: string; created_at: string; updated_at: string; personas?: string[] };
 
 /** One intake question of the new-goal run. */
 export type Question = { id: string; text: string; kind: 'text' | 'number' | 'choice'; choices: string[] };
@@ -216,6 +218,12 @@ export async function flushLogs(call: Call, pending: PendingLog[], timezone: str
 	return { sent, runs };
 }
 
+/** The failed result of a call that rejected: `needs_engine` when the app is not connected. */
+function offline(e: unknown): { ok: false; reason: 'needs_engine' | 'error'; message: string } {
+	const message = String(e);
+	return message.startsWith('needs_engine') ? { ok: false, reason: 'needs_engine', message: NEEDS_ENGINE } : { ok: false, reason: 'error', message };
+}
+
 /** The default transport: the `app_engine` command, which adds the account token in Rust. */
 const tauriCall: Call = (method, path, body) => invoke<Answer>('app_engine', { method, path, body: body ?? null });
 
@@ -327,6 +335,33 @@ export class Engine {
 		const r = await this.request<{ ok: boolean; error: string | null }>('POST', `/v1/keys/${settingId}/test`);
 		if (!r.ok) return r;
 		return { ok: true, value: r.value.ok ? 'Connected. The engine reached the provider with your key.' : `The provider refused the key: ${r.value.error ?? 'unknown error'}.` };
+	}
+
+	/** Lists every coach (persona): built-ins, replaced by the owner's library copy when there is one. */
+	personas(): Promise<EngineResult<PersonaView[]>> {
+		return this.request('GET', '/v1/personas');
+	}
+
+	/** Copies built-in persona `name` into the owner's library; `exists` when a copy is already there. */
+	async copyPersona(name: string): Promise<EngineResult<PersonaView> | { ok: false; reason: 'exists'; message: string }> {
+		try {
+			const a = await this.call('POST', `/v1/personas/${encodeURIComponent(name)}/copy`);
+			if (a.status === 201) return { ok: true, value: a.body as PersonaView };
+			return { ok: false, reason: a.status === 409 ? 'exists' : 'error', message: failure(a) };
+		} catch (e) {
+			return offline(e);
+		}
+	}
+
+	/** Saves the edited fields of the owner's copy of `name`; a refusal comes back as owner text (`editError`). */
+	async editPersona(name: string, fields: CoachFields): Promise<EngineResult<PersonaView>> {
+		try {
+			const a = await this.call('PUT', `/v1/personas/${encodeURIComponent(name)}`, fields);
+			if (a.status === 200) return { ok: true, value: a.body as PersonaView };
+			return { ok: false, reason: 'error', message: editError(failure(a)) };
+		} catch (e) {
+			return offline(e);
+		}
 	}
 
 	/** Posts the queued logs (see `flushLogs`); returns the accepted ones and their runs. */

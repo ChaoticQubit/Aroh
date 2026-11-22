@@ -63,7 +63,7 @@
 </script>
 
 {#if s && goal && view}
-	<GoalScreen goal={goalHeader(s, goal, clock.zone)} {view} {versions} version={shown?.id ?? DERIVED} {onautonomy} {onchat} {onversion} />
+	<GoalScreen goal={goalHeader(s, goal, clock.zone)} {view} {versions} version={shown?.id ?? DERIVED} {onautonomy} {onchat} {onversion} oncoaches={() => void goto(`/personas?goal=${goal.id}`)} />
 {:else if s}
 	<p class="p-4 text-sm text-muted">This goal no longer exists.</p>
 {/if}

@@ -562,6 +562,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PersonaView'
+        '400':
+          description: set toml or the fields, not both or neither
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
         '404':
           description: 'not in the library: copy it first'
           content:
@@ -873,14 +879,33 @@ components:
     EditPersona:
       type: object
       description: |-
-        Body of `PUT /v1/personas/{name}`: the full persona TOML that replaces
-        the owner's library copy.
-        Validated before it is stored.
-      required:
-      - toml
+        Body of `PUT /v1/personas/{name}`: either the full persona TOML that
+        replaces the owner's library copy, or one or more fields (display name,
+        role, instructions, guardrails) set on the stored copy. Never both.
+        The result is validated by `check` before it is stored.
       properties:
+        display_name:
+          type:
+          - string
+          - 'null'
+        guardrails:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
+        instructions:
+          type:
+          - string
+          - 'null'
+        role:
+          type:
+          - string
+          - 'null'
         toml:
-          type: string
+          type:
+          - string
+          - 'null'
       additionalProperties: false
     ErrorBody:
       type: object
@@ -1019,13 +1044,17 @@ components:
     PersonaView:
       type: object
       description: |-
-        One persona as the library lists it: name, display name and role from
-        its text, the team kinds that use it for research or planning, where
-        the text comes from, whether a built-in exists, and the TOML itself.
+        One persona as the library lists it: name, display name, role,
+        instructions and guardrails from its text, the built-in's safety
+        guardrails an edit must keep (`locked`), the team kinds that use it,
+        where the text comes from, whether a built-in exists, and the TOML.
       required:
       - name
       - display_name
       - role
+      - instructions
+      - guardrails
+      - locked
       - teams
       - source
       - builtin
@@ -1035,6 +1064,16 @@ components:
           type: boolean
         display_name:
           type: string
+        guardrails:
+          type: array
+          items:
+            type: string
+        instructions:
+          type: string
+        locked:
+          type: array
+          items:
+            type: string
         name:
           type: string
         role:
@@ -1170,14 +1209,16 @@ components:
       type: object
       description: |-
         One row of the run list behind the Inbox: ids, workflow, lifecycle
-        state and times. `waiting_human` runs need the owner.
-        Newest first.
+        state, times, and the sorted slugs of the personas its snapshot holds
+        (the coaches that work on the run). `waiting_human` runs need the
+        owner. Newest first.
       required:
       - run_id
       - workflow
       - state
       - created_at
       - updated_at
+      - personas
       properties:
         created_at:
           type: string
@@ -1187,6 +1228,10 @@ components:
           - string
           - 'null'
           format: uuid
+        personas:
+          type: array
+          items:
+            type: string
         run_id:
           type: string
           format: uuid

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { chatFromRun, closeOldestQuestion, Engine, flushLogs, keyStatus, pauseMessage, route, type Answer, type Call, type RunView, type Waiting } from './engine';
+import { chatFromRun, closeOldestQuestion, Engine, flushLogs, keyStatus, NEEDS_ENGINE, pauseMessage, route, type Answer, type Call, type RunView, type Waiting } from './engine';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -127,6 +127,37 @@ describe('engine client', () => {
 		];
 		expect(keyStatus(keys, providers)).toEqual({ anthropic: '4321', openai: null });
 		expect(keyStatus([{ ...keys[0], setting_id: 'other' }], providers)).toEqual({ anthropic: null, openai: null });
+	});
+
+	it('lists, copies and edits library personas', async () => {
+		const safety = 'Safety: no individual investment, tax or legal advice; refer to a licensed financial professional for those.';
+		const coach = { name: 'budget-coach', display_name: 'Budget coach', source: 'library' };
+		const fields = { display_name: 'Money mentor', role: 'Warm.', instructions: 'Say "hi"\nthen go.', guardrails: [safety] };
+		const sent: [string, string, unknown][] = [];
+		const answers: Record<string, Answer> = {
+			'GET /v1/personas': { status: 200, body: [coach] },
+			'POST /v1/personas/budget-coach/copy': { status: 201, body: coach },
+			'POST /v1/personas/tutor/copy': { status: 409, body: { error: { code: 'conflict', message: 'conflict: persona tutor is already in the library' } } },
+			'PUT /v1/personas/budget-coach': { status: 200, body: { ...coach, display_name: 'Money mentor' } },
+			'PUT /v1/personas/tutor': { status: 422, body: { error: { code: 'setup', message: `setup: invalid_persona: tutor.toml: guardrails: keep \`${safety}\`` } } },
+			'PUT /v1/personas/habit-coach': { status: 422, body: { error: { code: 'setup', message: 'setup: invalid_persona: habit-coach.toml: role: must not be blank' } } }
+		};
+		const e = new Engine(async (method, path, body) => {
+			sent.push([method, path, body]);
+			return answers[`${method} ${path}`] ?? { status: 404, body: { error: { code: 'not_found', message: 'not found: library persona' } } };
+		});
+		await expect(e.personas()).resolves.toEqual({ ok: true, value: [coach] });
+		await expect(e.copyPersona('budget-coach')).resolves.toEqual({ ok: true, value: coach });
+		await expect(e.copyPersona('tutor')).resolves.toMatchObject({ ok: false, reason: 'exists' });
+		await expect(e.editPersona('budget-coach', fields)).resolves.toMatchObject({ ok: true, value: { display_name: 'Money mentor' } });
+		expect(sent.at(-1)).toEqual(['PUT', '/v1/personas/budget-coach', fields]);
+		await expect(e.editPersona('tutor', fields)).resolves.toEqual({ ok: false, reason: 'error', message: `Safety rules stay on every coach: ${safety}` });
+		await expect(e.editPersona('habit-coach', fields)).resolves.toEqual({ ok: false, reason: 'error', message: 'habit-coach.toml: role: must not be blank' });
+		await expect(e.editPersona('nobody', fields)).resolves.toMatchObject({ ok: false, reason: 'error' });
+		const offline = new Engine(() => Promise.reject('needs_engine: sign in first'));
+		await expect(offline.personas()).resolves.toEqual({ ok: false, reason: 'needs_engine', message: NEEDS_ENGINE });
+		await expect(offline.copyPersona('tutor')).resolves.toEqual({ ok: false, reason: 'needs_engine', message: NEEDS_ENGINE });
+		await expect(offline.editPersona('tutor', fields)).resolves.toEqual({ ok: false, reason: 'needs_engine', message: NEEDS_ENGINE });
 	});
 });
 

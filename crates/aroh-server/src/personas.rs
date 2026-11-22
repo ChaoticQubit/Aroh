@@ -13,13 +13,37 @@ use utoipa::ToSchema;
 /// Checked by `check`.
 pub const SAFETY: &str = "Safety:";
 
-/// Body of `PUT /v1/personas/{name}`: the full persona TOML that replaces
-/// the owner's library copy.
-/// Validated before it is stored.
-#[derive(Debug, Clone, Deserialize, ToSchema)]
+/// Body of `PUT /v1/personas/{name}`: either the full persona TOML that
+/// replaces the owner's library copy, or one or more fields (display name,
+/// role, instructions, guardrails) set on the stored copy. Never both.
+/// The result is validated by `check` before it is stored.
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EditPersona {
-    pub toml: String,
+    pub toml: Option<String>,
+    pub display_name: Option<String>,
+    pub role: Option<String>,
+    pub instructions: Option<String>,
+    pub guardrails: Option<Vec<String>>,
+}
+
+impl EditPersona {
+    fn has_fields(&self) -> bool {
+        self.display_name.is_some() || self.role.is_some() || self.instructions.is_some() || self.guardrails.is_some()
+    }
+
+    /// The persona text this edit stores over `current`, the copy `name`:
+    /// `toml` verbatim, or `current` with the set fields replaced.
+    /// `BadRequest` when both or neither are set, `Setup` when `current`
+    /// is not TOML.
+    pub fn text(&self, name: &str, current: &str) -> Result<String, ServerError> {
+        match (&self.toml, self.has_fields()) {
+            (Some(_), true) => Err(ServerError::BadRequest("set toml or the fields, not both".into())),
+            (None, false) => Err(ServerError::BadRequest("set toml or at least one field".into())),
+            (Some(text), false) => Ok(text.clone()),
+            (None, true) => apply(name, current, self),
+        }
+    }
 }
 
 /// Where a listed persona's text comes from: the server's shipped file or
@@ -32,14 +56,18 @@ pub enum Origin {
     Library,
 }
 
-/// One persona as the library lists it: name, display name and role from
-/// its text, the team kinds that use it for research or planning, where
-/// the text comes from, whether a built-in exists, and the TOML itself.
+/// One persona as the library lists it: name, display name, role,
+/// instructions and guardrails from its text, the built-in's safety
+/// guardrails an edit must keep (`locked`), the team kinds that use it,
+/// where the text comes from, whether a built-in exists, and the TOML.
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct PersonaView {
     pub name: String,
     pub display_name: String,
     pub role: String,
+    pub instructions: String,
+    pub guardrails: Vec<String>,
+    pub locked: Vec<String>,
     pub teams: Vec<Kind>,
     pub source: Origin,
     pub builtin: bool,
@@ -48,6 +76,38 @@ pub struct PersonaView {
 
 fn invalid(e: impl std::fmt::Display) -> ServerError {
     ServerError::Setup(format!("invalid_persona: {e}"))
+}
+
+/// Sets the fields of `edit` on persona text `current` of `name` through
+/// a TOML table, so every other key is kept. Instructions replace an
+/// `instructions_file`. Returns the new text, or `Setup` when `current`
+/// is not TOML.
+fn apply(name: &str, current: &str, edit: &EditPersona) -> Result<String, ServerError> {
+    let mut table: toml::Table = current.parse().map_err(|e: toml::de::Error| invalid(format!("{name}.toml: {}", e.to_string().trim())))?;
+    let text = |v: &String| toml::Value::String(v.clone());
+    if let Some(v) = &edit.display_name {
+        table.insert("display_name".into(), text(v));
+    }
+    if let Some(v) = &edit.role {
+        table.insert("role".into(), text(v));
+    }
+    if let Some(v) = &edit.instructions {
+        table.remove("instructions_file");
+        table.insert("instructions".into(), text(v));
+    }
+    if let Some(rules) = &edit.guardrails {
+        table.insert("guardrails".into(), toml::Value::Array(rules.iter().map(text).collect()));
+    }
+    let out = toml::to_string(&table).expect("a parsed table serializes");
+    assert_eq!(out.parse::<toml::Table>().ok().as_ref(), Some(&table), "the written text reads back as the table");
+    Ok(out)
+}
+
+fn safety_rules(name: &str) -> Vec<String> {
+    shipped(name)
+        .and_then(|text| Persona::parse(&format!("{name}.toml"), text).ok())
+        .map(|p| p.guardrails.into_iter().filter(|g| g.starts_with(SAFETY)).collect())
+        .unwrap_or_default()
 }
 
 fn teams_of(name: &str) -> Vec<Kind> {
@@ -59,7 +119,10 @@ fn view(name: &str, toml: &str, source: Origin) -> PersonaView {
     PersonaView {
         name: name.to_string(),
         display_name: parsed.as_ref().map_or_else(|| name.to_string(), |p| p.display_name.clone()),
-        role: parsed.map(|p| p.role).unwrap_or_default(),
+        role: parsed.as_ref().map(|p| p.role.clone()).unwrap_or_default(),
+        instructions: parsed.as_ref().map(|p| p.instructions.clone()).unwrap_or_default(),
+        guardrails: parsed.map(|p| p.guardrails).unwrap_or_default(),
+        locked: safety_rules(name),
         teams: teams_of(name),
         source,
         builtin: shipped(name).is_some(),
@@ -137,15 +200,17 @@ impl Writer<'_> {
         Ok(view(name, text, Origin::Library))
     }
 
-    /// Replaces the owner's library copy of `name` with `text` after
-    /// `check`. Returns the stored copy, `NotFound` when the library has
-    /// no such persona, or `Setup` naming the file and field.
-    pub async fn edit_persona(&self, name: &str, text: &str) -> Result<PersonaView, ServerError> {
+    /// Replaces the owner's library copy of `name` with the text of `edit`
+    /// (see `EditPersona::text`) after `check`. Returns the stored copy,
+    /// `NotFound` when the library has no such persona, `BadRequest` for
+    /// a malformed edit, or `Setup` naming the file and field.
+    pub async fn edit_persona(&self, name: &str, edit: &EditPersona) -> Result<PersonaView, ServerError> {
         let mut row = self.library().await?.into_iter().find(|r| r.name == name).ok_or_else(|| ServerError::NotFound(format!("library persona {name}")))?;
-        check(name, text)?;
-        row.toml = text.to_string();
+        let text = edit.text(name, &row.toml)?;
+        check(name, &text)?;
+        row.toml = text;
         put_row(self.pool, self.hlc, self.user, &mut row).await?;
-        Ok(view(name, text, Origin::Library))
+        Ok(view(name, &row.toml, Origin::Library))
     }
 }
 
@@ -169,5 +234,53 @@ mod tests {
         assert_eq!(teams_of("practice-coach"), [Kind::Music]);
         assert_eq!(teams_of("goal-researcher"), [Kind::General, Kind::Fitness, Kind::Habits]);
         assert!(teams_of("plugin-builder").is_empty());
+    }
+
+    fn parse(name: &str, text: &str) -> Persona {
+        Persona::parse(&format!("{name}.toml"), text).unwrap()
+    }
+
+    #[test]
+    fn apply_rewrites_only_the_set_fields() {
+        for (name, text) in PERSONAS {
+            let same = apply(name, text, &EditPersona::default()).unwrap();
+            assert_eq!(parse(name, &same), parse(name, text), "{name}");
+            assert!(check(name, &same).is_ok(), "{name}");
+        }
+        let budget = shipped("budget-coach").unwrap();
+        let base = parse("budget-coach", budget);
+        let tricky = "Say \"hi\" with a \\ backslash\nthen a second line.\n";
+        let rules = vec![base.guardrails[2].clone(), "Keep it short.".to_string()];
+        let cases: [(EditPersona, Box<dyn Fn(&mut Persona)>); 4] = [
+            (EditPersona { display_name: Some("Money mentor".into()), ..Default::default() }, Box::new(|p| p.display_name = "Money mentor".into())),
+            (EditPersona { role: Some("A warm, plain-spoken coach.".into()), ..Default::default() }, Box::new(|p| p.role = "A warm, plain-spoken coach.".into())),
+            (EditPersona { instructions: Some(tricky.into()), ..Default::default() }, Box::new(|p| p.instructions = tricky.into())),
+            (EditPersona { guardrails: Some(rules.clone()), ..Default::default() }, Box::new(move |p| p.guardrails = rules.clone())),
+        ];
+        for (edit, change) in cases {
+            let mut want = base.clone();
+            change(&mut want);
+            let out = edit.text("budget-coach", budget).unwrap();
+            assert_eq!(parse("budget-coach", &out), want, "{edit:?}");
+            assert!(check("budget-coach", &out).is_ok(), "{edit:?}");
+        }
+        let both = EditPersona { toml: Some(budget.into()), role: Some("x".into()), ..Default::default() };
+        assert!(matches!(both.text("budget-coach", budget), Err(ServerError::BadRequest(_))));
+        assert!(matches!(EditPersona::default().text("budget-coach", budget), Err(ServerError::BadRequest(_))));
+        let whole = EditPersona { toml: Some("name = 3".into()), ..Default::default() };
+        assert_eq!(whole.text("budget-coach", budget).unwrap(), "name = 3");
+        let broken = EditPersona { role: Some("x".into()), ..Default::default() };
+        assert!(matches!(broken.text("budget-coach", "name = "), Err(ServerError::Setup(_))));
+    }
+
+    #[test]
+    fn view_lists_fields_and_locked_safety_rules() {
+        let budget = view("budget-coach", shipped("budget-coach").unwrap(), Origin::Builtin);
+        assert_eq!(budget.locked, ["Safety: no individual investment, tax or legal advice; refer to a licensed financial professional for those."]);
+        assert_eq!(budget.guardrails.len(), 4);
+        assert!(budget.instructions.starts_with("1. Search the web"));
+        let tutor = view("tutor", shipped("tutor").unwrap(), Origin::Builtin);
+        assert!(tutor.locked.is_empty());
+        assert!(!tutor.guardrails.is_empty());
     }
 }

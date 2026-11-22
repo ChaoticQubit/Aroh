@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import SettingsScreen from '$lib/ui/screens/SettingsScreen.svelte';
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
@@ -85,5 +86,6 @@
 		{onsignin}
 		{onhealth}
 		onsignout={() => data.run(async () => (await client.signOut(), await refresh()))}
+		oncoaches={() => void goto('/personas')}
 	/>
 {/if}

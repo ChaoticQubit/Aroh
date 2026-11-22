@@ -299,7 +299,7 @@ async fn copy_persona(State(s): State<AppState>, UserId(user): UserId, Path(name
 #[utoipa::path(put, path = "/v1/personas/{name}", tag = "personas", security(("bearer" = [])),
     params(("name" = String, Path, description = "Library persona name")),
     request_body = EditPersona,
-    responses((status = 200, description = "The edited library copy; later runs use it", body = PersonaView), (status = 404, description = "not in the library: copy it first", body = ErrorBody), (status = 422, description = "invalid persona: the error names the file and field", body = ErrorBody)))]
+    responses((status = 200, description = "The edited library copy; later runs use it", body = PersonaView), (status = 400, description = "set toml or the fields, not both or neither", body = ErrorBody), (status = 404, description = "not in the library: copy it first", body = ErrorBody), (status = 422, description = "invalid persona: the error names the file and field", body = ErrorBody)))]
 async fn edit_persona(
     State(s): State<AppState>,
     UserId(user): UserId,
@@ -307,7 +307,7 @@ async fn edit_persona(
     json: Result<Json<EditPersona>, JsonRejection>,
 ) -> Result<Json<PersonaView>, ServerError> {
     let req = body(json, true)?;
-    Ok(Json(writer(&s, user).edit_persona(&name, &req.toml).await?))
+    Ok(Json(writer(&s, user).edit_persona(&name, &req).await?))
 }
 
 #[utoipa::path(post, path = "/v1/tick", tag = "engine", security(("bearer" = [])),

@@ -52,3 +52,12 @@ export type BusyView = { id: string; title: string; start: string; end: string; 
 
 /** A goal row of the Goals list. */
 export type GoalRow = { id: string; title: string; category: string; slot: CategorySlot; deadline: string | null; autonomy: AutonomyLabel };
+
+/** One coach (persona) as the library screens show it; `locked` are the safety rules a copy keeps. */
+export type CoachView = { name: string; display_name: string; role: string; instructions: string; guardrails: string[]; locked: string[]; source: 'builtin' | 'library' };
+
+/** One team's coaches under a header with the dot of its category slot, or none for Shared. */
+export type CoachGroup = { title: string; slot: CategorySlot | null; personas: CoachView[] };
+
+/** The editable text of a coach copy: name, style, instructions and rules. */
+export type CoachFields = { display_name: string; role: string; instructions: string; guardrails: string[] };

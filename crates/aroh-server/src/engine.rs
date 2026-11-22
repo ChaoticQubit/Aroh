@@ -142,8 +142,9 @@ pub struct RunView {
 }
 
 /// One row of the run list behind the Inbox: ids, workflow, lifecycle
-/// state and times. `waiting_human` runs need the owner.
-/// Newest first.
+/// state, times, and the sorted slugs of the personas its snapshot holds
+/// (the coaches that work on the run). `waiting_human` runs need the
+/// owner. Newest first.
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct RunSummary {
     pub run_id: Uuid,
@@ -152,6 +153,7 @@ pub struct RunSummary {
     pub state: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub personas: Vec<String>,
 }
 
 /// Result of a key test: whether one 1-token call with the stored key
@@ -571,8 +573,9 @@ impl Engine {
     /// those in `state` (such as `waiting_human`) and of `goal`. Never
     /// another user's runs. Returns the summaries, newest first.
     pub async fn list_runs(&self, user: Uuid, state: Option<&str>, goal: Option<Uuid>) -> Result<Vec<RunSummary>, ServerError> {
-        let rows: Vec<(Uuid, Option<Uuid>, String, String, DateTime<Utc>, DateTime<Utc>)> = db::query_as(
-            "select id, goal_id, workflow, state, created_at, updated_at from public.runs
+        let rows: Vec<(Uuid, Option<Uuid>, String, String, DateTime<Utc>, DateTime<Utc>, Vec<String>)> = db::query_as(
+            "select id, goal_id, workflow, state, created_at, updated_at,
+                    array(select k from jsonb_object_keys(personas) k order by k) from public.runs
              where user_id = $1 and ($2::text is null or state = $2) and ($3::uuid is null or goal_id = $3)
              order by created_at desc, id desc limit $4",
         )
@@ -584,13 +587,14 @@ impl Engine {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(run_id, goal_id, workflow, state, created_at, updated_at)| RunSummary {
+            .map(|(run_id, goal_id, workflow, state, created_at, updated_at, personas)| RunSummary {
                 run_id,
                 goal_id,
                 workflow,
                 state,
                 created_at,
                 updated_at,
+                personas,
             })
             .collect())
     }

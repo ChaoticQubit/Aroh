@@ -14,6 +14,7 @@
 	 * Goal dashboard built from the goal's view spec, with the persona chat entry and autonomy level.
 	 * `onautonomy` gets the picked level, `onchat` fires on the chat button; `chatStatus` shows under it.
 	 * With `versions`, a Dashboard card picks the plugin version shown; `onversion` gets its value.
+	 * With `oncoaches`, a "Coaches on this goal" link opens the goal's coaches in the library.
 	 */
 	let {
 		goal,
@@ -23,7 +24,8 @@
 		version = '',
 		onautonomy,
 		onchat,
-		onversion
+		onversion,
+		oncoaches
 	}: {
 		goal: GoalHeader;
 		view: ViewSpec;
@@ -33,6 +35,7 @@
 		onautonomy?: (level: AutonomyLabel) => void;
 		onchat?: () => void;
 		onversion?: (value: string) => void;
+		oncoaches?: () => void;
 	} = $props();
 
 	const { zone } = getClock();
@@ -73,6 +76,7 @@
 				{#each goal.personas as p (p)}<Persona name={p} />{/each}
 			</div>
 			<div><Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => onchat?.()}>Chat with your personas</Button></div>
+			{#if oncoaches}<div><Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => oncoaches?.()}>Coaches on this goal</Button></div>{/if}
 			{#if chatStatus}<p class="text-sm text-muted" role="status">{chatStatus}</p>{/if}
 		</Card.Root>
 		<Card.Root size="sm" class="gap-3 px-4">

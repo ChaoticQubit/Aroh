@@ -896,6 +896,8 @@ async fn a_music_goal_runs_with_the_music_team_category_and_template() {
     assert_eq!(status, 202, "{started}");
     let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
     assert_eq!(api.run_personas(&run).await, ["instrument-teacher", "intake-interviewer", "plugin-builder", "practice-coach"]);
+    let (_, runs) = api.call(Method::Get, &format!("/v1/runs?goal_id={goal}"), Some(&t), None).await;
+    assert_eq!((runs[0]["run_id"].as_str(), &runs[0]["personas"]), (Some(run.as_str()), &json!(["instrument-teacher", "intake-interviewer", "plugin-builder", "practice-coach"])), "{runs}");
     assert_eq!(api.goal_category(&goal).await, aroh_server::teams::seeded_id(u, "hobby-skill"));
 
     api.tick().await;
@@ -987,4 +989,44 @@ async fn persona_library_lists_copies_and_edits_and_runs_use_the_copy() {
     let text: String = db::query_scalar("select personas->>'practice-coach' from public.runs where id::text = $1").bind(run).fetch_one(&api.pool).await.unwrap();
     assert_eq!(text, edited, "the run snapshots the owner's library copy");
     assert_eq!(api.call(Method::Get, "/v1/personas", None, None).await.0, 401);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn persona_fields_edit_the_copy_and_keep_safety_rules() {
+    let api = api(music_models(), offline()).await;
+    let (_u, t) = api.signed_up().await;
+    let (_, list) = api.call(Method::Get, "/v1/personas", Some(&t), None).await;
+    let budget = list.as_array().unwrap().iter().find(|p| p["name"] == "budget-coach").unwrap().clone();
+    let safety = "Safety: no individual investment, tax or legal advice; refer to a licensed financial professional for those.";
+    assert_eq!(budget["locked"], json!([safety]));
+    assert_eq!(budget["guardrails"].as_array().unwrap().len(), 4);
+    assert!(budget["instructions"].as_str().unwrap().starts_with("1. Search the web"));
+    let tutor = list.as_array().unwrap().iter().find(|p| p["name"] == "tutor").unwrap();
+    assert_eq!(tutor["locked"], json!([]));
+
+    let path = "/v1/personas/budget-coach";
+    assert_eq!(api.call(Method::Put, path, Some(&t), Some(json!({"display_name": "Money mentor"}))).await.0, 404, "copy first");
+    assert_eq!(api.call(Method::Post, "/v1/personas/budget-coach/copy", Some(&t), None).await.0, 201);
+    let instructions = "Say \"hi\" with a \\ backslash\nthen a second line.\n";
+    let rules = json!([safety, "Keep it short."]);
+    let edit = json!({"display_name": "Money mentor", "role": "A warm, plain-spoken coach.", "instructions": instructions, "guardrails": rules});
+    let (status, saved) = api.call(Method::Put, path, Some(&t), Some(edit)).await;
+    assert_eq!(status, 200, "{saved}");
+    assert_eq!((saved["display_name"].as_str(), saved["source"].as_str()), (Some("Money mentor"), Some("library")));
+    let (_, list) = api.call(Method::Get, "/v1/personas", Some(&t), None).await;
+    let listed = list.as_array().unwrap().iter().find(|p| p["name"] == "budget-coach").unwrap();
+    assert_eq!((listed["display_name"].as_str(), listed["role"].as_str()), (Some("Money mentor"), Some("A warm, plain-spoken coach.")));
+    assert_eq!((listed["instructions"].as_str(), &listed["guardrails"], &listed["locked"]), (Some(instructions), &rules, &json!([safety])));
+
+    let (status, err) = api.call(Method::Put, path, Some(&t), Some(json!({"guardrails": ["Keep it short."]}))).await;
+    assert_eq!(status, 422, "{err}");
+    assert_eq!(err["error"]["code"], "setup");
+    assert_eq!(err["error"]["message"].as_str().unwrap(), format!("setup: invalid_persona: budget-coach.toml: guardrails: keep `{safety}`"));
+    for bad in [json!({}), json!({"toml": "name = 3", "role": "x"}), json!({"style": "calm"})] {
+        assert_eq!(api.call(Method::Put, path, Some(&t), Some(bad.clone())).await.0, 400, "{bad}");
+    }
+    let whole = aroh_server::workflows::shipped("budget-coach").unwrap();
+    let (status, saved) = api.call(Method::Put, path, Some(&t), Some(json!({"toml": whole}))).await;
+    assert_eq!((status, saved["toml"].as_str(), saved["display_name"].as_str()), (200, Some(whole), Some("Budget coach")), "{saved}");
 }
