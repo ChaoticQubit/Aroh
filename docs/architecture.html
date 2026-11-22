@@ -86,7 +86,7 @@ pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; backgr
       <h1>Aroh Architecture</h1>
       <div class="meta">
         <span>Status: <span class="pill proposed">Proposed</span></span>
-        <span>Version 1.5, 2026-11-21</span>
+        <span>Version 1.6, 2026-11-22</span>
         <span>Branch <code>docs/engine-architecture</code></span>
         <span>Source of decisions: <code>docs/agent-decisions.md</code></span>
       </div>
@@ -675,7 +675,7 @@ supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
           <tr><td>Aroh domain, store, sync</td><td>1</td><td><span class="pill built">Built</span></td><td>67aca37, RLS on 25 tables proven; network adapter lands in pod 10</td></tr>
           <tr><td>Settings, New Goal chat, Goals, Today, Calendar, Inbox</td><td>1</td><td><span class="pill built">Built</span></td><td>six-pack goal verified end to end (443d99a)</td></tr>
           <tr><td>Plugins: per-goal trackers and views (pod 12)</td><td>2</td><td><span class="pill building">Building</span></td><td></td></tr>
-          <tr><td>Apple Health and APNs push (pod 13)</td><td>2</td><td><span class="pill building">Building</span></td><td></td></tr>
+          <tr><td>Apple Health and APNs push (pod 13)</td><td>2</td><td><span class="pill built">Built</span></td><td>simulator verified; real APNs needs owner's Apple key</td></tr>
           <tr><td>Calendar triage (pod 14)</td><td>2</td><td><span class="pill building">Building</span></td><td></td></tr>
           <tr><td>Triggers, scheduled reviews, learning, insights (pod 15)</td><td>2</td><td><span class="pill building">Building</span></td><td></td></tr>
           <tr><td>Slice 1 leftovers (pod 16)</td><td>2</td><td><span class="pill proposed">Proposed</span></td><td>after 12 to 15</td></tr>
@@ -688,6 +688,7 @@ supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
       <table>
         <thead><tr><th>Date</th><th>Version</th><th>Change</th></tr></thead>
         <tbody>
+          <tr><td>2026-11-22</td><td>1.6</td><td>Apple Health import and APNs push merged.</td></tr>
           <tr><td>2026-11-21</td><td>1.5</td><td>Slice 2 started: pods 12 to 15 running.</td></tr>
           <tr><td>2026-11-21</td><td>1.4</td><td>Slice 1 verified: full simulator loop passed at the tip (443d99a), reminder fired in background.</td></tr>
           <tr><td>2026-11-21</td><td>1.3</td><td>App wired to engine, sync back, e2e loop passed once in the simulator. Slice 1 complete pending a clean rerun.</td></tr>
