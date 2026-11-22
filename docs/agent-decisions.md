@@ -70,6 +70,8 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 | Q50 | Persona library screen | Must have (owner 2026-11-22). An app screen to list the coaches per team, see which coaches work on a goal, copy one, edit its name, style, instructions and rules, and save. Built from approved components, no mockup (Q39). Safety lines show as locked. |
 | Q51 | Device holidays | Events from the phone's built-in holiday calendars default to Reminder: chip shown, day kept as planned, no question asked; tap the chip to change it (owner 2026-11-22). |
 | Q52 | After slice 2 | Fix the five slice 2 follow-ups in one pod, set up production with the owner step by step now, then run Aroh on the owner's own iPhone for daily use (owner 2026-11-22). |
+| Q53 | Fixed items | Device calendar events are read-only and planned around. A locked (fixed-time) Aroh action is never moved by any agent or mover, approval or not: agents and the Busy-day mover adjust only flexible actions around it, and a true clash becomes an Inbox note, not a move. A 'Fixed time' switch exists on the edit sheet and on each action while approving a plan; a hand edit still locks the action (owner 2026-11-22). Replaces the earlier rule that a proposal touching a locked action only forced approval. |
+| Q54 | Travel and time zones | Daylight saving: actions keep their local wall time (already true). Travel: when the device time zone changes, flexible actions follow local time (a 07:00 workout stays 07:00 where the owner is), fixed actions keep their real instant (a 10:00 New York call shows at 16:00 in Paris), reminders are rescheduled, and the owner gets one Inbox note listing what shifted (owner 2026-11-22). |
 
 ### Rejected alternatives
 
