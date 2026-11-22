@@ -46,6 +46,7 @@ pub fn sync(app: &AppHandle) -> Result<(), String> {
 
 #[cfg(mobile)]
 fn deliver(app: &AppHandle, generation: u64, planned: Vec<Planned>, cancel_ids: Vec<i32>) {
+    use aroh_app::remind::PlannedKind;
     use tauri_plugin_notification::Schedule;
     let state = app.state::<ReminderState>();
     let _guard = state.deliver.lock().unwrap_or_else(|e| e.into_inner());
@@ -64,8 +65,8 @@ fn deliver(app: &AppHandle, generation: u64, planned: Vec<Planned>, cancel_ids: 
     for p in planned {
         let Some(date) = plugin_fire_date(p.fire_at) else { continue };
         let mut builder = notifications.builder().id(p.id).title(p.title).body(p.body);
-        if let Some(action_id) = &p.action_id {
-            builder = builder.extra("action_id", action_id);
+        if p.kind == PlannedKind::Action {
+            builder = builder.extra("action_id", &p.row_id);
         }
         if let Err(e) = builder.schedule(Schedule::At { date, repeating: false, allow_while_idle: true }).show() {
             eprintln!("aroh: schedule reminder failed: {e}");

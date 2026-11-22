@@ -1,0 +1,33 @@
+name: ArohTap
+options:
+  bundleIdPrefix: io.aroh.tap
+  deploymentTarget:
+    iOS: 16.2
+targets:
+  Host:
+    type: application
+    platform: iOS
+    sources: [Host]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.aroh.tap.host
+        GENERATE_INFOPLIST_FILE: true
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+  Tap:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [Tap]
+    dependencies:
+      - target: Host
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.aroh.tap.tests
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: Host
+schemes:
+  Tap:
+    build:
+      targets:
+        Tap: [test]
+    test:
+      targets: [Tap]

@@ -5,6 +5,7 @@ use aroh_server::db::PgPoolOptions;
 use aroh_server::engine::Engine;
 use aroh_server::error::ServerError;
 use aroh_server::io::{Deps, CATALOG};
+use aroh_server::push::{Pusher, Signer, INTERVAL_SECS};
 use aroh_server::rows::ServerClock;
 use aroh_server::vault::Vault;
 use std::collections::BTreeMap;
@@ -34,9 +35,17 @@ async fn state(config: Config) -> Result<AppState, ServerError> {
         search_toml: config.search_toml,
         pool,
     };
+    let pusher = config.apns.map(|apns| {
+        eprintln!("aroh-server: push on, topic {}", apns.topic);
+        Arc::new(Pusher::new(deps.pool.clone(), http.clone(), Signer::new(apns, clock.clone()), clock.clone()))
+    });
     let jwks = config.jwks_url.map(|url| (url, http));
     let verifier = Verifier::new(config.jwt_secret.as_deref(), jwks, &config.jwt_audience, clock);
-    Ok(AppState { engine: Arc::new(Engine::new(Arc::new(deps))), verifier: Arc::new(verifier) })
+    let mut engine = Engine::new(Arc::new(deps));
+    if let Some(pusher) = pusher {
+        engine = engine.with_push(pusher);
+    }
+    Ok(AppState { engine: Arc::new(engine), verifier: Arc::new(verifier) })
 }
 
 /// The model and web transports: real ones, or with the `fake-transports`
@@ -58,6 +67,25 @@ fn transports(http: Arc<dyn Transport>) -> Result<(Arc<dyn Transport>, Arc<dyn T
         return Ok((models, web));
     }
     Ok((http, Arc::new(GuardedHttp::new(HttpLimits::default()))))
+}
+
+/// Worker mode: one push dispatch pass every [`INTERVAL_SECS`] while push is on,
+/// until `shutdown` turns true. Errors are logged and the loop goes on.
+async fn push_loop(engine: Arc<Engine>, mut shutdown: watch::Receiver<bool>) {
+    let Some(pusher) = engine.push() else { return };
+    while !*shutdown.borrow() {
+        if let Err(e) = pusher.dispatch_once().await {
+            eprintln!("aroh-server: push pass failed: {e}");
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(INTERVAL_SECS)) => {}
+            changed = shutdown.changed() => {
+                if changed.is_err() {
+                    return;
+                }
+            }
+        }
+    }
 }
 
 fn shutdown_signal() -> watch::Receiver<bool> {
@@ -91,7 +119,7 @@ async fn run(mode: &str) -> Result<(), ServerError> {
         return api.await.map_err(|e| ServerError::Config(format!("serve: {e}")));
     }
     let engine = state.engine.clone();
-    let (served, ()) = tokio::join!(api, engine.work(WorkOptions::default(), stop));
+    let (served, (), ()) = tokio::join!(api, engine.work(WorkOptions::default(), stop.clone()), push_loop(engine.clone(), stop));
     served.map_err(|e| ServerError::Config(format!("serve: {e}")))
 }
 

@@ -54,6 +54,10 @@ insert into public.provider_credentials (user_id, setting_id, ciphertext, nonce,
   values ('00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000016', '\x00ff', '\x01', 1, 'anthropic', 'abcd');
 insert into public.user_keys (user_id, wrapped, nonce, key_version)
   values ('00000000-0000-0000-0000-00000000000a', '\x00ff', '\x01', 1);
+insert into public.devices (id, user_id, platform, token, environment, zone, synced_seq, scheduled_until, created_at, updated_at)
+  values ('0190f2a0-0000-7000-8000-0000000000d1', '00000000-0000-0000-0000-00000000000a', 'ios', repeat('ab', 32), 'sandbox', 'Europe/Berlin', 0, now(), now(), now());
+insert into public.push_sent (device_id, key, sent_at)
+  values ('0190f2a0-0000-7000-8000-0000000000d1', 'proposal:x', now());
 
 create schema rls_test;
 create table rls_test.fixtures (tbl text primary key, cols text not null, forged jsonb not null);
@@ -68,8 +72,8 @@ declare
 begin
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p');
-  if n <> 26 then
-    raise exception 'expected 26 public tables, found %', n;
+  if n <> 28 then
+    raise exception 'expected 28 public tables, found %', n;
   end if;
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity;
@@ -77,7 +81,8 @@ begin
     raise exception '% public tables without row level security', n;
   end if;
   for t in select c.relname from pg_class c join pg_namespace s on s.oid = c.relnamespace
-      where s.nspname = 'public' and c.relkind = 'r' loop
+      where s.nspname = 'public' and c.relkind = 'r' and exists (select 1 from information_schema.columns
+        where table_schema = 'public' and table_name = c.relname and column_name = 'user_id') loop
     execute format('select to_jsonb(x) from public.%I x where user_id = %L', t, '00000000-0000-0000-0000-00000000000a') into r;
     if r is null then
       raise exception 'no fixture row in %', t;
@@ -176,7 +181,7 @@ begin
     end if;
   end loop;
 
-  foreach t in array array['provider_credentials', 'user_keys', 'run_checkpoints', 'knowledge_chunks', 'memory_logs'] loop
+  foreach t in array array['provider_credentials', 'user_keys', 'run_checkpoints', 'knowledge_chunks', 'memory_logs', 'devices', 'push_sent'] loop
     begin
       execute format('select count(*) from public.%I', t) into n;
       raise exception 'A read server-only table %', t;

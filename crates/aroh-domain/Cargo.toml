@@ -13,6 +13,7 @@ thiserror.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 rrule.workspace = true
+aroh-reminders.workspace = true
 
 [features]
 samples = []

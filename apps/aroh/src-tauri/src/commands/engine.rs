@@ -79,8 +79,11 @@ pub fn sync_if_signed_in(app: &AppHandle) {
 
 async fn run_sync(app: &AppHandle, config: Config) -> Result<Synced, String> {
     let session = auth::valid_session(&config).await.map_err(text)?;
-    let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || sync_blocking(&app, config, session.access_token)).await.map_err(text)?
+    let handle = app.clone();
+    let synced = tauri::async_runtime::spawn_blocking(move || sync_blocking(&handle, config, session.access_token)).await.map_err(text)??;
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move { super::push::register(&handle).await });
+    Ok(synced)
 }
 
 /// Signs in (or with `create`, signs up) with email and password through GoTrue, stores
@@ -112,7 +115,10 @@ pub async fn app_sign_in(app: AppHandle, state: State<'_, AppState>, email: Stri
 /// Signs out: revokes the session when the server is reachable and removes it from the
 /// keychain. Local rows stay, owned by the account.
 #[tauri::command]
-pub async fn app_sign_out(state: State<'_, AppState>) -> Result<Account, String> {
+pub async fn app_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<Account, String> {
+    if cfg!(target_os = "ios") {
+        super::push::unregister(&app).await;
+    }
     let config = supabase(&state).ok();
     auth::sign_out(config.as_ref()).await.map_err(text)?;
     Ok(account_of(None))
@@ -131,7 +137,7 @@ pub async fn app_sync(app: AppHandle, state: State<'_, AppState>) -> Result<Sync
     run_sync(&app, config).await
 }
 
-async fn engine_call(state: &State<'_, AppState>, method: &str, path: &str, body: Option<&Value>) -> Result<Answer, String> {
+pub(crate) async fn engine_call(state: &State<'_, AppState>, method: &str, path: &str, body: Option<&Value>) -> Result<Answer, String> {
     let base = with_core(state, |c| local::setting(&c.conn, "server_url"))?.ok_or("needs_engine: set the server URL in Settings")?;
     let config = supabase(state).map_err(|e| format!("needs_engine: {e}"))?;
     let session = auth::valid_session(&config).await.map_err(|e| match e {

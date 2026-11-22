@@ -192,6 +192,7 @@ pub struct Engine {
     deps: Arc<Deps>,
     queue: Arc<PgQueue>,
     lease_ms: i64,
+    push: Option<Arc<crate::push::Pusher>>,
 }
 
 impl Engine {
@@ -200,7 +201,7 @@ impl Engine {
     /// Returns the engine.
     pub fn new(deps: Arc<Deps>) -> Engine {
         let queue = Arc::new(PgQueue::new(deps.pool.clone(), deps.clock.clone()));
-        Engine { deps, queue, lease_ms: DEFAULT_LEASE_MS }
+        Engine { deps, queue, lease_ms: DEFAULT_LEASE_MS, push: None }
     }
 
     /// Sets the lease length; it must be positive and outlast one step.
@@ -210,6 +211,21 @@ impl Engine {
         assert!(lease_ms > 0, "a lease lasts some time");
         self.lease_ms = lease_ms;
         self
+    }
+
+    /// Attaches the APNs pusher; without one, push dispatch reports itself off.
+    /// Set once at start when the APNs variables are configured.
+    /// Returns the engine.
+    pub fn with_push(mut self, pusher: Arc<crate::push::Pusher>) -> Engine {
+        self.push = Some(pusher);
+        self
+    }
+
+    /// The APNs pusher, when push is configured.
+    /// Worker mode loops over it; step mode calls it from `/v1/push/tick`.
+    /// Returns it borrowed.
+    pub fn push(&self) -> Option<&Arc<crate::push::Pusher>> {
+        self.push.as_ref()
     }
 
     /// The shared dependencies, for the API's key routes.

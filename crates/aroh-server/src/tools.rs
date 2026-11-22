@@ -190,7 +190,7 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, ctx: &ToolContext) -> Result<Val
             .map(|f| {
                 let kind: FieldKind = serde_json::from_value(json!(f.kind))
                     .map_err(|_| ToolError::InvalidArgs(format!("unknown field kind `{}`", f.kind)))?;
-                Ok(TrackerField { key: f.key.clone(), label: f.label.clone(), kind, unit: f.unit.clone(), choices: vec![] })
+                Ok(TrackerField { key: f.key.clone(), label: f.label.clone(), kind, unit: f.unit.clone(), choices: vec![], health: None })
             })
             .collect::<Result<Vec<_>, ToolError>>()?;
         let cadence = t

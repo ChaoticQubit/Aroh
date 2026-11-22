@@ -53,6 +53,21 @@
 		}
 	}
 
+	/** Connects Apple Health (permission, then import) or turns imports off; returns the status line. */
+	async function onhealth(on: boolean): Promise<string> {
+		try {
+			if (!on) {
+				await data.run(() => client.setSetting('health', 'false'));
+				return 'Apple Health imports are off.';
+			}
+			return await client.healthConnect();
+		} catch (e) {
+			return String(e);
+		} finally {
+			await data.load();
+		}
+	}
+
 	/** Saves the per-goal budget as a device setting and the all-goals budget as a row. */
 	function onbudget(scope: 'all' | 'goal', usd: number | null) {
 		void data.run(() => (scope === 'all' ? client.saveBudget(usd) : client.setSetting('goal_budget_usd', usd === null ? '' : String(usd))));
@@ -67,6 +82,7 @@
 		onsetting={(name, value) => data.run(() => client.setSetting(name, value))}
 		{onbudget}
 		{onsignin}
+		{onhealth}
 		onsignout={() => data.run(async () => (await client.signOut(), await refresh()))}
 	/>
 {/if}

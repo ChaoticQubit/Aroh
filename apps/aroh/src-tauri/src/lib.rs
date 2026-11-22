@@ -60,6 +60,7 @@ fn on_start_or_resume(app: &tauri::AppHandle) {
         eprintln!("aroh: reminders not scheduled: {e}");
     }
     commands::engine::sync_if_signed_in(app);
+    commands::health::import_if_enabled(app);
 }
 
 /// Debug builds only: three seconds after start, evaluates the JavaScript file at
@@ -84,6 +85,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_aroh_speech::init())
+        .plugin(tauri_plugin_aroh_ios::init())
         .setup(|app| {
             let core = open_core(app)?;
             app.manage(AppState { core: Mutex::new(core) });
@@ -115,6 +117,9 @@ pub fn run() {
             commands::engine::app_engine,
             commands::engine::app_save_key,
             commands::engine::app_logs_sent,
+            commands::health::app_health_connect,
+            commands::health::app_dev_health_seed,
+            commands::push::app_dev_push_probe,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -156,7 +156,22 @@ pub enum FieldKind {
     Choice,
 }
 
+/// An Apple Health metric a tracker field imports on iPhone (Q21).
+/// `WorkoutType` fills a text field with the activity name; every other metric fills a
+/// number field (kg or the field's unit, minutes, kcal, steps).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthMetric {
+    BodyMass,
+    WorkoutMinutes,
+    WorkoutEnergy,
+    WorkoutType,
+    Steps,
+    DietaryEnergy,
+}
+
 /// One field of a tracker's schema. `choices` is used only by `Choice` fields.
+/// `health` names the Apple Health metric that fills the field, if any.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrackerField {
@@ -167,6 +182,8 @@ pub struct TrackerField {
     pub unit: Option<String>,
     #[serde(default)]
     pub choices: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<HealthMetric>,
 }
 
 /// Check-in frequency of a tracker.
@@ -676,6 +693,14 @@ impl Tracker {
                 }
                 _ => {}
             }
+            let fits = match field.health {
+                None => true,
+                Some(HealthMetric::WorkoutType) => field.kind == FieldKind::Text,
+                Some(_) => field.kind == FieldKind::Number,
+            };
+            if !fits {
+                return Err(invalid("trackers.fields.health", format!("{} does not fit a {:?} field", field.key, field.kind)));
+            }
         }
         if let Some(cadence) = &self.cadence {
             NaiveTime::parse_from_str(&cadence.at, "%H:%M").map_err(|_| invalid("trackers.cadence.at", "must be HH:MM"))?;
@@ -907,8 +932,8 @@ pub mod samples {
             plugin_id: None,
             name: "Body".into(),
             fields: vec![
-                TrackerField { key: "weight".into(), label: "Weight".into(), kind: FieldKind::Number, unit: Some("kg".into()), choices: vec![] },
-                TrackerField { key: "meal".into(), label: "Meal".into(), kind: FieldKind::Choice, unit: None, choices: vec!["clean".into(), "cheat".into()] },
+                TrackerField { key: "weight".into(), label: "Weight".into(), kind: FieldKind::Number, unit: Some("kg".into()), choices: vec![], health: None },
+                TrackerField { key: "meal".into(), label: "Meal".into(), kind: FieldKind::Choice, unit: None, choices: vec!["clean".into(), "cheat".into()], health: None },
             ],
             cadence: Some(Cadence { freq: CadenceFreq::Daily, weekdays: vec![], at: "20:00".into() }),
             rules: vec![TrackerRule { field: "weight".into(), op: RuleOp::Above, value: 80.0, window_days: 7 }],
@@ -1057,6 +1082,31 @@ mod tests {
         let mut tracker = samples::tracker();
         tracker.cadence = Some(Cadence { freq: CadenceFreq::Daily, weekdays: vec![], at: "25:00".into() });
         assert_eq!(field_err(tracker), "trackers.cadence.at");
+    }
+
+    #[test]
+    fn health_source_round_trips_and_must_fit_the_field_kind() {
+        let mut tracker = samples::tracker();
+        let plain = serde_json::to_value(&tracker.fields[0]).unwrap();
+        assert!(plain.get("health").is_none());
+        tracker.fields[0].health = Some(HealthMetric::BodyMass);
+        let wire = serde_json::to_value(&tracker.fields[0]).unwrap();
+        assert_eq!(wire["health"], "body_mass");
+        let back: TrackerField = serde_json::from_value(wire).unwrap();
+        assert_eq!(back.health, Some(HealthMetric::BodyMass));
+        tracker.validate().unwrap();
+
+        let mut tracker = samples::tracker();
+        tracker.fields[0].health = Some(HealthMetric::WorkoutType);
+        assert_eq!(field_err(tracker), "trackers.fields.health");
+        let mut tracker = samples::tracker();
+        tracker.fields[1].health = Some(HealthMetric::Steps);
+        assert_eq!(field_err(tracker), "trackers.fields.health");
+        let mut tracker = samples::tracker();
+        tracker.fields[1].kind = FieldKind::Text;
+        tracker.fields[1].choices.clear();
+        tracker.fields[1].health = Some(HealthMetric::WorkoutType);
+        tracker.validate().unwrap();
     }
 
     #[test]

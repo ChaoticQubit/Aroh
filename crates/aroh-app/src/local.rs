@@ -127,6 +127,36 @@ pub fn remove_sent(conn: &Connection, sent: &[PendingLog]) -> Result<usize> {
     Ok(before - logs.len())
 }
 
+const HEALTH_ANCHORS: &str = "health_anchors";
+const DEVICE_ID: &str = "device_id";
+
+/// The stored Apple Health query anchors, one per HealthKit type, as Swift archived them.
+/// Empty before the first import.
+pub fn health_anchors(conn: &Connection) -> Result<BTreeMap<crate::health::HealthType, String>> {
+    match get_state(conn, &key(HEALTH_ANCHORS))? {
+        None => Ok(BTreeMap::new()),
+        Some(json) => serde_json::from_str(&json).map_err(|_| invalid("stored health anchors")),
+    }
+}
+
+/// Stores `anchors`, replacing the stored set. Call inside the import transaction so
+/// anchors never run ahead of the entries they cover.
+pub fn set_health_anchors(conn: &Connection, anchors: &BTreeMap<crate::health::HealthType, String>) -> Result<()> {
+    set_state(conn, &key(HEALTH_ANCHORS), &serde_json::to_string(anchors).expect("anchors serialize"))?;
+    Ok(())
+}
+
+/// This install's device id for push registration, a uuid v7 created on first call.
+/// It names the device to the engine; the push token itself is never stored here.
+pub fn device_id(conn: &Connection) -> Result<String> {
+    if let Some(id) = get_state(conn, &key(DEVICE_ID))? {
+        return Ok(id);
+    }
+    let id = aroh_domain::new_id();
+    set_state(conn, &key(DEVICE_ID), &id)?;
+    Ok(id)
+}
+
 /// The account this device adopted at sign-in, if any.
 pub fn account(conn: &Connection) -> Result<Option<String>> {
     Ok(get_state(conn, &key(ACCOUNT))?)

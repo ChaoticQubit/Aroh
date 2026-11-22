@@ -118,6 +118,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-aroh-ios",
  "tauri-plugin-aroh-speech",
  "tauri-plugin-notification",
  "time",
@@ -172,6 +173,7 @@ dependencies = [
 name = "aroh-domain"
 version = "0.1.0"
 dependencies = [
+ "aroh-reminders",
  "chrono",
  "chrono-tz",
  "rrule",
@@ -238,6 +240,7 @@ dependencies = [
  "chrono-tz",
  "futures-util",
  "jsonwebtoken",
+ "ring",
  "schemars 1.2.3",
  "serde",
  "serde_json",
@@ -5578,6 +5581,15 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-aroh-ios"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

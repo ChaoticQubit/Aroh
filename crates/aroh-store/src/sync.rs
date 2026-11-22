@@ -49,6 +49,16 @@ fn key(direction: &str, user_id: &str, table: &TableDef) -> String {
     format!("{direction}:{user_id}:{}", table.name)
 }
 
+/// The highest `server_seq` of `table` this device has pulled for `user_id`, 0 before the
+/// first pull. Every remote row at or below it is in the local store.
+pub fn pulled_seq(conn: &Connection, user_id: &str, table: &TableDef) -> Result<i64> {
+    let cursor_key = key("pull", user_id, table);
+    match get_state(conn, &cursor_key)? {
+        None => Ok(0),
+        Some(v) => v.parse().map_err(|_| bad_row(format!("bad cursor {cursor_key}"))),
+    }
+}
+
 /// Rows of `user_id` this device wrote (HLC node `node`) with `updated_at` above
 /// `after`, oldest first, at most `limit`. Pulled and derived rows carry another
 /// node and are never pushed back.
@@ -84,10 +94,7 @@ fn version(row: &WireRow) -> Version {
 pub fn apply_page(conn: &mut Connection, table: &'static TableDef, user_id: &str, rows: &[WireRow], clock: &mut Hlc) -> Result<usize> {
     let tx = conn.transaction()?;
     let cursor_key = key("pull", user_id, table);
-    let mut cursor: i64 = match get_state(&tx, &cursor_key)? {
-        Some(v) => v.parse().map_err(|_| bad_row(format!("bad cursor {cursor_key}")))?,
-        None => 0,
-    };
+    let mut cursor = pulled_seq(&tx, user_id, table)?;
     let local_sql = format!("SELECT updated_at, deleted FROM {} WHERE id = ?1", table.name);
     let mut written = 0;
     for row in rows {
@@ -137,10 +144,9 @@ async fn push<R: Remote>(conn: &mut Connection, remote: &mut R, table: &'static 
 }
 
 async fn pull<R: Remote>(conn: &mut Connection, remote: &mut R, table: &'static TableDef, user_id: &str, clock: &mut Hlc) -> Result<usize> {
-    let cursor_key = key("pull", user_id, table);
     let mut pulled = 0;
     loop {
-        let cursor: i64 = get_state(conn, &cursor_key)?.map_or(Ok(0), |v| v.parse().map_err(|_| bad_row(format!("bad cursor {cursor_key}"))))?;
+        let cursor = pulled_seq(conn, user_id, table)?;
         let rows = remote.pull(table, cursor, PAGE).await?;
         if rows.len() > PAGE {
             return Err(bad_row("page larger than requested"));

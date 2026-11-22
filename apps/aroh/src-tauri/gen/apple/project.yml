@@ -60,6 +60,8 @@ targets:
         CFBundleVersion: "0.1.0"
         NSMicrophoneUsageDescription: Aroh uses the microphone so you can log food, water and workouts by voice.
         NSSpeechRecognitionUsageDescription: Aroh turns your voice into text on this iPhone to log food, water and workouts. Audio never leaves the device.
+        NSHealthShareUsageDescription: Aroh reads your weight, workouts, steps and dietary energy from Apple Health to fill the trackers of your goals.
+        NSHealthUpdateUsageDescription: Aroh writes test samples to Apple Health only in developer builds.
     entitlements:
       path: aroh_iOS/aroh_iOS.entitlements
     scheme:

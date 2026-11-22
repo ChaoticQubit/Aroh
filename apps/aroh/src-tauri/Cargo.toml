@@ -28,4 +28,5 @@ chrono.workspace = true
 chrono-tz.workspace = true
 time = "0.3"
 tauri-plugin-aroh-speech = { path = "../../../crates/tauri-plugin-aroh-speech" }
+tauri-plugin-aroh-ios = { path = "../../../crates/tauri-plugin-aroh-ios" }
 iana-time-zone = "0.1"

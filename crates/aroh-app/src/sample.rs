@@ -104,7 +104,7 @@ fn tracker(conn: &Connection, clock: &mut Hlc, goal: &Goal, name: &str, field: T
 }
 
 fn number(key: &str, label: &str, unit: &str) -> TrackerField {
-    TrackerField { key: key.into(), label: label.into(), kind: FieldKind::Number, unit: Some(unit.into()), choices: vec![] }
+    TrackerField { key: key.into(), label: label.into(), kind: FieldKind::Number, unit: Some(unit.into()), choices: vec![], health: None }
 }
 
 fn history(conn: &Connection, clock: &mut Hlc, all: &[ActionSeries], strength_id: &str, now: DateTime<Utc>) -> Result<Option<Action>> {

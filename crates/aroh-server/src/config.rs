@@ -14,6 +14,7 @@ pub struct Config {
     pub bind: String,
     pub allow_custom_base_url: bool,
     pub search_toml: Option<String>,
+    pub apns: Option<crate::push::ApnsConfig>,
 }
 
 impl std::fmt::Debug for Config {
@@ -23,6 +24,7 @@ impl std::fmt::Debug for Config {
             .field("jwks_url", &self.jwks_url)
             .field("bind", &self.bind)
             .field("allow_custom_base_url", &self.allow_custom_base_url)
+            .field("apns", &self.apns)
             .finish_non_exhaustive()
     }
 }
@@ -55,6 +57,7 @@ impl Config {
             bind,
             allow_custom_base_url: get("AROH_ALLOW_CUSTOM_BASE_URL").as_deref() == Some("1"),
             search_toml,
+            apns: crate::push::ApnsConfig::from_vars(vars)?,
         })
     }
 }

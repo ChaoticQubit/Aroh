@@ -18,6 +18,68 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Health'
+  /v1/devices/{device_id}:
+    put:
+      tags:
+      - push
+      operationId: register_device
+      parameters:
+      - name: device_id
+        in: path
+        description: Id the app created for this install
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDevice'
+        required: true
+      responses:
+        '200':
+          description: Registered; the token is never echoed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceInfo'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: device id of another account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    delete:
+      tags:
+      - push
+      operationId: unregister_device
+      parameters:
+      - name: device_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Deleted, for sign-out
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/goals:
     post:
       tags:
@@ -266,6 +328,26 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/push/tick:
+    post:
+      tags:
+      - push
+      operationId: push_tick
+      responses:
+        '200':
+          description: 'Step mode: one push dispatch pass (service role only)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushSummary'
+        '403':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/runs:
     get:
       tags:
@@ -416,6 +498,43 @@ components:
         node:
           type: string
       additionalProperties: false
+    ApnsEnv:
+      type: string
+      description: |-
+        APNs environment of a device's build: `sandbox` for debug builds, `production` for
+        TestFlight and App Store builds. Picks the APNs host the push goes to.
+      enum:
+      - sandbox
+      - production
+    DeviceInfo:
+      type: object
+      description: |-
+        A registered device as the API reports it. The token is never echoed.
+        `scheduled_until` and `synced_seq` are what the device last reported.
+        Times are UTC.
+      required:
+      - device_id
+      - platform
+      - environment
+      - zone
+      - synced_seq
+      - scheduled_until
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        environment:
+          $ref: '#/components/schemas/ApnsEnv'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        scheduled_until:
+          type: string
+          format: date-time
+        synced_seq:
+          type: integer
+          format: int64
+        zone:
+          type: string
     ErrorBody:
       type: object
       description: |-
@@ -489,6 +608,67 @@ components:
           - 'null'
         ok:
           type: boolean
+    Platform:
+      type: string
+      description: Push platform of a device; only iOS for now (FCM comes with Android, Q22).
+      enum:
+      - ios
+    PushSummary:
+      type: object
+      description: |-
+        Counts of one dispatch pass: pushes sent, skipped because an earlier pass sent them,
+        failed (retried next pass) and devices removed because APNs no longer knows their token.
+        `enabled` is false when no APNs key is configured.
+      required:
+      - enabled
+      - sent
+      - skipped
+      - failed
+      - removed
+      properties:
+        enabled:
+          type: boolean
+        failed:
+          type: integer
+          minimum: 0
+        removed:
+          type: integer
+          minimum: 0
+        sent:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+    RegisterDevice:
+      type: object
+      description: |-
+        Body of `PUT /v1/devices/{device_id}`: the APNs token (hex), the build's APNs
+        environment, the device's IANA zone, the lowest pull cursor of `actions` and
+        `trackers`, and how far its local notification schedule reaches.
+      required:
+      - platform
+      - token
+      - environment
+      - zone
+      - synced_seq
+      - scheduled_until
+      properties:
+        environment:
+          $ref: '#/components/schemas/ApnsEnv'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        scheduled_until:
+          type: string
+          format: date-time
+        synced_seq:
+          type: integer
+          format: int64
+        token:
+          type: string
+        zone:
+          type: string
+      additionalProperties: false
     RunSummary:
       type: object
       description: |-

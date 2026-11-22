@@ -12,7 +12,7 @@
 	/**
 	 * Settings: account sign-in, model provider, model and key (the key goes to the server, never
 	 * stored on the device), search providers, server URL, monthly budgets, and calendar and Apple
-	 * Health access. `ontest` and `onsignin` resolve to the status line; the rest report edits.
+	 * Health access. `ontest`, `onsignin` and `onhealth` resolve to a status line; the rest report edits.
 	 */
 	let {
 		settings,
@@ -21,7 +21,8 @@
 		onsetting,
 		onbudget,
 		onsignin,
-		onsignout
+		onsignout,
+		onhealth
 	}: {
 		settings: SettingsView;
 		onprovider?: (providerId: string, model: string) => void;
@@ -30,6 +31,7 @@
 		onbudget?: (scope: 'all' | 'goal', usd: number | null) => void;
 		onsignin?: (email: string, password: string, create: boolean) => Promise<string>;
 		onsignout?: () => void;
+		onhealth?: (on: boolean) => Promise<string>;
 	} = $props();
 
 	const id = $props.id();
@@ -44,7 +46,15 @@
 	let email = $state('');
 	let password = $state('');
 	let accountStatus = $state<string | null>(null);
+	let healthStatus = $state<string | null>(null);
 	const input = 'h-11 text-lg';
+
+	/** Connects or stops Apple Health through `onhealth` and shows its answer under the switch. */
+	async function toggleHealth(on: boolean) {
+		if (!onhealth) return onsetting?.('health', String(on));
+		healthStatus = on ? 'Connecting to Apple Health.' : null;
+		healthStatus = await onhealth(on);
+	}
 
 	/** Signs in or creates the account through `onsignin`; the password is cleared either way. */
 	async function signIn(create: boolean) {
@@ -191,8 +201,8 @@
 				<Switch id="{id}-cal" bind:checked={calendars} onCheckedChange={(v) => onsetting?.('calendars', String(v))} />
 			</label>
 			<label class="flex min-h-14 cursor-pointer items-center gap-3 py-2" for="{id}-health">
-				<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Apple Health</span><span class="text-xs text-muted">Import weight, workouts and steps on iPhone.</span></span>
-				<Switch id="{id}-health" bind:checked={health} onCheckedChange={(v) => onsetting?.('health', String(v))} />
+				<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Apple Health</span><span class="text-xs text-muted">{healthStatus ?? 'Import weight, workouts and steps on iPhone.'}</span></span>
+				<Switch id="{id}-health" bind:checked={health} onCheckedChange={(v) => void toggleHealth(v)} />
 			</label>
 		</Card.Root>
 	</section>

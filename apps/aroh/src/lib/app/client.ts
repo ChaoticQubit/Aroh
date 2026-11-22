@@ -123,6 +123,12 @@ export const notificationPermission = () => invoke<boolean>('app_notification_pe
 /** Debug builds only: loads the six-pack sample into an empty store. */
 export const devSeed = () => invoke<boolean>('app_dev_seed');
 
+/** Connect Apple Health: permission sheet, `health` on, then an import. Resolves to the status line. */
+export const healthConnect = () => invoke<string>('app_health_connect');
+
+/** Debug builds only: adds an Apple Health tracker and writes test samples to HealthKit. */
+export const devHealthSeed = () => invoke<null>('app_dev_health_seed');
+
 /** The stored sign-in state, read from the keychain. */
 export type Account = { signed_in: boolean; email: string | null; user_id: string | null };
 

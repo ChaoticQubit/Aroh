@@ -1,6 +1,7 @@
 use crate::auth::{Service, UserId, Verifier};
 use crate::engine::{Answer, Engine, KeyTest, RunSummary, RunView, SetKey, StartGoal, StartReplan, Started, SubmitLog, TickSummary, Waiting};
 use crate::error::{ErrorBody, ErrorDetail, ServerError};
+use crate::push::{ApnsEnv, DeviceInfo, Platform, PushSummary, RegisterDevice};
 use crate::vault::KeyInfo;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRef, Path, Query, State};
@@ -199,6 +200,41 @@ async fn enqueue_hook(State(s): State<AppState>, _svc: Service) -> Result<Json<T
     Ok(Json(s.engine.tick(TickOptions::default()).await?))
 }
 
+#[utoipa::path(put, path = "/v1/devices/{device_id}", tag = "push", security(("bearer" = [])),
+    params(("device_id" = Uuid, Path, description = "Id the app created for this install")),
+    request_body = RegisterDevice,
+    responses((status = 200, description = "Registered; the token is never echoed", body = DeviceInfo), (status = 400, body = ErrorBody), (status = 409, description = "device id of another account", body = ErrorBody)))]
+async fn register_device(
+    State(s): State<AppState>,
+    UserId(user): UserId,
+    Path(device_id): Path<Uuid>,
+    json: Result<Json<RegisterDevice>, JsonRejection>,
+) -> Result<Json<DeviceInfo>, ServerError> {
+    let req = body(json, false)?;
+    let now = crate::rows::utc(s.engine.deps().clock.now_ms());
+    Ok(Json(crate::push::register(&s.engine.deps().pool, user, device_id, req, now).await?))
+}
+
+#[utoipa::path(delete, path = "/v1/devices/{device_id}", tag = "push", security(("bearer" = [])),
+    params(("device_id" = Uuid, Path)),
+    responses((status = 204, description = "Deleted, for sign-out"), (status = 404, body = ErrorBody)))]
+async fn unregister_device(State(s): State<AppState>, UserId(user): UserId, Path(device_id): Path<Uuid>) -> Result<StatusCode, ServerError> {
+    if crate::push::unregister(&s.engine.deps().pool, user, device_id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ServerError::NotFound(format!("device {device_id}")))
+    }
+}
+
+#[utoipa::path(post, path = "/v1/push/tick", tag = "push", security(("bearer" = [])),
+    responses((status = 200, description = "Step mode: one push dispatch pass (service role only)", body = PushSummary), (status = 403, body = ErrorBody)))]
+async fn push_tick(State(s): State<AppState>, _svc: Service) -> Result<Json<PushSummary>, ServerError> {
+    match s.engine.push() {
+        Some(pusher) => Ok(Json(pusher.dispatch_once().await?)),
+        None => Ok(Json(PushSummary::default())),
+    }
+}
+
 struct Bearer;
 
 impl Modify for Bearer {
@@ -214,8 +250,8 @@ impl Modify for Bearer {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
-    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, list_runs, get_run, answer, tick, enqueue_hook),
-    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail)),
+    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, list_runs, get_run, answer, tick, enqueue_hook, register_device, unregister_device, push_tick),
+    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv)),
     modifiers(&Bearer)
 )]
 pub struct ApiDoc;
@@ -244,5 +280,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/runs/{run_id}/answers", post(answer))
         .route("/v1/tick", post(tick))
         .route("/v1/hooks/enqueue", post(enqueue_hook))
+        .route("/v1/devices/{device_id}", put(register_device).delete(unregister_device))
+        .route("/v1/push/tick", post(push_tick))
         .with_state(state)
 }

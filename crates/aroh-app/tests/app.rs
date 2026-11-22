@@ -1,6 +1,7 @@
 use aroh_app::{local, remind, sample, snapshot, tick, write};
 use aroh_domain::hlc::Hlc;
 use aroh_domain::rows::{Action, ActionSeries, ActionStatus, Category, EntrySource, Goal, Proposal, ProposalStatus, ProviderSetting, Tracker, TrackerEntry};
+use aroh_domain::remind::PlannedKind;
 use aroh_domain::schema::SYNCED;
 use aroh_store::sync::pending;
 use aroh_store::{db, repo};
@@ -196,18 +197,28 @@ fn reminders_cover_actions_and_check_ins() {
     let planned = remind::plan(&conn, &user, now(), ZONE).unwrap();
     assert!(!planned.is_empty() && planned.len() <= remind::CAP);
     assert!(planned.windows(2).all(|w| w[0].fire_at <= w[1].fire_at));
-    assert!(planned.iter().all(|p| p.fire_at > now() && p.fire_at <= now() + Duration::hours(48)));
+    assert!(planned.iter().all(|p| p.fire_at > now() && p.fire_at <= now() + Duration::hours(24)));
     let next = repo::list::<Action>(&conn, &[("status", "planned")])
         .unwrap()
         .into_iter()
         .filter(|a| a.start_at > now() + Duration::minutes(10))
         .min_by_key(|a| a.start_at)
         .unwrap();
-    assert_eq!(planned.iter().filter(|p| p.action_id.as_deref() == Some(next.id.as_str())).count(), 3);
-    let check_in = planned.iter().find(|p| p.action_id.is_none()).unwrap();
+    assert_eq!(planned.iter().filter(|p| p.kind == PlannedKind::Action && p.row_id == next.id).count(), 3);
+    let check_in = planned.iter().find(|p| p.kind == PlannedKind::CheckIn).unwrap();
     assert_eq!(check_in.fire_at.with_timezone(&ZONE).format("%H:%M").to_string(), "07:00");
     assert!(check_in.fire_at <= now() + Duration::hours(24));
     assert!(remind::all_ids(&conn).unwrap().contains(&check_in.id));
+}
+
+#[test]
+fn synced_seq_is_the_lowest_pull_cursor_of_actions_and_trackers() {
+    let (conn, _, user) = setup();
+    assert_eq!(remind::synced_seq(&conn, &user).unwrap(), 0);
+    aroh_store::sync::set_state(&conn, &format!("pull:{user}:actions"), "40").unwrap();
+    assert_eq!(remind::synced_seq(&conn, &user).unwrap(), 0);
+    aroh_store::sync::set_state(&conn, &format!("pull:{user}:trackers"), "25").unwrap();
+    assert_eq!(remind::synced_seq(&conn, &user).unwrap(), 25);
 }
 
 const ACCOUNT: &str = "0190f2a0-0000-7000-8000-0000000000ac";

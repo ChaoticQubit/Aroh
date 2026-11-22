@@ -44,5 +44,9 @@
 	<string>Aroh uses the microphone so you can log food, water and workouts by voice.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Aroh turns your voice into text on this iPhone to log food, water and workouts. Audio never leaves the device.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Aroh reads your weight, workouts, steps and dietary energy from Apple Health to fill the trackers of your goals.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Aroh writes test samples to Apple Health only in developer builds.</string>
 </dict>
 </plist>

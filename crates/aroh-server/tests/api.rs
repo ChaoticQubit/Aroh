@@ -439,7 +439,7 @@ async fn free_text_log_becomes_tracker_entries() {
     let api = api(models, offline()).await;
     let (u, t) = api.signed_up().await;
     let goal = api.goal(u, Autonomy::Balanced).await;
-    let field = |key: &str, kind: FieldKind| TrackerField { key: key.into(), label: key.into(), kind, unit: None, choices: vec![] };
+    let field = |key: &str, kind: FieldKind| TrackerField { key: key.into(), label: key.into(), kind, unit: None, choices: vec![], health: None };
     let mut tracker = Tracker {
         id: Uuid::now_v7().to_string(),
         user_id: u.to_string(),
@@ -482,4 +482,28 @@ async fn unverified_prices_pause_before_any_call() {
     let view = api.run(&t, started["run_id"].as_str().unwrap()).await;
     assert_eq!(view["status"]["status"], "waiting_budget", "{view}");
     assert!(models.sent().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn device_routes_register_and_delete_and_push_tick_needs_the_service_role() {
+    let api = api(offline(), offline()).await;
+    let u = user(&api.pool).await;
+    let t = user_token(u);
+    let device = Uuid::now_v7();
+    let token = "a1".repeat(32);
+    let body = json!({"platform": "ios", "token": token, "environment": "sandbox", "zone": "Europe/Berlin", "synced_seq": 12, "scheduled_until": "2026-11-23T12:00:00Z"});
+    let (status, info) = api.call(Method::Put, &format!("/v1/devices/{device}"), Some(&t), Some(body.clone())).await;
+    assert_eq!(status, 200, "{info}");
+    assert_eq!(info["synced_seq"], 12);
+    assert!(!info.to_string().contains(&token));
+    assert_eq!(api.call(Method::Put, &format!("/v1/devices/{device}"), None, Some(body.clone())).await.0, 401);
+    let mut bad = body;
+    bad["zone"] = json!("Mars/Olympus");
+    assert_eq!(api.call(Method::Put, &format!("/v1/devices/{device}"), Some(&t), Some(bad)).await.0, 400);
+    assert_eq!(api.call(Method::Post, "/v1/push/tick", Some(&t), None).await.0, 403);
+    let (status, summary) = api.call(Method::Post, "/v1/push/tick", Some(&service_token()), None).await;
+    assert_eq!((status, summary["enabled"].clone()), (200, json!(false)));
+    assert_eq!(api.call(Method::Delete, &format!("/v1/devices/{device}"), Some(&t), None).await.0, 204);
+    assert_eq!(api.call(Method::Delete, &format!("/v1/devices/{device}"), Some(&t), None).await.0, 404);
 }

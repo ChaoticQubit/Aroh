@@ -1,6 +1,7 @@
 //! Aroh app engine: the deterministic work the app does on device over the rebuild
 //! store (start-up tick, screen reads, writes, reminder planning). No AI, no network.
 
+pub mod health;
 pub mod local;
 pub mod remind;
 pub mod sample;

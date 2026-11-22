@@ -4,6 +4,7 @@
 pub mod hlc;
 pub mod lww;
 pub mod recur;
+pub mod remind;
 pub mod rows;
 pub mod schema;
 pub mod seed;
