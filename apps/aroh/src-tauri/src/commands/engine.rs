@@ -84,7 +84,33 @@ async fn run_sync(app: &AppHandle, config: Config) -> Result<Synced, String> {
     let synced = tauri::async_runtime::spawn_blocking(move || sync_blocking(&handle, config, session.access_token)).await.map_err(text)??;
     let handle = app.clone();
     tauri::async_runtime::spawn(async move { super::push::register(&handle).await });
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move { send_zone(&handle).await });
     Ok(synced)
+}
+
+/// After a sync, while a zone change is pending, moves the engine's weekly reviews to
+/// the zone the rows follow (`PUT /v1/timezone`). The flag clears on 200 when the zone
+/// did not change meanwhile; otherwise the next sync retries. Failures are logged.
+async fn send_zone(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let pending = with_core(&state, |c| Ok(if local::zone_pending(&c.conn)? { local::zone(&c.conn)? } else { None }));
+    let Ok(Some(zone)) = pending else { return };
+    match engine_call(&state, "PUT", "/v1/timezone", Some(&json!({ "timezone": zone }))).await {
+        Ok(answer) if answer.status == 200 => {
+            let cleared = with_core(&state, |c| {
+                if local::zone(&c.conn)?.as_deref() == Some(zone.as_str()) {
+                    local::clear_zone_pending(&c.conn)?;
+                }
+                Ok(())
+            });
+            if let Err(e) = cleared {
+                eprintln!("aroh: zone flag not cleared: {e}");
+            }
+        }
+        Ok(answer) => eprintln!("aroh: zone not sent, engine answered {}", answer.status),
+        Err(e) => eprintln!("aroh: zone not sent: {}", e.chars().take(200).collect::<String>()),
+    }
 }
 
 /// Signs in (or with `create`, signs up) with email and password through GoTrue, stores

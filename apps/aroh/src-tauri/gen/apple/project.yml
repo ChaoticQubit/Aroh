@@ -44,6 +44,7 @@ targets:
     info:
       path: aroh_iOS/Info.plist
       properties:
+        ITSAppUsesNonExemptEncryption: false
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
@@ -62,6 +63,8 @@ targets:
         NSSpeechRecognitionUsageDescription: Aroh turns your voice into text on this iPhone to log food, water and workouts. Audio never leaves the device.
         NSHealthShareUsageDescription: Aroh reads your weight, workouts, steps and dietary energy from Apple Health to fill the trackers of your goals.
         NSHealthUpdateUsageDescription: Aroh writes test samples to Apple Health only in developer builds.
+        NSCalendarsFullAccessUsageDescription: Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.
+        NSCalendarsUsageDescription: Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.
     entitlements:
       path: aroh_iOS/aroh_iOS.entitlements
     scheme:

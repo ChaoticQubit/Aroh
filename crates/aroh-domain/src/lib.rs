@@ -10,6 +10,7 @@ pub mod rows;
 pub mod schema;
 pub mod seed;
 pub mod time;
+pub mod travel;
 
 /// Errors raised by domain checks. Messages never carry secrets.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

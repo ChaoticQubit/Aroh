@@ -64,6 +64,8 @@ Port 1420 is shared, so run one simulator check at a time.
 - `sh apps/aroh/ios-release.sh` archives for devices with signing off: `target/ios-release/Aroh.xcarchive`. Signing and export stay with the owner: open the archive in Xcode Organizer, or run `xcodebuild -exportArchive` with your team and an export options plist.
 - `sh apps/aroh/ios-release.sh simulator` builds the release app for the simulator, ad-hoc signed: `target/ios-release/dd/Build/Products/release-iphonesimulator/Aroh.app`. Install it with `xcrun simctl install`.
 
+- `sh apps/aroh/ios-testflight.sh` (the same as `ios-release.sh testflight`) archives signed with team `GK729B5HZQ`, stamps `CFBundleVersion` with UTC `yyyymmddHHMM` (or `AROH_BUILD_NUMBER`) in a temp copy of Info.plist, and uploads to App Store Connect for internal TestFlight. Owner steps: `docs/deploy.md` section J. `AROH_UNSIGNED=1` runs the same path unsigned and stops before the upload.
+
 `AROH_IOS_OUT` moves the output folder. Run `git checkout -- apps/aroh/src-tauri/gen/apple` afterwards if Xcode touched the project.
 
 ## Android

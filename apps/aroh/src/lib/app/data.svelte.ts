@@ -1,5 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
 import { formatYmd } from '$lib/ui/format';
+import { deviceZone, setDeviceZone } from '$lib/ui/clock';
 import * as client from './client';
 import { follow } from './chat.svelte';
 import { engine } from './engine';
@@ -9,9 +10,9 @@ const RANGE_DAYS = 45;
 const DAY_MS = 86_400_000;
 const DAY_CHECK_MS = 60_000;
 
-/** Today's local date in the device zone. */
+/** Today's local date in the device zone (the zone the store follows). */
 function localToday(): string {
-	return formatYmd(new Date().toISOString(), Intl.DateTimeFormat().resolvedOptions().timeZone);
+	return formatYmd(new Date().toISOString(), deviceZone());
 }
 
 /**
@@ -22,13 +23,17 @@ class AppData {
 	snapshot = $state<client.Snapshot | null>(null);
 	error = $state<string | null>(null);
 	day = $state(localToday());
+	zone = $state(deviceZone());
 	private flushing = false;
 
-	/** Reads the snapshot for 45 days either side of now. */
+	/** Reads the snapshot for 45 days either side of now and follows the zone the store was shifted to. */
 	async load() {
 		const now = Date.now();
 		try {
 			this.snapshot = await client.snapshot(new Date(now - RANGE_DAYS * DAY_MS).toISOString(), new Date(now + RANGE_DAYS * DAY_MS).toISOString());
+			setDeviceZone(this.snapshot.zone);
+			this.zone = deviceZone();
+			this.day = localToday();
 			this.error = null;
 		} catch (e) {
 			this.error = String(e);

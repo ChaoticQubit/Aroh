@@ -89,7 +89,12 @@ export type Snapshot = {
 	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights', string>>;
 	pending_logs: { text: string; at: string }[];
 	busy?: BusyBlock[];
+	notes?: Note[];
+	zone?: string | null;
 };
+
+/** A device-local Inbox note, such as a time zone change, shown as an insight card. */
+export type Note = { id: string; title: string; body: string; created_at: string };
 
 /** What a free-text log became. */
 export type Logged = { kind: 'entry'; entry: TrackerEntry } | { kind: 'queued' };

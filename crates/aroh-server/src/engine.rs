@@ -213,7 +213,7 @@ pub fn day_inputs(blocks: &[BusyBlock], tz: Tz, from: DateTime<Utc>, until: Date
     (busy.into_iter().map(|(_, v)| v).collect(), away.into_iter().collect())
 }
 
-fn parse_tz(name: &str) -> Result<Tz, ServerError> {
+pub(crate) fn parse_tz(name: &str) -> Result<Tz, ServerError> {
     name.parse().map_err(|_| ServerError::BadRequest(format!("unknown timezone `{name}`")))
 }
 

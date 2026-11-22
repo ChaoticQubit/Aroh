@@ -24,9 +24,14 @@ pub struct Core {
     pub user_id: String,
 }
 
+/// The device's IANA zone as the OS reports it now; `None` when it reports no known zone.
+pub fn device_zone() -> Option<Tz> {
+    iana_time_zone::get_timezone().ok().and_then(|name| name.parse().ok())
+}
+
 /// The device's IANA zone, or UTC when the OS does not report a known one.
 pub fn zone() -> Tz {
-    iana_time_zone::get_timezone().ok().and_then(|name| name.parse().ok()).unwrap_or(Tz::UTC)
+    device_zone().unwrap_or(Tz::UTC)
 }
 
 fn load_node_id(dir: &Path) -> std::io::Result<String> {
@@ -50,10 +55,14 @@ fn open_core(app: &tauri::App) -> Result<Core, Box<dyn std::error::Error>> {
     Ok(Core { conn, clock, user_id })
 }
 
-/// Runs the start-up tick (seed, materialize, mark missed) and reschedules reminders.
-/// Runs at app start and on resume; the UI also calls `app_tick` when the date changes.
+/// Follows the device zone (Q54), then runs the start-up tick (seed, materialize, mark
+/// missed) and reschedules reminders, so both see the shifted rows. Runs at app start and
+/// on resume; the UI also calls `app_tick` when the date changes.
 fn on_start_or_resume(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
+    if let Err(e) = commands::with_core(&state, |c| aroh_app::travel::follow(&c.conn, &mut c.clock, &c.user_id, Utc::now(), device_zone())) {
+        eprintln!("aroh: time zone not followed: {e}");
+    }
     if let Err(e) = commands::with_core(&state, |c| aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now())) {
         eprintln!("aroh: tick failed: {e}");
     }

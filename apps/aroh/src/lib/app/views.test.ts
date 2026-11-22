@@ -96,6 +96,17 @@ describe('views', () => {
 		expect(inboxView(s, [], [insight, { ...insight, id: 'i2' }]).insights.map((i) => i.id)).toEqual(['i2']);
 	});
 
+	it('shows device notes as insight cards before engine insights and hides dismissed ones', () => {
+		const s = fixture();
+		const note = (id: string) => ({ id, title: 'Time zone changed', body: 'Now in America/New_York, was Europe/Berlin.', created_at: '2026-11-26T06:00:00Z' });
+		s.notes = [note('n2'), note('n1')];
+		s.settings.dismissed_insights = 'n1';
+		const insight = { id: 'i1', goal_id: null, run_id: null, source: 'review', title: 'Weekly review', body: 'On track.', state: 'done', created_at: '2026-11-26T06:00:00Z' };
+		const { insights } = inboxView(s, [], [insight]);
+		expect(insights.map((i) => i.id)).toEqual(['n2', 'i1']);
+		expect(insights[0].spec).toEqual({ kind: 'insight_card', persona: 'Planner', title: 'Time zone changed', body: 'Now in America/New_York, was Europe/Berlin.' });
+	});
+
 	it('derives a goal dashboard with countdown, weight chart and upcoming actions', () => {
 		const s = fixture();
 		const view = goalView(s, s.goals[0], { now: '2026-11-26T08:15:00Z', zone });
