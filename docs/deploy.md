@@ -184,6 +184,24 @@ To renew the token before it expires, repeat step 40, then run `select vault.upd
     Expected: `{"ok":true}`, then `401`, then `200`.
 50. In the app, start a goal. The first question should arrive within seconds, through the jobs trigger, and at the latest after one minute through `aroh-tick`.
 
+## J. TestFlight: Aroh on your iPhone
+
+Internal testing only (Q57): builds go to your team, with no App Review. Research and design: `docs/superpowers/plans/2026-11-22-pod24-testflight.md`.
+
+51. In Xcode, open **Settings** > **Accounts** and check that the Apple Account of team `GK729B5HZQ` is listed. If not, click **+** > **Apple Account** and sign in.
+52. Open https://appstoreconnect.apple.com, click **Apps**, then **+** > **New App**. Set **Platforms** to iOS, **Name** to ArohPlan (done 2026-11-22; App Store names are unique; the home-screen name stays "Aroh", from `CFBundleName`, since the App Store name and the name under the icon may differ), **Primary Language** to English, **Bundle ID** to `io.aroh.app`, **SKU** to `aroh-ios`, **User Access** to Full Access. Click **Create**.
+53. In the new app, open the **TestFlight** tab. Click **+** next to **Internal Testing**, name the group `Owner`, tick **Enable automatic distribution**, click **Create**. Click **Invite Testers**, tick yourself, click **Add**.
+54. The leader runs the build and upload from the repo root, with your real HOME so Xcode sees your account and signing keychain:
+
+    ```sh
+    HOME=/Users/chaoticqubit sh apps/aroh/ios-testflight.sh
+    ```
+
+    It builds the frontend and the Rust library, archives with team `GK729B5HZQ` and automatic signing, stamps build number UTC `yyyymmddHHMM`, and uploads. Expected last line: `uploaded build <number> of io.aroh.app to App Store Connect`. If macOS asks whether `codesign` may use a key, click **Always Allow**. Without a signed-in account, set an App Store Connect API key instead (never put the `.p8` in the repo): `AROH_ASC_KEY_PATH`, `AROH_ASC_KEY_ID` and `AROH_ASC_ISSUER_ID`, all three.
+55. Wait for the email that the build finished processing (usually minutes). The build then shows under **TestFlight** > **iOS Builds**. Export compliance is already answered in the app (`ITSAppUsesNonExemptEncryption` false), so no questionnaire appears.
+56. On the iPhone, install **TestFlight** from the App Store and sign in with the same Apple Account. Open the invitation email and tap **View in TestFlight**, or open TestFlight directly, then tap **Accept** and **Install**. Open Aroh from the home screen.
+57. For a new build, repeat step 54. With automatic distribution on, TestFlight offers the update on the phone.
+
 ## If something fails
 
 | Symptom | Check |
@@ -194,3 +212,8 @@ To renew the token before it expires, repeat step 40, then run `select vault.upd
 | Ticks are 401 in `net._http_response` | The Vault token was minted with a different `AROH_JWT_SECRET` than the one in Vercel. |
 | No push | `AROH_APNS_*` missing (Vercel logs then show no `push on` line at start), or the device never registered: open the app once after sign-in. |
 | Database errors about prepared statements | `DATABASE_URL` uses port 6543 (transaction pooler). Use the session pooler on 5432 (step 33). |
+| Step 54 fails with no account or no signing certificate for the team | Step 51, and run with `HOME=/Users/chaoticqubit` outside the agent sandbox. |
+| Step 54 archive fails with "no devices registered" or no development profile | Register the iPhone on the team once: connect it, open Xcode > **Window** > **Devices and Simulators**, or add its UDID at https://developer.apple.com/account/resources/devices. Run step 54 again. |
+| Step 54 upload fails with no app record for `io.aroh.app` | Step 52 is missing or used another bundle id. |
+| Step 54 upload rejects the build number as used | Run again a minute later, or set `AROH_BUILD_NUMBER` to a higher number. |
+| No push on the TestFlight build | TestFlight builds register as `production` (section E). Check that the engine has the APNs key for Sandbox & Production (step 24). |
