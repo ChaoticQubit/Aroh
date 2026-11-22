@@ -68,6 +68,8 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 | Q48 | Calendar edit sheet | Must have, a primary flow (owner 2026-11-22). Tap an action on Calendar or Today to move it, resize it or delete it; the change syncs and feeds learning from repeated edits. New visual pattern, so mockup first. |
 | Q49 | Persona safety | An edited copy of a built-in persona must keep every `Safety:` guardrail; the server rejects the edit otherwise (owner 2026-11-22). Reason: health and finance coaches must never give diagnoses or individual investment, tax or legal advice. |
 | Q50 | Persona library screen | Must have (owner 2026-11-22). An app screen to list the coaches per team, see which coaches work on a goal, copy one, edit its name, style, instructions and rules, and save. Built from approved components, no mockup (Q39). Safety lines show as locked. |
+| Q51 | Device holidays | Events from the phone's built-in holiday calendars default to Reminder: chip shown, day kept as planned, no question asked; tap the chip to change it (owner 2026-11-22). |
+| Q52 | After slice 2 | Fix the five slice 2 follow-ups in one pod, set up production with the owner step by step now, then run Aroh on the owner's own iPhone for daily use (owner 2026-11-22). |
 
 ### Rejected alternatives
 
