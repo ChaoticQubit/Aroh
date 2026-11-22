@@ -85,8 +85,8 @@ The topic is the bundle id, `io.aroh.app`. Debug builds register as `sandbox` an
 
 ## F. Vercel: project and environment
 
-27. On your Mac, in the repo, push master to GitHub: `git push origin master`.
-28. Open https://vercel.com/new, click **Import** next to `ChaoticQubit/Aroh`, and grant the Vercel GitHub app access to that repo if asked.
+27. The leader pushes local master to the GitHub branch `prod` (`git push origin master:prod`). `prod` is the production pipeline branch; GitHub master is protected (pull request, signed commits, linear history) and catches up later.
+28. Open https://vercel.com/new, click **Import** next to `ChaoticQubit/Aroh`, and grant the Vercel GitHub app access to that repo if asked. After import, open **Settings** > **Environments** > **Production** and set the tracked branch to `prod`, then **Deployments** > **Create Deployment** with ref `prod`. The first automatic build from `master` fails because `crates/aroh-vercel` is not on GitHub master yet; ignore it.
 29. On the configure screen, click **Edit** next to **Root Directory**, choose `crates/aroh-vercel`, and click **Continue**. Leave **Include files outside the root directory in the Build Step** on (the default): the build needs the whole workspace.
 30. Set **Framework Preset** to **Other**. Leave the Build and Output settings empty.
 31. Generate the master key in Terminal with `openssl rand -base64 32`. Save it in your password manager as `AROH_MASTER_KEY`. If you lose or change it, every stored provider key becomes unreadable, and you must enter the keys again in the app.
