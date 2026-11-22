@@ -1,5 +1,6 @@
 pub mod api;
 pub mod auth;
+pub mod boot;
 pub mod checkpoints;
 pub mod config;
 pub mod db;
