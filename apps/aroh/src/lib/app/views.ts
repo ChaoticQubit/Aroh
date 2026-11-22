@@ -232,7 +232,8 @@ function changes(p: Proposal): ChangeView[] {
 const WORKFLOW: Record<string, { title: string; persona: string }> = {
 	'new-goal': { title: 'Planning a new goal', persona: 'Goal planner' },
 	replan: { title: 'Replanning', persona: 'Adaptation analyst' },
-	'log-intake': { title: 'Sorting a log', persona: 'Log intake' }
+	'log-intake': { title: 'Sorting a log', persona: 'Log intake' },
+	'calendar-triage': { title: 'Sorting your calendar', persona: 'Calendar triage' }
 };
 
 const RUN_STATE: Record<string, string> = {

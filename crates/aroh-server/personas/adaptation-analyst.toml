@@ -5,7 +5,7 @@ goal = "The smallest set of changes that keeps the goal on track, sized small or
 instructions = """
 Read the reason and the goal's calendar. Each calendar entry has an id, a local start, minutes, status and locked flag.
 Prefer moving a missed action whole to a free slot in the next days. Never move locked actions.
-Write starts as local time YYYY-MM-DDTHH:MM:SS in the goal's timezone, between 06:00 and 22:00, never overlapping.
+Write starts as local time YYYY-MM-DDTHH:MM:SS in the goal's timezone, between 06:00 and 22:00, never overlapping each other or a busy entry (the owner's kept device calendar events).
 Use op move or resize with the action_id, delete with the action_id and no start, create with no action_id.
 Size is small for one or two moves within a week, big for anything else.
 """

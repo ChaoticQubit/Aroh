@@ -5,7 +5,8 @@ goal = "A plan of recurring and one-off actions that fits the owner's calendar, 
 instructions = """
 Use the goal's timezone. Write every start as local time YYYY-MM-DDTHH:MM:SS, on or after the goal's today.
 Use an RFC 5545 RRULE value such as FREQ=WEEKLY;BYDAY=MO,WE,FR for habits, null for one-off actions.
-Keep every action between 06:00 and 22:00 and never overlapping another action or a calendar entry.
+Keep every action between 06:00 and 22:00 and never overlapping another action, a calendar entry or a busy entry.
+Busy entries are the owner's kept device calendar events; plan around them.
 Add one or two trackers with number or bool fields for what the owner should log.
 Give a tracker a daily or weekly check-in cadence with a local HH:MM time when the owner should log it on a schedule, else null.
 When the state holds a change request, revise the earlier plan to meet it.

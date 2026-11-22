@@ -41,6 +41,9 @@ export type RunEvent = { seq: number; at_ms: number; body: { type: string; step?
 /** A run as `GET /v1/runs/{id}` returns it. */
 export type RunView = { run_id: string; goal_id: string | null; workflow: string; status: RunStatus; waiting: Waiting[]; events: RunEvent[] };
 
+/** One device event as `POST /v1/calendar/triage` takes it: ids, calendar, title, times, recurrence. */
+export type TriageEvent = { event_id: string; calendar_id: string; calendar: string; title: string; start_at: string; end_at: string; rrule: string | null };
+
 /** A free-text log waiting in the device queue. */
 export type PendingLog = { text: string; at: string };
 
@@ -57,7 +60,9 @@ const STEP_TEXT: Record<string, string> = {
 	save: 'Saving the entries',
 	adapt: 'Looking at what changed',
 	record: 'Writing the proposal',
-	apply: 'Applying the change'
+	apply: 'Applying the change',
+	group: 'Grouping your calendar events',
+	save_rules: 'Saving your calendar rules'
 };
 
 /** The owner-facing line for a paused or failed run, or null when it is neither. */
@@ -274,6 +279,11 @@ export class Engine {
 		}
 		const answered = await this.answer(runId!, r.node, r.answer);
 		return answered.ok ? { ok: true, value: { run_id: runId!, held: r.held } } : answered;
+	}
+
+	/** Starts a calendar-triage run for unmatched device events (at most 300, one per series). */
+	triage(events: TriageEvent[]): Promise<EngineResult<{ goal_id: null; run_id: string }>> {
+		return this.request('POST', '/v1/calendar/triage', { timezone: zone(), events });
 	}
 
 	/** Hands a key for `vendor` to the engine through Rust; the app keeps nothing. Returns the last 4. */

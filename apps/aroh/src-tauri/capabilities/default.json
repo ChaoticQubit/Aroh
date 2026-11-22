@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default permissions for the main window",
   "windows": ["main"],
-  "permissions": ["core:default", "notification:default", "aroh-speech:default"]
+  "permissions": ["core:default", "notification:default", "aroh-speech:default", "aroh-calendar:default", "aroh-calendar:allow-seed"]
 }

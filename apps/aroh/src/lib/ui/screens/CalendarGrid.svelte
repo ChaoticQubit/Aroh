@@ -2,12 +2,14 @@
 	import { getClock } from '$lib/ui/clock';
 	import { formatDate, formatTime, formatYmd, minuteOfDay } from '$lib/ui/format';
 	import type { ActionView } from '$lib/ui/contract';
+	import type { BusyView } from './types';
 
 	/**
 	 * Hour grid for one or more days, like a plain web calendar: hour rows from `startHour` to
-	 * `endHour`, actions as light cards with a category edge, today tinted, and a now line.
+	 * `endHour`, actions as light cards with a category edge, busy device events as neutral grey
+	 * blocks, today tinted, and a now line.
 	 */
-	let { days, actions, startHour = 6, endHour = 22 }: { days: string[]; actions: ActionView[]; startHour?: number; endHour?: number } = $props();
+	let { days, actions, busy = [], startHour = 6, endHour = 22 }: { days: string[]; actions: ActionView[]; busy?: BusyView[]; startHour?: number; endHour?: number } = $props();
 
 	const { now, zone } = getClock();
 	const HOUR = 48;
@@ -30,6 +32,12 @@
 				.map((a) => {
 					const y = top(minuteOfDay(a.start, zone));
 					return { ...a, y, h: Math.max(22, top(minuteOfDay(a.end, zone)) - y) };
+				}),
+			blocks: busy
+				.filter((b) => formatYmd(b.start, zone) === date)
+				.map((b) => {
+					const y = top(minuteOfDay(b.start, zone));
+					return { ...b, y, h: Math.max(22, top(minuteOfDay(b.end, zone)) - y) };
 				})
 		}))
 	);
@@ -56,6 +64,17 @@
 			<div class="relative border-l border-border" role="list" aria-label="{c.name} {c.num}, {c.items.length} actions">
 				{#each hours.slice(1, -1) as h (h)}
 					<div class="absolute inset-x-0 border-t border-border/70" style="top: {(h - startHour) * HOUR}px"></div>
+				{/each}
+				{#each c.blocks as b (b.id)}
+					<div
+						role="listitem"
+						class="absolute inset-x-1 overflow-hidden rounded-sm border border-l-3 border-border bg-surface px-1.5 py-0.5"
+						style="top: {b.y + 1}px; height: {b.h - 2}px; border-left-color: var(--muted)"
+						title="{b.title}, {b.group}, {formatTime(b.start, zone)} - {formatTime(b.end, zone)}"
+					>
+						<p class="truncate text-xs leading-4 font-medium text-muted">{b.title}</p>
+						{#if b.h >= 36}<p class="truncate text-xs leading-4 text-muted tabular-nums">Busy · {formatTime(b.start, zone)} - {formatTime(b.end, zone)}</p>{/if}
+					</div>
 				{/each}
 				{#each c.items as a (a.id)}
 					<div

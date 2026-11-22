@@ -8,24 +8,28 @@
 
 	/**
 	 * Inbox: proposals to approve, preference suggestions, insights and agent runs in progress.
-	 * Empty groups are left out. `ondecide` gets the group, the item id and the card's decision.
+	 * Calendar groups from triage come first. Empty groups are left out. `ondecide` gets the group,
+	 * the item id and the card's decision.
 	 */
 	let {
 		approvals,
 		suggestions,
 		insights,
 		runs,
+		triage = [],
 		ondecide
 	}: {
 		approvals: InboxItem[];
 		suggestions: InboxItem[];
 		insights: InboxItem[];
 		runs: RunView[];
-		ondecide?: (group: 'approval' | 'suggestion' | 'insight', id: string, decision: unknown) => void;
+		triage?: InboxItem[];
+		ondecide?: (group: 'triage' | 'approval' | 'suggestion' | 'insight', id: string, decision: unknown) => void;
 	} = $props();
 
 	const groups = $derived(
 		[
+			{ key: 'triage' as const, title: 'Calendar groups', items: triage },
 			{ key: 'approval' as const, title: 'Needs your approval', items: approvals },
 			{ key: 'suggestion' as const, title: 'Suggestions', items: suggestions },
 			{ key: 'insight' as const, title: 'Insights', items: insights }

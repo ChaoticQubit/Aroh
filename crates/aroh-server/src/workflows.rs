@@ -20,19 +20,25 @@ pub const REPLAN: &str = "replan";
 /// Maps the text to tracker entries and stores them.
 /// Started by `POST /v1/logs`.
 pub const LOG_INTAKE: &str = "log-intake";
+/// Workflow name of device calendar triage.
+/// Groups events, asks keep or ignore per group, then writes rules.
+/// Started by `POST /v1/calendar/triage`.
+pub const CALENDAR_TRIAGE: &str = "calendar-triage";
 
-const WORKFLOWS: [(&str, &str); 3] = [
+const WORKFLOWS: [(&str, &str); 4] = [
     (NEW_GOAL, include_str!("../workflows/new-goal.toml")),
     (REPLAN, include_str!("../workflows/replan.toml")),
     (LOG_INTAKE, include_str!("../workflows/log-intake.toml")),
+    (CALENDAR_TRIAGE, include_str!("../workflows/calendar-triage.toml")),
 ];
 
-const PERSONAS: [(&str, &str); 6] = [
+const PERSONAS: [(&str, &str); 7] = [
     ("intake-interviewer", include_str!("../personas/intake-interviewer.toml")),
     ("goal-researcher", include_str!("../personas/goal-researcher.toml")),
     ("goal-planner", include_str!("../personas/goal-planner.toml")),
     ("adaptation-analyst", include_str!("../personas/adaptation-analyst.toml")),
     ("log-intake", include_str!("../personas/log-intake.toml")),
+    ("calendar-triage", include_str!("../personas/calendar-triage.toml")),
     ("plugin-builder", include_str!("../personas/plugin-builder.toml")),
 ];
 

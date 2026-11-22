@@ -4,16 +4,42 @@
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { follow } from '$lib/app/chat.svelte';
-	import { engine, type RunSummary } from '$lib/app/engine';
+	import { engine, type RunSummary, type Waiting } from '$lib/app/engine';
+	import { decisionsFrom, finishTriage, triageCards } from '$lib/app/calendar';
 	import { inboxView } from '$lib/app/views';
 
 	const s = $derived(data.snapshot);
 	let runs = $state<RunSummary[]>([]);
+	let triage = $state<{ runId: string; waiting: Waiting } | null>(null);
+	let answers: Record<string, unknown> = {};
 
 	/** Reads the engine's newest runs; offline leaves the list empty. */
 	async function loadRuns() {
 		const r = await engine.runs();
 		runs = r.ok ? r.value : [];
+		await loadTriage();
+	}
+
+	/** Reads the calendar-triage run waiting at `decide`, if any, for the Calendar groups cards. */
+	async function loadTriage() {
+		const open = runs.find((r) => r.workflow === 'calendar-triage' && r.state === 'waiting_human');
+		const view = open ? await engine.run(open.run_id) : null;
+		const waiting = view?.ok ? view.value.waiting.find((w) => w.node === 'decide') : undefined;
+		triage = open && waiting ? { runId: open.run_id, waiting } : null;
+		answers = {};
+	}
+
+	/** Holds one group's answer; once every group is answered, posts them together and finishes the run. */
+	async function decideGroup(name: string, decision: unknown) {
+		if (!triage) return;
+		answers[name] = decision;
+		const decisions = decisionsFrom(triage.waiting, answers);
+		if (!decisions) return;
+		const { runId } = triage;
+		const answered = await engine.answer(runId, 'decide', decisions);
+		if (!answered.ok) return void (data.error = answered.message);
+		await finishTriage(runId);
+		await loadRuns();
 	}
 
 	onMount(() => void loadRuns());
@@ -33,7 +59,8 @@
 	}
 
 	/** Applies or rejects a proposal (through its waiting run when it has one), or decides a suggestion. */
-	async function ondecide(group: 'approval' | 'suggestion' | 'insight', id: string, decision: unknown) {
+	async function ondecide(group: 'triage' | 'approval' | 'suggestion' | 'insight', id: string, decision: unknown) {
+		if (group === 'triage') return decideGroup(id, decision);
 		const yes = decision === 'apply';
 		if (group === 'suggestion') return data.run(() => client.decidePreference(id, yes));
 		if (group !== 'approval') return;
@@ -48,5 +75,5 @@
 </script>
 
 {#if s}
-	<InboxScreen {...inboxView(s, runs)} {ondecide} />
+	<InboxScreen {...inboxView(s, runs)} triage={triageCards(triage?.waiting)} {ondecide} />
 {/if}

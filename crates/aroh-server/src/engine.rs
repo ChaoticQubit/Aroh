@@ -6,11 +6,12 @@ use crate::queue::PgQueue;
 use crate::rows::{get_row, insert_run, list_rows, prepare_reads, put_row, run_row, run_row_for, utc, RunRow};
 use crate::tools::local_text;
 use crate::vault::{check_vendor, KeyInfo};
-use crate::workflows::{self, LOG_INTAKE, NEW_GOAL, REPLAN};
+use crate::triage::{triage_input, StartTriage};
+use crate::workflows::{self, CALENDAR_TRIAGE, LOG_INTAKE, NEW_GOAL, REPLAN};
 use crate::db;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{
-    Action, Autonomy, Budget, BudgetScope, Goal, GoalStatus, ProviderSetting, SearchSetting, Tracker,
+    Action, Autonomy, Budget, BudgetScope, BusyBlock, Goal, GoalStatus, ProviderSetting, SearchSetting, Tracker,
 };
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
@@ -314,6 +315,26 @@ impl Engine {
             .collect())
     }
 
+    async fn busy(&self, user: Uuid, tz: Tz, from: DateTime<Utc>) -> Result<Vec<Value>, ServerError> {
+        let until = from + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
+        let mut blocks: Vec<BusyBlock> = list_rows::<BusyBlock>(&self.deps.pool, user, &[], false)
+            .await?
+            .into_iter()
+            .filter(|b| !b.all_day && b.end_at > from && b.start_at < until)
+            .collect();
+        blocks.sort_by_key(|b| b.start_at);
+        Ok(blocks
+            .iter()
+            .map(|b| {
+                json!({
+                    "title": b.title,
+                    "start": local_text(b.start_at.with_timezone(&tz).naive_local()),
+                    "minutes": (b.end_at - b.start_at).num_minutes().clamp(1, 24 * 60),
+                })
+            })
+            .collect())
+    }
+
     fn goal_input(goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Value {
         json!({
             "id": goal.id,
@@ -357,6 +378,7 @@ impl Engine {
         let mut input = Map::new();
         input.insert("goal".into(), Self::goal_input(&goal, tz, now));
         input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
+        input.insert("busy".into(), json!(self.busy(user, tz, now).await?));
         let template = aroh_plugins::template("fitness").expect("the fitness template ships");
         input.insert("plugin_guide".into(), json!({"template": template, "reference": aroh_plugins::reference()}));
         let run = self.start(user, Some(id), NEW_GOAL, input).await?;
@@ -379,6 +401,7 @@ impl Engine {
         input.insert("goal".into(), Self::goal_input(&goal, tz, now));
         let from = now - Duration::days(PAST_DAYS);
         input.insert("calendar".into(), json!(self.calendar(user, tz, Some(&goal.id), from).await?));
+        input.insert("busy".into(), json!(self.busy(user, tz, now).await?));
         input.insert("reason".into(), json!(req.reason));
         input.insert("autonomy".into(), serde_json::to_value(goal.autonomy).expect("autonomy serializes"));
         let run = self.start(user, Some(goal_id), REPLAN, input).await?;
@@ -401,6 +424,26 @@ impl Engine {
         input.insert("log".into(), json!({"text": req.text, "at": at.to_rfc3339(), "timezone": tz.name()}));
         input.insert("trackers".into(), json!(trackers));
         let run = self.start(user, None, LOG_INTAKE, input).await?;
+        Ok(Started { goal_id: None, run_id: run.0 })
+    }
+
+    /// Starts the calendar-triage workflow for `user`'s unmatched device
+    /// events. Returns `Conflict` while another triage of the user is not
+    /// done, so a device never stacks runs; the rules arrive by sync.
+    pub async fn start_triage(&self, user: Uuid, req: StartTriage) -> Result<Started, ServerError> {
+        let tz = parse_tz(&req.timezone)?;
+        let input = triage_input(&req, tz)?;
+        let open: i64 = db::query_scalar(
+            "select count(*) from public.runs where user_id = $1 and workflow = $2 and state not in ('done', 'failed')",
+        )
+        .bind(user)
+        .bind(CALENDAR_TRIAGE)
+        .fetch_one(&self.deps.pool)
+        .await?;
+        if open > 0 {
+            return Err(ServerError::Conflict("a calendar triage is still open; answer it in the Inbox first".into()));
+        }
+        let run = self.start(user, None, CALENDAR_TRIAGE, input).await?;
         Ok(Started { goal_id: None, run_id: run.0 })
     }
 

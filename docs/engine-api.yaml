@@ -18,6 +18,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Health'
+  /v1/calendar/triage:
+    post:
+      tags:
+      - runs
+      operationId: start_triage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartTriage'
+        required: true
+      responses:
+        '202':
+          description: Calendar-triage run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: another triage is still open
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/devices/{device_id}:
     put:
       tags:
@@ -982,6 +1020,23 @@ components:
         timezone:
           type: string
       additionalProperties: false
+    StartTriage:
+      type: object
+      description: |-
+        Body of `POST /v1/calendar/triage`: the owner's IANA zone and 1 to 300
+        unmatched events. The run groups them and waits at `decide` for the
+        owner's keep or ignore per group, then writes `calendar_rules`.
+      required:
+      - timezone
+      - events
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/TriageEvent'
+        timezone:
+          type: string
+      additionalProperties: false
     Started:
       type: object
       description: |-
@@ -1040,6 +1095,39 @@ components:
         processed:
           type: integer
           minimum: 0
+    TriageEvent:
+      type: object
+      description: |-
+        One device calendar event to triage: EventKit ids, calendar name, title,
+        first occurrence (RFC 3339) and the RFC 5545 recurrence when it repeats.
+        Notes, places and attendees never leave the device.
+      required:
+      - event_id
+      - calendar_id
+      - calendar
+      - title
+      - start_at
+      - end_at
+      properties:
+        calendar:
+          type: string
+        calendar_id:
+          type: string
+        end_at:
+          type: string
+          format: date-time
+        event_id:
+          type: string
+        rrule:
+          type:
+          - string
+          - 'null'
+        start_at:
+          type: string
+          format: date-time
+        title:
+          type: string
+      additionalProperties: false
     Waiting:
       type: object
       description: |-

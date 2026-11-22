@@ -15,5 +15,6 @@ pub mod push;
 pub mod queue;
 pub mod rows;
 pub mod tools;
+pub mod triage;
 pub mod vault;
 pub mod workflows;

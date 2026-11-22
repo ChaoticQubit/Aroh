@@ -1,6 +1,7 @@
 //! Aroh domain: row types, hybrid logical clock, validation and recurrence shared by
 //! the app engine and the server engine. No I/O.
 
+pub mod calendar;
 pub mod hlc;
 pub mod lww;
 pub mod recur;

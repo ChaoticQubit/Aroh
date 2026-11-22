@@ -3,6 +3,7 @@ use crate::engine::{Answer, Engine, KeyTest, RunSummary, RunView, SetKey, StartG
 use crate::error::{ErrorBody, ErrorDetail, ServerError};
 use crate::plugins::{PluginView, SavePlugin, Writer};
 use crate::push::{ApnsEnv, DeviceInfo, Platform, PushSummary, RegisterDevice};
+use crate::triage::{StartTriage, TriageEvent};
 use crate::vault::KeyInfo;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRef, Path, Query, State};
@@ -154,6 +155,18 @@ async fn submit_log(
     Ok((StatusCode::ACCEPTED, Json(s.engine.submit_log(user, req).await?)))
 }
 
+#[utoipa::path(post, path = "/v1/calendar/triage", tag = "runs", security(("bearer" = [])),
+    request_body = StartTriage,
+    responses((status = 202, description = "Calendar-triage run queued", body = Started), (status = 400, body = ErrorBody), (status = 409, description = "another triage is still open", body = ErrorBody), (status = 422, body = ErrorBody)))]
+async fn start_triage(
+    State(s): State<AppState>,
+    UserId(user): UserId,
+    json: Result<Json<StartTriage>, JsonRejection>,
+) -> Result<(StatusCode, Json<Started>), ServerError> {
+    let req = body(json, true)?;
+    Ok((StatusCode::ACCEPTED, Json(s.engine.start_triage(user, req).await?)))
+}
+
 #[utoipa::path(get, path = "/v1/runs", tag = "runs", security(("bearer" = [])),
     params(RunsQuery),
     responses((status = 200, description = "The 50 newest runs, for the Inbox", body = [RunSummary])))]
@@ -292,9 +305,9 @@ impl Modify for Bearer {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
-    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, list_runs, get_run, answer, tick, enqueue_hook, register_device, unregister_device, push_tick,
+    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, start_triage, list_runs, get_run, answer, tick, enqueue_hook, register_device, unregister_device, push_tick,
         list_plugins, save_plugin, get_plugin, enable_plugin),
-    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
+    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
         SavePlugin, PluginView)),
     modifiers(&Bearer)
 )]
@@ -319,6 +332,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/goals", post(start_goal))
         .route("/v1/goals/{goal_id}/replan", post(start_replan))
         .route("/v1/logs", post(submit_log))
+        .route("/v1/calendar/triage", post(start_triage))
         .route("/v1/runs", get(list_runs))
         .route("/v1/runs/{run_id}", get(get_run))
         .route("/v1/runs/{run_id}/answers", post(answer))

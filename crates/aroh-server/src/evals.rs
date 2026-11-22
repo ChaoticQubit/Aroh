@@ -88,6 +88,21 @@ fn path_slots(output: &Value, args: &[Value]) -> Result<Vec<Slot>, String> {
     Ok(out)
 }
 
+fn clash(mut all: Vec<Slot>, busy: &[Slot]) -> Result<(), String> {
+    all.sort_by(|a, b| (a.start, a.end).cmp(&(b.start, b.end)));
+    for pair in all.windows(2) {
+        if pair[1].start < pair[0].end {
+            return Err(format!("`{}` overlaps `{}` at {}", pair[1].title, pair[0].title, pair[1].start));
+        }
+    }
+    for slot in &all {
+        if let Some(b) = busy.iter().find(|b| slot.start < b.end && b.start < slot.end) {
+            return Err(format!("`{}` overlaps busy `{}` at {}", slot.title, b.title, b.start));
+        }
+    }
+    Ok(())
+}
+
 /// Eval `no_overlap(path)`: the slots of the items at `path` never overlap
 /// one another. Returns the first clash, naming both titles and the time.
 /// Touching slots (one ends as the next starts) are fine.
@@ -95,14 +110,18 @@ pub fn no_overlap(output: &Value, args: &[Value]) -> Result<(), String> {
     if args.len() != 1 {
         return Err("takes (path)".into());
     }
-    let mut all = path_slots(output, args)?;
-    all.sort_by(|a, b| (a.start, a.end).cmp(&(b.start, b.end)));
-    for pair in all.windows(2) {
-        if pair[1].start < pair[0].end {
-            return Err(format!("`{}` overlaps `{}` at {}", pair[1].title, pair[0].title, pair[1].start));
-        }
+    clash(path_slots(output, args)?, &[])
+}
+
+/// Reads a run's `busy` state value, a list of `{title, start, minutes}` in
+/// local wall time, into slots. Busy slots may overlap one another.
+/// Returns why an entry does not parse.
+pub fn busy_slots(busy: &Value) -> Result<Vec<Slot>, String> {
+    let mut out = Vec::new();
+    for item in busy.as_array().map(Vec::as_slice).unwrap_or_default() {
+        out.extend(slots(item)?);
     }
-    Ok(())
+    Ok(out)
 }
 
 /// Eval `within_availability(path, "HH:MM", "HH:MM")`: every slot of the
@@ -139,10 +158,23 @@ pub fn valid_plugin(output: &Value, args: &[Value]) -> Result<(), String> {
 
 /// Builds the eval registry every Aroh run uses: the built-in `min_items`
 /// plus the domain evals `no_overlap`, `within_availability` and
-/// `valid_plugin`. Returns the registry.
+/// `valid_plugin`. Returns the registry, with no busy time bound.
 pub fn registry() -> EvalRegistry {
+    registry_with_busy(Vec::new())
+}
+
+/// Builds the registry with `busy` bound into `no_overlap`, so the items at
+/// its path also never overlap a kept device event; busy slots are never
+/// checked against each other. Returns the registry.
+pub fn registry_with_busy(busy: Vec<Slot>) -> EvalRegistry {
     let mut r = EvalRegistry::new();
-    r.register("no_overlap", Arc::new(no_overlap)).expect("fresh name");
+    let overlap = move |output: &Value, args: &[Value]| {
+        if args.len() != 1 {
+            return Err("takes (path)".to_string());
+        }
+        clash(path_slots(output, args)?, &busy)
+    };
+    r.register("no_overlap", Arc::new(overlap)).expect("fresh name");
     r.register("within_availability", Arc::new(within_availability)).expect("fresh name");
     r.register("valid_plugin", Arc::new(valid_plugin)).expect("fresh name");
     r
@@ -206,6 +238,28 @@ mod tests {
         assert!(slots(&json!({"title": "x", "start": null, "minutes": null})).unwrap().is_empty());
         let r = registry();
         assert!(r.get("no_overlap").is_some() && r.get("within_availability").is_some() && r.get("min_items").is_some());
+    }
+
+    #[test]
+    fn no_overlap_rejects_busy_clash_and_allows_overlapping_busy() {
+        let busy = busy_slots(&json!([
+            {"title": "Standup", "start": "2026-11-23T09:00:00", "minutes": 30},
+            {"title": "Sync", "start": "2026-11-23T09:15:00", "minutes": 30}
+        ]))
+        .unwrap();
+        let r = registry_with_busy(busy);
+        let f = r.get("no_overlap").unwrap();
+        let clear = plan(json!([{"title": "Run", "start": "2026-11-23T07:00:00", "minutes": 30, "rrule": "FREQ=DAILY"}]));
+        assert!(f(&clear, &[json!("items")]).is_ok());
+        let over = plan(json!([{"title": "Run", "start": "2026-11-23T09:40:00", "minutes": 30}]));
+        let e = f(&over, &[json!("items")]).unwrap_err();
+        assert!(e.contains("overlaps busy `Sync`"), "{e}");
+        let daily = plan(json!([{"title": "Core", "start": "2026-11-22T09:00:00", "minutes": 20, "rrule": "FREQ=DAILY"}]));
+        assert!(f(&daily, &[json!("items")]).unwrap_err().contains("busy `Standup`"));
+        assert!(registry().get("no_overlap").unwrap()(&over, &[json!("items")]).is_ok());
+        assert!(f(&over, &[]).is_err());
+        assert!(busy_slots(&json!([{"title": "x", "start": "soon", "minutes": 5}])).is_err());
+        assert!(busy_slots(&Value::Null).unwrap().is_empty());
     }
 
     #[test]

@@ -162,6 +162,19 @@ pub fn autonomy_gate(state: &Map<String, Value>, _args: &[Value]) -> Result<Stri
     Ok(if ask { "ask" } else { "apply" }.into())
 }
 
+/// Reads the busy time a run planned around: the `busy` key of its latest
+/// checkpoint's state, as eval slots. Empty for a run without that key,
+/// before its first checkpoint, or before the run exists.
+pub async fn run_busy(pool: &PgPool, run: Option<RunId>) -> Result<Vec<evals::Slot>, ServerError> {
+    let Some(run) = run else { return Ok(Vec::new()) };
+    let busy: Option<Option<Value>> =
+        crate::db::query_scalar("select state->'state'->'busy' from public.run_checkpoints where run_id = $1 order by step desc limit 1")
+            .bind(run.0)
+            .fetch_optional(pool)
+            .await?;
+    evals::busy_slots(&busy.flatten().unwrap_or(Value::Null)).map_err(ServerError::Setup)
+}
+
 /// The io of one run: its user, goal and run id, the user's provider
 /// settings, a tool registry closed over the user, the domain evals, the
 /// user's ledger, the step's event buffer and the run's persona snapshot.
@@ -192,9 +205,11 @@ impl RunIo {
         let settings = list_rows::<ProviderSetting>(&deps.pool, user, &[], false).await?;
         let mut tools = ToolRegistry::new();
         let env = ToolEnv { pool: deps.pool.clone(), hlc: deps.hlc.clone(), clock: deps.clock.clone(), user, goal };
-        tools.register_toolkit(aroh_toolkit(env)).map_err(|e| ServerError::Setup(e.to_string()))?;
+        tools.register_toolkit(aroh_toolkit(env.clone())).map_err(|e| ServerError::Setup(e.to_string()))?;
+        tools.register_toolkit(crate::triage::triage_toolkit(env)).map_err(|e| ServerError::Setup(e.to_string()))?;
         tools.register_toolkit(search_kit(&deps, user).await?.unwrap_or_else(no_search)).map_err(|e| ServerError::Setup(e.to_string()))?;
         tools.register(web_fetch(deps.web.clone(), FETCH_MAX_CHARS)).map_err(|e| ServerError::Setup(e.to_string()))?;
+        let busy = run_busy(&deps.pool, run).await?;
         let mut conditions = Conditions::new();
         conditions.register("autonomy_gate", Arc::new(autonomy_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
         let writer = Arc::new(UsageWriter {
@@ -210,7 +225,7 @@ impl RunIo {
             writer,
             settings,
             tools,
-            evals: evals::registry(),
+            evals: evals::registry_with_busy(busy),
             events,
             personas: workflows::loader(personas),
             conditions,

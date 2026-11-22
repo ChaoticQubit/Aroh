@@ -670,3 +670,167 @@ async fn device_routes_register_and_delete_and_push_tick_needs_the_service_role(
     assert_eq!(api.call(Method::Delete, &format!("/v1/devices/{device}"), Some(&t), None).await.0, 204);
     assert_eq!(api.call(Method::Delete, &format!("/v1/devices/{device}"), Some(&t), None).await.0, 404);
 }
+
+async fn busy_block(api: &Api, user: Uuid, title: &str, start: &str, minutes: i64) {
+    let start: DateTime<Utc> = start.parse().unwrap();
+    let mut b = aroh_domain::rows::BusyBlock {
+        id: Uuid::now_v7().to_string(),
+        user_id: user.to_string(),
+        calendar_id: "work".into(),
+        event_id: format!("evt-{title}"),
+        title: title.into(),
+        start_at: start,
+        end_at: start + chrono::Duration::minutes(minutes),
+        all_day: false,
+        group_name: Some("Work".into()),
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&api.pool, &api.hlc, user, &mut b).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn planner_repairs_a_plan_over_busy_time() {
+    let models = FnTransport::new(|req| {
+        let body = body_text(req);
+        if body.contains("You are Intake interviewer") {
+            return sse_text(&json!({"questions": [{"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": []}]}).to_string());
+        }
+        if body.contains("You are Goal researcher") {
+            return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
+        }
+        if body.contains("You are Goal planner") {
+            let start = if body.contains("overlaps busy") { "2026-11-23T07:00:00" } else { "2026-11-23T09:15:00" };
+            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [],
+                "items": [{"title": "Easy run", "start": start, "minutes": 30, "rrule": null, "notes": null}]});
+            return sse_text(&plan.to_string());
+        }
+        json_reply(400, json!({}))
+    });
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    busy_block(&api, u, "Standup", "2026-11-23T08:00:00Z", 30).await;
+    busy_block(&api, u, "Team sync", "2026-11-23T08:15:00Z", 30).await;
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "Europe/Berlin"}))).await;
+    let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "approve", "{view}");
+    assert_eq!(view["waiting"][0]["data"]["plan"]["items"][0]["start"], "2026-11-23T07:00:00");
+    let planner: Vec<String> = models.sent().iter().map(body_text).filter(|b| b.contains("You are Goal planner")).collect();
+    assert_eq!(planner.len(), 2, "one repair round");
+    assert!(planner[0].contains("Standup") && planner[0].contains("2026-11-23T09:00:00"), "{}", planner[0]);
+    assert!(planner[1].contains("overlaps busy `Standup`"), "{}", planner[1]);
+    api.answer(&t, &run, "approve", json!(true)).await;
+    api.tick().await;
+    let start: DateTime<Utc> = db::query_scalar("select start_at from public.actions where goal_id::text = $1").bind(&goal).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(start.to_rfc3339(), "2026-11-23T06:00:00+00:00");
+}
+
+fn triage_event(id: &str, title: &str, start: &str, rrule: Option<&str>) -> Value {
+    let start: DateTime<Utc> = start.parse().unwrap();
+    json!({"event_id": id, "calendar_id": "cal-work", "calendar": "Work", "title": title,
+        "start_at": start, "end_at": start + chrono::Duration::minutes(30), "rrule": rrule})
+}
+
+fn triage_models() -> Arc<FnTransport> {
+    FnTransport::new(|req| {
+        if body_text(req).contains("You are Calendar triage") {
+            let groups = json!({"groups": [
+                {"name": "Work meetings", "kind": "work", "keep": true, "reason": "Meetings.", "events": ["e1", "e3"]},
+                {"name": "Noise", "kind": "noise", "keep": false, "reason": "Holidays.", "events": ["e2", "e9"]}
+            ]});
+            return sse_text(&groups.to_string());
+        }
+        json_reply(400, json!({}))
+    })
+}
+
+async fn rules(api: &Api, user: Uuid) -> Vec<(Option<String>, Option<String>, String, String)> {
+    db::query_as("select series_key, pattern, group_name, decision from public.calendar_rules where user_id = $1 and not deleted order by group_name, series_key, pattern")
+        .bind(user)
+        .fetch_all(&api.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn triage_groups_decides_and_writes_rules() {
+    let models = triage_models();
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let events = json!([
+        triage_event("standup", "Standup", "2026-11-23T08:00:00Z", Some("FREQ=DAILY")),
+        triage_event("holiday", "Public holiday", "2026-11-23T09:00:00Z", None),
+        triage_event("review", "Design Review", "2026-11-24T13:00:00Z", None),
+        triage_event("dentist", "Dentist", "2026-11-25T15:00:00Z", None)
+    ]);
+    let body = json!({"timezone": "Europe/Berlin", "events": events});
+    let (status, started) = api.call(Method::Post, "/v1/calendar/triage", Some(&t), Some(body.clone())).await;
+    assert_eq!(status, 202, "{started}");
+    assert_eq!(started["goal_id"], Value::Null);
+    let run = started["run_id"].as_str().unwrap().to_string();
+    let (status, _) = api.call(Method::Post, "/v1/calendar/triage", Some(&t), Some(body.clone())).await;
+    assert_eq!(status, 409, "one open triage at a time");
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "decide", "{view}");
+    let groups = view["waiting"][0]["data"]["sorted"]["groups"].as_array().unwrap().clone();
+    let names: Vec<&str> = groups.iter().map(|g| g["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Work meetings", "Noise", "Other"]);
+    assert_eq!(groups[2]["events"], json!(["e4"]));
+    assert_eq!(view["waiting"][0]["data"]["events"][0]["start"], "2026-11-23T09:00:00");
+    let sent = body_text(&models.sent()[0]);
+    assert!(sent.contains("Standup") && !sent.contains("cal-work") && !sent.contains("standup\""), "ids stay on the server");
+    let decisions = json!([{"group": "Work meetings", "keep": true}, {"group": "Noise", "keep": false}, {"group": "Other", "keep": true}]);
+    api.answer(&t, &run, "decide", decisions).await;
+    api.tick().await;
+    assert_eq!(api.run(&t, &run).await["status"]["status"], "done");
+    let s = |v: &str| Some(v.to_string());
+    let expected = vec![
+        (None, s("public holiday"), "Noise".to_string(), "ignore".to_string()),
+        (None, s("dentist"), "Other".to_string(), "keep".to_string()),
+        (s("standup"), None, "Work meetings".to_string(), "keep".to_string()),
+        (None, s("design review"), "Work meetings".to_string(), "keep".to_string()),
+    ];
+    assert_eq!(rules(&api, u).await, expected);
+
+    let (_, again) = api.call(Method::Post, "/v1/calendar/triage", Some(&t), Some(json!({"timezone": "UTC", "events": [triage_event("standup", "Standup", "2026-11-30T08:00:00Z", Some("FREQ=DAILY"))]}))).await;
+    let again = again["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    api.answer(&t, &again, "decide", json!([{"group": "Work meetings", "keep": false}])).await;
+    api.tick().await;
+    let after = rules(&api, u).await;
+    assert_eq!(after.len(), 4, "the same key overwrites");
+    assert!(after.contains(&(s("standup"), None, "Work meetings".to_string(), "ignore".to_string())));
+    let (_, other) = api.signed_up().await;
+    assert_eq!(api.call(Method::Get, &format!("/v1/runs/{run}"), Some(&other), None).await.0, 404);
+    let theirs: i64 = db::query_scalar("select count(*) from public.calendar_rules where user_id <> $1").bind(u).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(theirs, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn triage_rejects_bad_requests() {
+    let api = api(triage_models(), offline()).await;
+    let (_, t) = api.signed_up().await;
+    let one = triage_event("a", "A", "2026-11-23T08:00:00Z", None);
+    let mut backwards = one.clone();
+    backwards["end_at"] = json!("2026-11-23T07:00:00Z");
+    let many: Vec<Value> = (0..301).map(|i| triage_event(&format!("e{i}"), "x", "2026-11-23T08:00:00Z", None)).collect();
+    for body in [
+        json!({"timezone": "UTC", "events": []}),
+        json!({"timezone": "UTC", "events": many}),
+        json!({"timezone": "UTC", "events": [backwards]}),
+        json!({"timezone": "Mars/Base", "events": [one.clone()]}),
+        json!({"timezone": "UTC", "events": [one], "extra": 1}),
+    ] {
+        let (status, err) = api.call(Method::Post, "/v1/calendar/triage", Some(&t), Some(body)).await;
+        assert_eq!(status, 400, "{err}");
+    }
+    assert_eq!(api.call(Method::Post, "/v1/calendar/triage", None, Some(json!({}))).await.0, 401);
+}

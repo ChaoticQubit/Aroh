@@ -63,6 +63,15 @@ export type SearchSetting = { id: string; label: string; provider: string; base_
 /** A spend limit row. */
 export type Budget = { id: string; scope: 'call' | 'run' | 'goal_month' | 'user_month'; goal_id: string | null; limit_usd_micros: number };
 
+/** A kept device calendar event as busy time; times are RFC 3339 UTC. */
+export type BusyBlock = { id: string; calendar_id: string; event_id: string; title: string; start_at: string; end_at: string; all_day: boolean; group_name: string | null };
+
+/** One device calendar occurrence as the EventKit plugin reads it; times are ISO 8601. */
+export type DeviceEvent = { calendar_id: string; calendar: string; event_id: string; title: string; start_at: string; end_at: string; all_day: boolean; rrule: string | null };
+
+/** What one calendar import did; `unmatched` holds one event per series for triage. */
+export type CalendarImport = { kept: number; ignored: number; removed: number; unmatched: DeviceEvent[] };
+
 /** Every row the screens read, as `app_snapshot` returns it. */
 export type Snapshot = {
 	user_id: string;
@@ -79,6 +88,7 @@ export type Snapshot = {
 	budgets: Budget[];
 	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key', string>>;
 	pending_logs: { text: string; at: string }[];
+	busy?: BusyBlock[];
 };
 
 /** What a free-text log became. */
@@ -146,3 +156,15 @@ export const sync = () => invoke<{ pushed: number; pulled: number }>('app_sync')
 
 /** Removes the logs the engine accepted from the local queue. */
 export const logsSent = (sent: { text: string; at: string }[]) => invoke<number>('app_logs_sent', { sent });
+
+/** Reads the device calendar occurrences in `[from, to)`, asking for access once. iPhone only. */
+export const readCalendar = (from: string, to: string) =>
+	invoke<{ events: DeviceEvent[] }>('plugin:aroh-calendar|events', { from, to }).then(
+		(r) => r.events,
+		(e: unknown) => {
+			throw new Error(typeof e === 'object' && e !== null && 'message' in e ? String(e.message) : String(e));
+		}
+	);
+
+/** Matches device occurrences against the synced rules: kept ones become busy blocks. */
+export const calendarImport = (events: DeviceEvent[]) => invoke<CalendarImport>('app_calendar_import', { events });

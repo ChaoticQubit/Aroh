@@ -8,15 +8,15 @@ FMT = "%Y-%m-%dT%H:%M:%S"
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "aroh-plugins", "templates", "fitness.toml")
 
 
-def plan_times(now):
+def plan_times(now, room=30):
     """First one-off slot and the series start, both local and inside 06:00 to 22:00.
-    Input: aware local now. Output: (workout start, plank series start) as datetimes.
-    The workout is 40 minutes out (rounded to 5), or 07:00 tomorrow when that is too late."""
+    Input: aware local now and the minutes that must fit before 22:00. Output: (workout
+    start, plank series start); the workout is 40 minutes out (rounded to 5), else 07:00 tomorrow."""
     start = (now + datetime.timedelta(minutes=40)).replace(second=0, microsecond=0)
     start = start.replace(minute=start.minute - start.minute % 5)
     day_start = now.replace(hour=6, minute=0, second=0, microsecond=0)
     start = max(start, day_start)
-    if start + datetime.timedelta(minutes=30) > now.replace(hour=22, minute=0, second=0, microsecond=0):
+    if start + datetime.timedelta(minutes=room) > now.replace(hour=22, minute=0, second=0, microsecond=0):
         start = (now + datetime.timedelta(days=1)).replace(hour=7, minute=0, second=0, microsecond=0)
     plank = (now + datetime.timedelta(days=1)).replace(hour=6, minute=0, second=0, microsecond=0)
     return start, plank
@@ -67,17 +67,62 @@ def script(now, reminder_minutes):
     ]}
 
 
+def calendar_seed(now):
+    """Device events the calendar e2e seeds, ISO 8601 UTC: a daily standup at the workout time,
+    a spin class, a dentist visit and a holiday. Input: aware local now.
+    Output: the events in the triage key order e1 to e4."""
+    workout, _ = plan_times(now, 60)
+    day = (now + datetime.timedelta(days=1)).replace(second=0, microsecond=0)
+    at = lambda t, minutes: (t.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), (t + datetime.timedelta(minutes=minutes)).astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    rows = [("Team standup", workout, 30, "FREQ=DAILY"), ("Spin class", day.replace(hour=20, minute=0), 60, "FREQ=WEEKLY;BYDAY=" + ["MO", "TU", "WE", "TH", "FR", "SA", "SU"][day.weekday()]),
+            ("Dentist", (day + datetime.timedelta(days=1)).replace(hour=15, minute=0), 45, None), ("Founders Day", (day + datetime.timedelta(days=2)).replace(hour=12, minute=0), 60, None)]
+    out = []
+    for title, start, minutes, rrule in rows:
+        s, e = at(start, minutes)
+        out.append({"title": title, "start_at": s, "end_at": e, "rrule": rrule})
+    return out
+
+
+def calendar_rules(now):
+    """Script rules for the calendar flow, matched before the six-pack rules: the triage groups,
+    and a planner reply after the busy repair that moves both items behind the standup.
+    Input: aware local now. Output: the rules as a list."""
+    workout, _ = plan_times(now, 60)
+    groups = {"groups": [
+        {"name": "Work meetings", "kind": "work", "keep": True, "reason": "Daily work meeting.", "events": ["e1"]},
+        {"name": "Gym classes", "kind": "fitness", "keep": True, "reason": "Booked class.", "events": ["e2"]},
+        {"name": "Appointments", "kind": "personal", "keep": True, "reason": "One-off appointment.", "events": ["e3"]},
+        {"name": "Holidays", "kind": "noise", "keep": False, "reason": "No time taken.", "events": ["e4"]},
+    ]}
+    moved = dict(script(now, 30)["rules"][3]["reply"])
+    plan = json.loads(moved["text"])
+    plan["items"][0]["start"] = (workout + datetime.timedelta(minutes=30)).strftime(FMT)
+    plan["items"][1]["start"] = (workout + datetime.timedelta(days=1, minutes=30)).strftime(FMT)
+    return [
+        {"when": ["You are Calendar triage"], "reply": {"text": json.dumps(groups)}},
+        {"when": ["You are Goal planner", "overlaps busy"], "reply": {"text": json.dumps(plan)}},
+    ]
+
+
 def main():
     """Writes the script to argv[1] for zone argv[2], reminder argv[3] minutes ahead.
     Input: output path, IANA zone, minutes. Output: the file, and the local
     times it chose on stdout."""
     path, zone, minutes = sys.argv[1], sys.argv[2], int(sys.argv[3])
+    calendar = len(sys.argv) > 4 and sys.argv[4] == "drive-calendar.js"
     now = datetime.datetime.now(zoneinfo.ZoneInfo(zone))
     data = script(now, minutes)
     assert len(data["rules"]) == 7
+    plan = json.loads(data["rules"][3]["reply"]["text"])
+    if calendar:
+        workout, plank = plan_times(now, 60)
+        plan["items"][0]["start"], plan["items"][1]["start"] = workout.strftime(FMT), plank.strftime(FMT)
+        data["rules"][3]["reply"]["text"] = json.dumps(plan)
+        data["rules"] = calendar_rules(now) + data["rules"]
+        with open(os.path.join(os.path.dirname(path), "seed.json"), "w", encoding="utf8") as f:
+            json.dump(calendar_seed(now), f)
     with open(path, "w", encoding="utf8") as f:
         json.dump(data, f)
-    plan = json.loads(data["rules"][3]["reply"]["text"])
     print(json.dumps({"now": now.strftime(FMT), "items": [i["start"] for i in plan["items"]], "meals_at": plan["trackers"][1]["cadence"]["at"]}))
 
 

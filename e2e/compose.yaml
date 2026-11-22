@@ -68,7 +68,7 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     ports:
-      - "127.0.0.1:54321:80"
+      - "127.0.0.1:${AROH_E2E_SUPABASE_PORT:-54321}:80"
 
   engine:
     image: rust:1-slim
@@ -86,14 +86,16 @@ services:
       AROH_BIND: 0.0.0.0:8080
     volumes:
       - ..:/src:ro
-      - aroh-p11-target:/target
-      - aroh-p11-cargo:/usr/local/cargo/registry
+      - target:/target
+      - cargo:/usr/local/cargo/registry
       - ./.local-state:/aroh/state:ro
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${AROH_E2E_ENGINE_PORT:-8080}:8080"
 
 volumes:
-  aroh-p11-target:
+  target:
+    name: ${AROH_E2E_POD:-aroh-p11}-target
     external: true
-  aroh-p11-cargo:
+  cargo:
+    name: ${AROH_E2E_POD:-aroh-p11}-cargo
     external: true

@@ -3,6 +3,7 @@ import { formatYmd } from '$lib/ui/format';
 import * as client from './client';
 import { follow } from './chat.svelte';
 import { engine } from './engine';
+import { syncCalendars } from './calendar';
 
 const RANGE_DAYS = 45;
 const DAY_MS = 86_400_000;
@@ -75,7 +76,9 @@ class AppData {
 
 	/** Loads once and starts listening; returns the function that stops listening. */
 	start(): () => void {
-		void this.load();
+		void this.load().then(() => {
+			if (this.snapshot?.settings.calendars === 'true') void this.run(syncCalendars);
+		});
 		const unlisten = listen('aroh://changed', () => void this.load());
 		const timer = setInterval(() => void this.checkDay(), DAY_CHECK_MS);
 		const onVisible = () => document.visibilityState === 'visible' && void this.checkDay();

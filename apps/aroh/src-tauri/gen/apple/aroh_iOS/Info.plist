@@ -48,5 +48,9 @@
 	<string>Aroh reads your weight, workouts, steps and dietary energy from Apple Health to fill the trackers of your goals.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Aroh writes test samples to Apple Health only in developer builds.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.</string>
 </dict>
 </plist>

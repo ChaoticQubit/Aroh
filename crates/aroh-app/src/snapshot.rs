@@ -3,7 +3,7 @@
 use crate::local::{self, PendingLog};
 use crate::Result;
 use aroh_domain::rows::{
-    Action, Budget, Category, Goal, Persona, Preference, Proposal, ProposalStatus, ProviderSetting, SearchSetting, Tracker,
+    Action, Budget, BusyBlock, Category, Goal, Persona, Preference, Proposal, ProposalStatus, ProviderSetting, SearchSetting, Tracker,
     TrackerEntry,
 };
 use aroh_store::repo;
@@ -30,6 +30,16 @@ pub struct Snapshot {
     pub budgets: Vec<Budget>,
     pub settings: BTreeMap<String, String>,
     pub pending_logs: Vec<PendingLog>,
+    pub busy: Vec<BusyBlock>,
+}
+
+/// Busy blocks of `user_id` overlapping `[from, to)`, in start order.
+/// Read for the Calendar only; never mixed into actions.
+/// Tombstones are left out.
+fn busy_in(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<BusyBlock>> {
+    let mut busy: Vec<BusyBlock> = repo::list::<BusyBlock>(conn, &[("user_id", user_id)])?.into_iter().filter(|b| b.start_at < to && b.end_at > from).collect();
+    busy.sort_by(|a, b| a.start_at.cmp(&b.start_at).then_with(|| a.id.cmp(&b.id)));
+    Ok(busy)
 }
 
 /// Reads the snapshot of `user_id`: actions overlapping `[from, to)` in start order and
@@ -56,5 +66,6 @@ pub fn snapshot(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateT
         budgets: repo::list(conn, &mine)?,
         settings: local::settings(conn)?,
         pending_logs: local::pending_logs(conn)?,
+        busy: busy_in(conn, user_id, from, to)?,
     })
 }

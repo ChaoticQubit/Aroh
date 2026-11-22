@@ -6,6 +6,7 @@
 	import { catalog } from '$lib/app/catalog';
 	import { engine, keyStatus } from '$lib/app/engine';
 	import { settingsView } from '$lib/app/views';
+	import { syncCalendars } from '$lib/app/calendar';
 
 	const s = $derived(data.snapshot);
 	let email = $state<string | null>(null);
@@ -79,7 +80,7 @@
 		settings={settingsView(s, last4, email)}
 		onprovider={(vendor, model) => data.run(() => client.saveProvider(vendor, model))}
 		{ontest}
-		onsetting={(name, value) => data.run(() => client.setSetting(name, value))}
+		onsetting={(name, value) => data.run(async () => (await client.setSetting(name, value), name === 'calendars' && value === 'true' && (await syncCalendars())))}
 		{onbudget}
 		{onsignin}
 		{onhealth}

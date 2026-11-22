@@ -8,13 +8,14 @@
 	import { getClock } from '$lib/ui/clock';
 	import { daysBetween, formatDate, formatYmd, mondayOf, shiftDay, shiftMonth } from '$lib/ui/format';
 	import type { ActionView } from '$lib/ui/contract';
-	import type { CategoryView } from './types';
+	import type { BusyView, CategoryView } from './types';
 
 	/**
 	 * Calendar: toolbar with Today, previous, next and the Day, Week, Month switch, category chips,
-	 * then a week hour grid on wide containers or a week strip over a day grid on phones.
+	 * then a week hour grid on wide containers or a week strip over a day grid on phones. Kept device
+	 * events (`busy`) show in the hour grids as neutral blocks.
 	 */
-	let { actions, categories }: { actions: ActionView[]; categories: CategoryView[] } = $props();
+	let { actions, categories, busy = [] }: { actions: ActionView[]; categories: CategoryView[]; busy?: BusyView[] } = $props();
 
 	const { now, zone } = getClock();
 	const today = formatYmd(now, zone);
@@ -97,12 +98,12 @@
 			</div>
 		</div>
 	{:else if view === 'week'}
-		<div class="hidden @3xl:block"><CalendarGrid days={week} actions={visible} /></div>
+		<div class="hidden @3xl:block"><CalendarGrid days={week} actions={visible} {busy} /></div>
 		<div class="flex flex-col gap-3 @3xl:hidden">
 			<Render spec={{ kind: 'week_strip', label: 'This week', actions: visible, startDay: week[0] }} onchange={(d) => (anchor = d as string)} />
-			<CalendarGrid days={[anchor]} actions={visible} />
+			<CalendarGrid days={[anchor]} actions={visible} {busy} />
 		</div>
 	{:else}
-		<CalendarGrid days={[anchor]} actions={visible} />
+		<CalendarGrid days={[anchor]} actions={visible} {busy} />
 	{/if}
 </div>

@@ -5,6 +5,7 @@ max_steps = 200
 [state]
 goal = "{id: string, title: string, context: string?, deadline: string?, timezone: string, today: string}"
 calendar = "list<{title: string, start: string, minutes: int}>"
+busy = "list<{title: string, start: string, minutes: int}>"
 intake = "{questions: list<{id: string, text: string, kind: enum(text, number, choice), choices: list<string>}>}"
 answers = "list<{id: string, answer: string}>"
 research = "{summary: string, sources: list<{title: string, url: string}>}"
@@ -45,7 +46,7 @@ id = "plan"
 kind = "agent"
 persona = "goal-planner"
 prompt = "Write the plan for this goal."
-reads = ["goal", "answers", "research", "calendar"]
+reads = ["goal", "answers", "research", "calendar", "busy"]
 writes = "plan"
 
 [[nodes]]
@@ -74,7 +75,7 @@ id = "revise"
 kind = "agent"
 persona = "goal-planner"
 prompt = "Revise the plan using the change the owner asked for."
-reads = ["goal", "answers", "research", "calendar", "plan", "change"]
+reads = ["goal", "answers", "research", "calendar", "busy", "plan", "change"]
 writes = "plan"
 
 [[nodes]]

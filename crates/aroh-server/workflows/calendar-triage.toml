@@ -1,0 +1,61 @@
+name = "calendar-triage"
+start = "group"
+max_steps = 50
+
+[state]
+events = "list<{key: string, calendar: string, title: string, start: string, minutes: int, rrule: string?}>"
+refs = "list<{key: string, event_id: string, calendar_id: string, title: string, recurring: bool}>"
+triage = "{groups: list<{name: string, kind: enum(work, fitness, family, social, personal, noise), keep: bool, reason: string, events: list<string>}>}"
+sorted = "{groups: list<{name: string, kind: string, keep: bool, reason: string, events: list<string>}>}"
+decisions = "list<{group: string, keep: bool}>"
+written = "{rules: int, kept: int, ignored: int}"
+
+[[nodes]]
+id = "group"
+kind = "agent"
+persona = "calendar-triage"
+prompt = "Group these calendar events so the owner can keep or ignore each group."
+reads = ["events"]
+writes = "triage"
+
+[[nodes]]
+id = "sort"
+kind = "tool"
+tool = "sort_groups"
+reads = ["events", "triage"]
+writes = "sorted"
+
+[[nodes]]
+id = "decide"
+kind = "human"
+ask = "question"
+prompt = "Keep these groups as busy time?"
+reads = ["sorted", "events"]
+writes = "decisions"
+
+[[nodes]]
+id = "save_rules"
+kind = "tool"
+tool = "write_rules"
+reads = ["refs", "sorted", "decisions"]
+writes = "written"
+
+[[nodes]]
+id = "done"
+kind = "end"
+
+[[edges]]
+from = "group"
+to = "sort"
+
+[[edges]]
+from = "sort"
+to = "decide"
+
+[[edges]]
+from = "decide"
+to = "save_rules"
+
+[[edges]]
+from = "save_rules"
+to = "done"

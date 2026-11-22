@@ -177,6 +177,36 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Allows reading device calendar events. Never writes.\n#### This default permission set includes:\n\n- `allow-events`",
+          "type": "string",
+          "const": "aroh-calendar:default",
+          "markdownDescription": "Allows reading device calendar events. Never writes.\n#### This default permission set includes:\n\n- `allow-events`"
+        },
+        {
+          "description": "Enables the events command without any pre-configured scope.",
+          "type": "string",
+          "const": "aroh-calendar:allow-events",
+          "markdownDescription": "Enables the events command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the seed command without any pre-configured scope.",
+          "type": "string",
+          "const": "aroh-calendar:allow-seed",
+          "markdownDescription": "Enables the seed command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the events command without any pre-configured scope.",
+          "type": "string",
+          "const": "aroh-calendar:deny-events",
+          "markdownDescription": "Denies the events command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the seed command without any pre-configured scope.",
+          "type": "string",
+          "const": "aroh-calendar:deny-seed",
+          "markdownDescription": "Denies the seed command without any pre-configured scope."
+        },
+        {
           "description": "Allows starting and stopping on-device speech recognition.\n#### This default permission set includes:\n\n- `allow-start`\n- `allow-stop`",
           "type": "string",
           "const": "aroh-speech:default",

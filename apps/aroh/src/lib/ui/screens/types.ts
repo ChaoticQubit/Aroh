@@ -47,5 +47,8 @@ export type SettingsView = {
 /** The Account card: Supabase project, and the signed-in email or null. */
 export type AccountView = { supabaseUrl: string; anonKey: string; email: string | null };
 
+/** A kept device calendar event on the Calendar: neutral busy time with its triage group. */
+export type BusyView = { id: string; title: string; start: string; end: string; group: string };
+
 /** A goal row of the Goals list. */
 export type GoalRow = { id: string; title: string; category: string; slot: CategorySlot; deadline: string | null; autonomy: AutonomyLabel };

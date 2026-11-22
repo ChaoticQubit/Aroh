@@ -1,6 +1,7 @@
 //! Tauri command modules. Add `pub mod <name>;` here and list its commands in `lib.rs`.
 
 pub mod app;
+pub mod calendar_import;
 pub mod engine;
 pub mod plugins;
 pub mod health;

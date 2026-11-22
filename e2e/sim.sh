@@ -3,13 +3,17 @@ set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(dirname "$here")"
 state="$here/.local-state"
-shots="$root/docs/screenshots/pod11"
+device="${AROH_E2E_DEVICE:-aroh-p11}"
+shots="$root/docs/screenshots/${AROH_E2E_SHOTS:-pod11}"
+flow="${AROH_E2E_FLOW:-drive.js}"
+supabase_port="${AROH_E2E_SUPABASE_PORT:-54321}"
+engine_port="${AROH_E2E_ENGINE_PORT:-8080}"
 bundle=io.aroh.app
 minutes="${AROH_E2E_REMINDER_MINUTES:-8}"
 . "$state/env"
 
-udid="$(xcrun simctl list devices | sed -n 's/^ *aroh-p11 (\([0-9A-F-]*\)).*/\1/p' | head -1)"
-[ -n "$udid" ] || { echo "no aroh-p11 simulator; run pnpm tauri ios dev aroh-p11 first"; exit 1; }
+udid="$(xcrun simctl list devices | sed -n "s/^ *$device (\([0-9A-F-]*\)).*/\1/p" | head -1)"
+[ -n "$udid" ] || { echo "no $device simulator; run pnpm tauri ios dev $device first"; exit 1; }
 xcrun simctl boot "$udid" 2>/dev/null || true
 xcrun simctl bootstatus "$udid" -b >/dev/null
 xcrun simctl terminate "$udid" "$bundle" 2>/dev/null || true
@@ -20,14 +24,15 @@ xcrun simctl shutdown "$udid" 2>/dev/null || true
 python3 "$here/grant.py" "$HOME/Library/Developer/CoreSimulator/Devices/$udid/data" "$bundle"
 xcrun simctl boot "$udid"
 xcrun simctl bootstatus "$udid" -b >/dev/null
+xcrun simctl privacy "$udid" grant calendar "$bundle" 2>/dev/null || true
 
 zone="${AROH_E2E_ZONE:-$(readlink /etc/localtime | sed 's|.*/zoneinfo/||')}"
-python3 "$here/script.py" "$state/script.json" "$zone" "$minutes"
+python3 "$here/script.py" "$state/script.json" "$zone" "$minutes" "$flow"
 remind_at=$(( ($(date +%s) + minutes * 60) / 60 * 60 ))
 stamp="$(date +%s)"
 {
-  printf 'window.AROH_E2E = %s;\n' "$(python3 -c 'import json,sys; print(json.dumps({"supabaseUrl": "http://127.0.0.1:54321", "anonKey": sys.argv[1], "engineUrl": "http://127.0.0.1:8080", "email": "owner-" + sys.argv[2] + "@example.com", "password": "e2e-password-" + sys.argv[2], "key": "sk-ant-e2e-not-a-real-key-4321"}))' "$AROH_E2E_ANON_KEY" "$stamp")"
-  cat "$here/drive.js"
+  printf 'window.AROH_E2E = %s;\n' "$(python3 -c 'import json,sys; import os; seed = sys.argv[5]; print(json.dumps({"supabaseUrl": "http://127.0.0.1:" + sys.argv[3], "anonKey": sys.argv[1], "engineUrl": "http://127.0.0.1:" + sys.argv[4], "email": "owner-" + sys.argv[2] + "@example.com", "password": "e2e-password-" + sys.argv[2], "key": "sk-ant-e2e-not-a-real-key-4321", "seed": json.load(open(seed)) if os.path.exists(seed) else []}))' "$AROH_E2E_ANON_KEY" "$stamp" "$supabase_port" "$engine_port" "$state/seed.json")"
+  cat "$here/drive-lib.js" "$here/$flow"
 } > "$state/drive.js"
 
 mkdir -p "$shots"
@@ -47,6 +52,11 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
       *"aroh-dev: shot "*)
         name="${line##*aroh-dev: shot }"
         xcrun simctl io "$udid" screenshot "$shots/$name.png" >/dev/null 2>&1
+        ;;
+      *"aroh-dev: done"*)
+        kill "$launcher" 2>/dev/null || true
+        echo "done"
+        exit 0
         ;;
       *"aroh-dev: background"*)
         xcrun simctl launch "$udid" com.apple.Preferences >/dev/null

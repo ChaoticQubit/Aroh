@@ -86,6 +86,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_aroh_speech::init())
         .plugin(tauri_plugin_aroh_ios::init())
+        .plugin(tauri_plugin_aroh_calendar::init())
         .setup(|app| {
             let core = open_core(app)?;
             app.manage(AppState { core: Mutex::new(core) });
@@ -124,6 +125,7 @@ pub fn run() {
             commands::health::app_health_connect,
             commands::health::app_dev_health_seed,
             commands::push::app_dev_push_probe,
+            commands::calendar_import::app_calendar_import,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
