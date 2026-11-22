@@ -108,6 +108,7 @@ version = "0.1.0"
 dependencies = [
  "aroh-app",
  "aroh-domain",
+ "aroh-plugins",
  "aroh-store",
  "aroh-sync",
  "chrono",
@@ -200,9 +201,10 @@ dependencies = [
 name = "aroh-plugins"
 version = "0.1.0"
 dependencies = [
+ "aroh-domain",
  "serde",
  "serde_json",
- "serde_yaml",
+ "toml 1.2.1+spec-1.1.0",
 ]
 
 [[package]]
@@ -232,6 +234,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "aroh-domain",
+ "aroh-plugins",
  "aroh-server",
  "async-trait",
  "axum",

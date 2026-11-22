@@ -12,6 +12,9 @@ plan = "{summary: string, timezone: string, items: list<{title: string, start: s
 approved = "bool"
 change = "string"
 written = "{actions: int, series: int, occurrences: int, trackers: int}"
+plugin_guide = "{template: string, reference: string}"
+plugin_draft = "{bundle_toml: string}"
+plugin = "{id: string, name: string, version: int}"
 
 [[nodes]]
 id = "intake"
@@ -82,6 +85,21 @@ reads = ["plan"]
 writes = "written"
 
 [[nodes]]
+id = "build_plugin"
+kind = "agent"
+persona = "plugin-builder"
+prompt = "Build the dashboard plugin for this goal from the approved plan."
+reads = ["goal", "plan", "plugin_guide"]
+writes = "plugin_draft"
+
+[[nodes]]
+id = "store_plugin"
+kind = "tool"
+tool = "store_plugin"
+reads = ["plugin_draft"]
+writes = "plugin"
+
+[[nodes]]
 id = "done"
 kind = "end"
 
@@ -125,4 +143,12 @@ to = "approve"
 
 [[edges]]
 from = "write"
+to = "build_plugin"
+
+[[edges]]
+from = "build_plugin"
+to = "store_plugin"
+
+[[edges]]
+from = "store_plugin"
 to = "done"

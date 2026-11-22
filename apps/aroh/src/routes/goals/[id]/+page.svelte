@@ -6,11 +6,45 @@
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { goalHeader, goalView } from '$lib/app/views';
+	import { activeVersion, enablePlugin, listPlugins, type PluginVersion } from '$lib/plugins/api';
+	import { parseTree, resolve } from '$lib/plugins/resolve';
 	import type { AutonomyLabel } from '$lib/ui/screens/types';
+
+	const DERIVED = 'derived';
+	const SHOWN_VERSIONS = 3;
 
 	const clock = getClock();
 	const s = $derived(data.snapshot);
 	const goal = $derived(s?.goals.find((g) => g.id === page.params.id));
+	let plugins = $state<PluginVersion[]>([]);
+
+	$effect(() => {
+		const id = goal?.id;
+		if (!s || !id) return;
+		listPlugins(id).then(
+			(list) => (plugins = list),
+			(e) => (data.error = String(e))
+		);
+	});
+
+	const shown = $derived(activeVersion(plugins));
+	const view = $derived.by(() => {
+		if (!s || !goal) return null;
+		if (!shown) return goalView(s, goal, clock);
+		try {
+			return resolve(parseTree(shown.tree), s, goal, clock);
+		} catch {
+			return goalView(s, goal, clock);
+		}
+	});
+	const versions = $derived(
+		plugins.length
+			? [
+					{ value: DERIVED, label: 'Derived' },
+					...plugins.filter((p, i) => p.tree !== null && (i < SHOWN_VERSIONS || p.active)).map((p) => ({ value: p.id, label: `v${p.version}` }))
+				]
+			: []
+	);
 
 	/** Saves the picked autonomy level. */
 	function onautonomy(level: AutonomyLabel) {
@@ -21,10 +55,15 @@
 	function onchat() {
 		if (goal) void goto(`/goals/new?goal=${goal.id}`);
 	}
+
+	/** Switches the dashboard to a plugin version, or to the derived view. */
+	function onversion(value: string) {
+		if (goal) void data.run(async () => (plugins = await enablePlugin(goal.id, value === DERIVED ? null : value)));
+	}
 </script>
 
-{#if s && goal}
-	<GoalScreen goal={goalHeader(s, goal, clock.zone)} view={goalView(s, goal, clock)} {onautonomy} {onchat} />
+{#if s && goal && view}
+	<GoalScreen goal={goalHeader(s, goal, clock.zone)} {view} {versions} version={shown?.id ?? DERIVED} {onautonomy} {onchat} {onversion} />
 {:else if s}
 	<p class="p-4 text-sm text-muted">This goal no longer exists.</p>
 {/if}

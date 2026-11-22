@@ -1,9 +1,11 @@
 import datetime
 import json
+import os
 import sys
 import zoneinfo
 
 FMT = "%Y-%m-%dT%H:%M:%S"
+TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "aroh-plugins", "templates", "fitness.toml")
 
 
 def plan_times(now):
@@ -25,6 +27,8 @@ def script(now, reminder_minutes):
     Input: aware local now and minutes until the meals check-in reminder.
     Output: the script as a dict for `aroh_server::fake::Script`."""
     workout, plank = plan_times(now)
+    with open(TEMPLATE, encoding="utf8") as f:
+        bundle = f.read()
     meals_at = (now + datetime.timedelta(minutes=reminder_minutes)).strftime("%H:%M")
     zone = str(now.tzinfo)
     questions = {"questions": [
@@ -59,6 +63,7 @@ def script(now, reminder_minutes):
         {"when": ["You are Goal planner"], "reply": {"text": json.dumps(plan)}},
         {"when": ["You are Adaptation analyst"], "reply": {"text": json.dumps(proposal)}},
         {"when": ["You are Log intake"], "reply": {"text": json.dumps({"entries": []})}},
+        {"when": ["You are Plugin builder"], "reply": {"text": json.dumps({"bundle_toml": bundle})}},
     ]}
 
 
@@ -69,7 +74,7 @@ def main():
     path, zone, minutes = sys.argv[1], sys.argv[2], int(sys.argv[3])
     now = datetime.datetime.now(zoneinfo.ZoneInfo(zone))
     data = script(now, minutes)
-    assert len(data["rules"]) == 6
+    assert len(data["rules"]) == 7
     with open(path, "w", encoding="utf8") as f:
         json.dump(data, f)
     plan = json.loads(data["rules"][3]["reply"]["text"])

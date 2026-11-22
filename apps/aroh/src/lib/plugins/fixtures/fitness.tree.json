@@ -1,0 +1,166 @@
+{
+  "description": "Days to the deadline, this week's sessions, weight, protein, workouts and steps, a four-week streak and the next sessions.",
+  "format": 1,
+  "name": "fitness",
+  "personas": [],
+  "sections": [
+    {
+      "items": [
+        {
+          "deadline": {
+            "bind": "deadline"
+          },
+          "kind": "countdown",
+          "label": "Until the deadline"
+        },
+        {
+          "kind": "progress_ring",
+          "label": "This week",
+          "rings": [
+            {
+              "label": "Actions",
+              "series": 1,
+              "target": {
+                "bind": "week_planned"
+              },
+              "unit": "count",
+              "value": {
+                "bind": "week_done"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "line_chart",
+          "label": "Weight",
+          "points": {
+            "bind": "series",
+            "field": "weight",
+            "tracker": "Weight"
+          },
+          "series": 1,
+          "unit": "kg"
+        },
+        {
+          "kind": "line_chart",
+          "label": "Protein",
+          "points": {
+            "bind": "series",
+            "field": "protein",
+            "tracker": "Protein"
+          },
+          "series": 2,
+          "unit": "g"
+        },
+        {
+          "kind": "line_chart",
+          "label": "Workout",
+          "points": {
+            "bind": "series",
+            "field": "minutes",
+            "tracker": "Workouts"
+          },
+          "series": 3,
+          "unit": "min"
+        },
+        {
+          "kind": "line_chart",
+          "label": "Steps",
+          "points": {
+            "bind": "series",
+            "field": "steps",
+            "tracker": "Steps"
+          },
+          "series": 4,
+          "unit": "steps"
+        },
+        {
+          "days": {
+            "bind": "streak"
+          },
+          "kind": "streak_heatmap",
+          "label": "Last 4 weeks",
+          "series": 2
+        }
+      ],
+      "title": "Progress"
+    },
+    {
+      "items": [
+        {
+          "actions": {
+            "bind": "actions",
+            "limit": 4,
+            "when": "next"
+          },
+          "kind": "action_list",
+          "label": "Next sessions"
+        }
+      ],
+      "title": "Upcoming"
+    }
+  ],
+  "title": "Fitness",
+  "tools": [],
+  "trackers": [
+    {
+      "fields": [
+        {
+          "choices": [],
+          "health": "body_mass",
+          "key": "weight",
+          "kind": "number",
+          "label": "Weight",
+          "unit": "kg"
+        }
+      ],
+      "name": "Weight"
+    },
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "protein",
+          "kind": "number",
+          "label": "Protein",
+          "unit": "g"
+        }
+      ],
+      "name": "Protein"
+    },
+    {
+      "fields": [
+        {
+          "choices": [],
+          "health": "workout_minutes",
+          "key": "minutes",
+          "kind": "number",
+          "label": "Workout",
+          "unit": "min"
+        },
+        {
+          "choices": [],
+          "health": "workout_type",
+          "key": "type",
+          "kind": "text",
+          "label": "Workout type",
+          "unit": null
+        }
+      ],
+      "name": "Workouts"
+    },
+    {
+      "fields": [
+        {
+          "choices": [],
+          "health": "steps",
+          "key": "steps",
+          "kind": "number",
+          "label": "Steps",
+          "unit": "steps"
+        }
+      ],
+      "name": "Steps"
+    }
+  ]
+}

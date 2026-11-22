@@ -185,9 +185,75 @@ fn plan() -> Value {
     })
 }
 
+const RUNS_PLUGIN: &str = r#"
+aroh_plugin = 1
+name = "running"
+title = "Running"
+
+[[trackers]]
+name = "Runs"
+
+[[trackers.fields]]
+key = "distance_km"
+label = "Distance"
+kind = "number"
+unit = "km"
+target = 5
+
+[[trackers.fields]]
+key = "felt_good"
+label = "Felt good"
+kind = "bool"
+
+[[trackers]]
+name = "Sleep"
+
+[[trackers.fields]]
+key = "hours"
+label = "Sleep"
+kind = "number"
+
+[[sections]]
+title = "Progress"
+
+[[sections.items]]
+kind = "target_vs_actual"
+label = "Longest run"
+unit = "count"
+target = { bind = "target", tracker = "Runs", field = "distance_km" }
+actual = { bind = "latest", tracker = "Runs", field = "distance_km" }
+
+[[sections.items]]
+kind = "bar_chart"
+label = "Sleep"
+unit = "count"
+points = { bind = "series", tracker = "Sleep", field = "hours" }
+
+[[sections]]
+title = "Upcoming"
+
+[[sections.items]]
+kind = "action_list"
+label = "Next runs"
+actions = { bind = "actions", when = "next", limit = 3 }
+"#;
+
+const REPAIR: &str = "Your answer failed these checks";
+
+fn builder_reply(bundle: &str) -> Reply {
+    sse_text(&json!({"bundle_toml": bundle}).to_string())
+}
+
 fn goal_models() -> Arc<FnTransport> {
-    FnTransport::new(|req| {
+    goal_models_with(|_| builder_reply(RUNS_PLUGIN))
+}
+
+fn goal_models_with(builder: impl Fn(&str) -> Reply + Send + Sync + 'static) -> Arc<FnTransport> {
+    FnTransport::new(move |req| {
         let body = body_text(req);
+        if body.contains("You are Plugin builder") {
+            return builder(&body);
+        }
         if !body.contains("\"stream\":true") {
             return json_reply(200, json!({"id": "msg_k", "type": "message", "role": "assistant", "content": [{"type": "text", "text": "OK"}],
                 "stop_reason": "max_tokens", "usage": {"input_tokens": 5, "output_tokens": 1}}));
@@ -282,8 +348,8 @@ async fn new_goal_to_written_actions() {
     assert!(after["events"].as_array().unwrap().iter().all(|e| e["seq"].as_u64().unwrap() > 3));
     assert_eq!(api.count("select count(*) from public.actions where goal_id::text = $1 and not deleted", &goal).await, 7);
     assert_eq!(api.count("select count(*) from public.action_series where goal_id::text = $1", &goal).await, 1);
-    assert_eq!(api.count("select count(*) from public.trackers where goal_id::text = $1", &goal).await, 1);
-    let status: String = db::query_scalar("select status from public.goals where id::text = $1").bind(&goal).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(api.count("select count(*) from public.trackers where goal_id::text = $1", &goal).await, 2, "Runs from the plan, Sleep from the plugin");
+    assert_eq!(api.count("select count(*) from public.plugins where goal_id::text = $1 and enabled and version = 1", &goal).await, 1);    let status: String = db::query_scalar("select status from public.goals where id::text = $1").bind(&goal).fetch_one(&api.pool).await.unwrap();
     assert_eq!(status, "active");
     let one_off: DateTime<Utc> = db::query_scalar("select start_at from public.actions where goal_id::text = $1 and series_id is null")
         .bind(&goal)
@@ -292,8 +358,8 @@ async fn new_goal_to_written_actions() {
         .unwrap();
     assert_eq!(one_off.to_rfc3339(), "2026-11-24T17:00:00+00:00");
     let model_calls = models.sent().iter().filter(|r| body_text(r).contains("\"stream\":true")).count();
-    assert_eq!(model_calls, 5, "intake, research twice, plan, revise");
-    assert_eq!(api.count("select count(*) from public.usage where run_id::text = $1", &run).await, 5);
+    assert_eq!(model_calls, 6, "intake, research twice, plan, revise, plugin");
+    assert_eq!(api.count("select count(*) from public.usage where run_id::text = $1", &run).await, 6);
     assert!(models.sent().iter().all(|r| r.header("x-api-key") == Some(MODEL_KEY)));
     let searches = web.sent();
     assert_eq!(searches.len(), 1);
@@ -482,6 +548,103 @@ async fn unverified_prices_pause_before_any_call() {
     let view = api.run(&t, started["run_id"].as_str().unwrap()).await;
     assert_eq!(view["status"]["status"], "waiting_budget", "{view}");
     assert!(models.sent().is_empty());
+}
+
+impl Api {
+    /// Runs a new-goal flow to its end: questions answered, plan approved,
+    /// then the plugin step. Returns the goal id, run id and final run view.
+    /// Ticks without asserting on errors, so a failed run can be inspected.
+    async fn approved_goal(&self, t: &str) -> (String, String, Value) {
+        let (status, started) = self.call(Method::Post, "/v1/goals", Some(t), Some(json!({"title": "Run a 5k", "timezone": "Europe/Berlin"}))).await;
+        assert_eq!(status, 202, "{started}");
+        let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
+        self.tick().await;
+        self.answer(t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+        self.tick().await;
+        self.answer(t, &run, "approve", json!(true)).await;
+        self.call(Method::Post, "/v1/tick", Some(&service_token()), None).await;
+        let view = self.run(t, &run).await;
+        (goal, run, view)
+    }
+}
+
+fn builder_calls(models: &FnTransport) -> usize {
+    models.sent().iter().filter(|r| body_text(r).contains("You are Plugin builder")).count()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_bad_generated_plugin_is_repaired_once_then_stored() {
+    let models = goal_models_with(|body| {
+        if body.contains(REPAIR) {
+            assert!(body.contains("plugin.toml: sections[0].items[0].points.tracker"), "the repair names the field");
+            return builder_reply(RUNS_PLUGIN);
+        }
+        builder_reply(&RUNS_PLUGIN.replace("tracker = \"Sleep\", field = \"hours\"", "tracker = \"Slep\", field = \"hours\"").replacen("[[sections.items]]\nkind = \"target_vs_actual\"", "[[sections.items]]\nkind = \"bar_chart\"\nlabel = \"x\"\nunit = \"count\"\npoints = { bind = \"series\", tracker = \"Slep\", field = \"hours\" }\n\n[[sections.items]]\nkind = \"target_vs_actual\"", 1))
+    });
+    let api = api(models.clone(), offline()).await;
+    let (_, t) = api.signed_up().await;
+    let (goal, _, view) = api.approved_goal(&t).await;
+    assert_eq!(view["status"]["status"], "done", "{view}");
+    assert_eq!(builder_calls(&models), 2, "one call and one repair");
+    let (status, list) = api.call(Method::Get, &format!("/v1/goals/{goal}/plugins"), Some(&t), None).await;
+    assert_eq!(status, 200, "{list}");
+    assert_eq!((list[0]["version"].as_i64(), list[0]["enabled"].as_bool(), list[0]["name"].as_str()), (Some(1), Some(true), Some("running")));
+    assert!(!list[0]["bundle_toml"].as_str().unwrap().contains("Slep"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_plugin_invalid_twice_fails_the_run_and_keeps_the_plan() {
+    let models = goal_models_with(|_| builder_reply("aroh_plugin = 1\nname = \"broken\"\ntitle = \"Broken\""));
+    let api = api(models.clone(), offline()).await;
+    let (_, t) = api.signed_up().await;
+    let (goal, _, view) = api.approved_goal(&t).await;
+    assert_eq!(view["status"]["status"], "failed", "{view}");
+    assert!(view["status"].to_string().contains("sections: missing"), "{view}");
+    assert_eq!(builder_calls(&models), 2);
+    assert!(api.count("select count(*) from public.actions where goal_id::text = $1", &goal).await > 0, "the approved plan is written");
+    assert_eq!(api.count("select count(*) from public.plugins where goal_id::text = $1", &goal).await, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn plugin_endpoints_store_versions_and_switch_them() {
+    let api = api(goal_models(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let goal = api.goal(u, Autonomy::Balanced).await;
+    let path = format!("/v1/goals/{goal}/plugins");
+    let fitness = aroh_plugins::template("fitness").unwrap();
+    let (status, v1) = api.call(Method::Put, &path, Some(&t), Some(json!({"bundle_toml": fitness}))).await;
+    assert_eq!(status, 201, "{v1}");
+    assert_eq!((v1["version"].as_i64(), v1["enabled"].as_bool()), (Some(1), Some(true)));
+    assert_eq!(api.count("select count(*) from public.trackers where goal_id::text = $1", &goal.to_string()).await, 4, "template trackers added");
+    let (status, v2) = api.call(Method::Put, &path, Some(&t), Some(json!({"bundle_toml": fitness.replace("Next sessions", "Coming up")}))).await;
+    assert_eq!((status, v2["version"].as_i64()), (201, Some(2)), "{v2}");
+    let (_, draft) = api.call(Method::Put, &path, Some(&t), Some(json!({"bundle_toml": fitness, "enable": false}))).await;
+    assert_eq!((draft["version"].as_i64(), draft["enabled"].as_bool()), (Some(3), Some(false)));
+    assert_eq!(api.count("select count(*) from public.trackers where goal_id::text = $1", &goal.to_string()).await, 4, "trackers are matched by name");
+    let (status, list) = api.call(Method::Get, &path, Some(&t), None).await;
+    assert_eq!(status, 200);
+    let summary: Vec<(i64, bool)> = list.as_array().unwrap().iter().map(|p| (p["version"].as_i64().unwrap(), p["enabled"].as_bool().unwrap())).collect();
+    assert_eq!(summary, [(3, false), (2, true), (1, false)]);
+    let v1_id = v1["id"].as_str().unwrap();
+    let (status, back) = api.call(Method::Post, &format!("/v1/plugins/{v1_id}/enable"), Some(&t), None).await;
+    assert_eq!((status, back["enabled"].as_bool()), (200, Some(true)), "{back}");
+    let (status, one) = api.call(Method::Get, &format!("/v1/plugins/{}", v2["id"].as_str().unwrap()), Some(&t), None).await;
+    assert_eq!((status, one["enabled"].as_bool()), (200, Some(false)));
+    assert_eq!(api.count("select count(*) from public.plugins where goal_id::text = $1 and enabled", &goal.to_string()).await, 1);
+
+    let (status, bad) = api.call(Method::Put, &path, Some(&t), Some(json!({"bundle_toml": fitness.replace("kind = \"countdown\"", "kind = \"gauge\"")}))).await;
+    assert_eq!(status, 422, "{bad}");
+    assert!(bad["error"]["message"].as_str().unwrap().contains("plugin.toml: sections[0].items[0].kind: unknown kind `gauge`"), "{bad}");
+    let (status, _) = api.call(Method::Put, &format!("/v1/goals/{}/plugins", Uuid::now_v7()), Some(&t), Some(json!({"bundle_toml": fitness}))).await;
+    assert_eq!(status, 404);
+
+    let (_, other) = api.signed_up().await;
+    assert_eq!(api.call(Method::Get, &path, Some(&other), None).await.0, 404);
+    assert_eq!(api.call(Method::Get, &format!("/v1/plugins/{v1_id}"), Some(&other), None).await.0, 404);
+    assert_eq!(api.call(Method::Post, &format!("/v1/plugins/{v1_id}/enable"), Some(&other), None).await.0, 404);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

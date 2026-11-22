@@ -529,13 +529,36 @@ async fn write_entries(env: &ToolEnv, args: EntriesArgs, ctx: &ToolContext) -> R
     Ok(json!({ "entries": written }))
 }
 
+/// The plugin builder's output: one bundle as TOML text.
+/// Matches the `plugin_draft` state key of the new-goal workflow.
+/// Validated again by `store_plugin` before it is stored.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PluginDraft {
+    pub bundle_toml: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct StorePluginArgs {
+    plugin_draft: PluginDraft,
+}
+
+async fn store_plugin(env: &ToolEnv, draft: &PluginDraft, ctx: &ToolContext) -> Result<Value, ToolError> {
+    let goal = env.goal()?;
+    let writer = crate::plugins::Writer { pool: &env.pool, hlc: &env.hlc, user: env.user };
+    let row = writer.store(goal, &draft.bundle_toml, row_id(ctx, "plugin")?, true).await.map_err(|e| match e {
+        crate::error::ServerError::Setup(m) => ToolError::InvalidArgs(m),
+        other => failed(other),
+    })?;
+    Ok(json!({"id": row.id, "name": row.name, "version": row.version}))
+}
+
 fn json_output(v: Value) -> ToolOutput {
     ToolOutput::text(v.to_string())
 }
 
 /// The Aroh toolkit of one run: `write_plan`, `record_proposal`,
-/// `apply_proposal`, `reject_proposal` and `write_entries`, all writing
-/// through the domain rules as `env.user`. Workflow tool nodes call them.
+/// `apply_proposal`, `reject_proposal`, `write_entries` and `store_plugin`,
+/// all writing through the domain rules as `env.user`. Workflow tool nodes call them.
 pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
     let e1 = env.clone();
     let write = typed_tool("write_plan", "Store an approved plan as actions, series and trackers.", move |a: PlanArgs, ctx: ToolContext| {
@@ -557,10 +580,15 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
         let env = e4.clone();
         async move { reject_proposal(&env, &a.proposal_record).await.map(json_output) }
     });
-    let e5 = env;
+    let e5 = env.clone();
     let entries = typed_tool("write_entries", "Store tracker entries mapped from a free-text log.", move |a: EntriesArgs, ctx: ToolContext| {
         let env = e5.clone();
         async move { write_entries(&env, a, &ctx).await.map(json_output) }
+    });
+    let e6 = env;
+    let plugin = typed_tool("store_plugin", "Validate and store a goal's plugin bundle as its next enabled version.", move |a: StorePluginArgs, ctx: ToolContext| {
+        let env = e6.clone();
+        async move { store_plugin(&env, &a.plugin_draft, &ctx).await.map(json_output) }
     });
     Toolkit::new("aroh")
         .with(Arc::new(write))
@@ -568,6 +596,7 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
         .with(Arc::new(apply))
         .with(Arc::new(reject))
         .with(Arc::new(entries))
+        .with(Arc::new(plugin))
 }
 
 /// Returns a naive local time as the `YYYY-MM-DDTHH:MM:SS` text plans use.

@@ -26,7 +26,7 @@ fn parse_enum<T: DeserializeOwned>(text: &str, what: &str) -> Result<T, String> 
     serde_json::from_value(Value::String(text.to_string())).map_err(|_| format!("invalid {what}"))
 }
 
-fn after_write(app: &AppHandle) {
+pub(crate) fn after_write(app: &AppHandle) {
     if let Err(e) = notify::sync(app) {
         eprintln!("aroh: reminders not scheduled: {e}");
     }

@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 aroh-domain.workspace = true
+aroh-plugins = { path = "../aroh-plugins" }
 troupekit-core = { path = "../../troupekit/crates/troupekit-core" }
 troupekit-providers = { path = "../../troupekit/crates/troupekit-providers" }
 troupekit-tools = { path = "../../troupekit/crates/troupekit-tools" }

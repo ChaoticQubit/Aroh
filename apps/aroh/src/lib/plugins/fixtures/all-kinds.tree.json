@@ -1,0 +1,321 @@
+{
+  "description": "Test fixture: every component kind and every binding source.",
+  "format": 1,
+  "name": "all-kinds",
+  "personas": [
+    "coach"
+  ],
+  "sections": [
+    {
+      "items": [
+        {
+          "kind": "number_input",
+          "label": "Weight",
+          "max": 150,
+          "min": 40,
+          "step": 0.1,
+          "unit": "kg",
+          "value": {
+            "bind": "latest",
+            "field": "weight",
+            "tracker": "Weight"
+          }
+        },
+        {
+          "kind": "rating",
+          "label": "Mood",
+          "max": 5,
+          "min": 1,
+          "value": null
+        },
+        {
+          "kind": "choice",
+          "label": "Session",
+          "multi": false,
+          "options": [
+            "Gym",
+            "Run"
+          ],
+          "value": []
+        },
+        {
+          "kind": "note",
+          "label": "Notes",
+          "placeholder": "How did it go?",
+          "value": ""
+        },
+        {
+          "done": false,
+          "kind": "check_off",
+          "label": "Stretched"
+        },
+        {
+          "kind": "counter",
+          "label": "Water",
+          "target": 2000,
+          "unit": "ml",
+          "value": {
+            "bind": "today_total",
+            "field": "ml",
+            "tracker": "Water"
+          }
+        },
+        {
+          "kind": "timer",
+          "label": "Plank",
+          "targetMinutes": 5
+        },
+        {
+          "kind": "capture",
+          "label": "Progress photo",
+          "media": "photo"
+        }
+      ],
+      "title": "Inputs"
+    },
+    {
+      "items": [
+        {
+          "kind": "line_chart",
+          "label": "Weight",
+          "points": {
+            "bind": "series",
+            "field": "weight",
+            "tracker": "Weight"
+          },
+          "series": 1,
+          "target": {
+            "bind": "target",
+            "field": "weight",
+            "tracker": "Weight"
+          },
+          "unit": "kg"
+        },
+        {
+          "kind": "bar_chart",
+          "label": "Water",
+          "points": {
+            "bind": "series",
+            "field": "ml",
+            "tracker": "Water"
+          },
+          "series": 3,
+          "unit": "ml"
+        },
+        {
+          "kind": "progress_ring",
+          "label": "This week",
+          "rings": [
+            {
+              "label": "Actions",
+              "series": 1,
+              "target": {
+                "bind": "week_planned"
+              },
+              "unit": "count",
+              "value": {
+                "bind": "week_done"
+              }
+            }
+          ]
+        },
+        {
+          "actual": {
+            "bind": "latest",
+            "field": "weight",
+            "tracker": "Weight"
+          },
+          "kind": "target_vs_actual",
+          "label": "Weight",
+          "target": {
+            "bind": "target",
+            "field": "weight",
+            "tracker": "Weight"
+          },
+          "unit": "kg"
+        },
+        {
+          "days": {
+            "bind": "streak"
+          },
+          "kind": "streak_heatmap",
+          "label": "Sessions",
+          "series": 2
+        },
+        {
+          "days": {
+            "bind": "streak",
+            "tracker": "Water"
+          },
+          "kind": "streak_heatmap",
+          "label": "Water logged"
+        },
+        {
+          "delta": {
+            "bind": "change",
+            "field": "weight",
+            "tracker": "Weight"
+          },
+          "kind": "stat_tile",
+          "label": "Weight",
+          "unit": "kg",
+          "value": {
+            "bind": "latest",
+            "field": "weight",
+            "tracker": "Weight"
+          }
+        },
+        {
+          "entries": {
+            "bind": "entries",
+            "tracker": "Weight"
+          },
+          "kind": "log_list",
+          "label": "Weigh-ins"
+        },
+        {
+          "kind": "photo_timeline",
+          "label": "Photos",
+          "photos": []
+        }
+      ],
+      "title": "Display"
+    },
+    {
+      "items": [
+        {
+          "actions": {
+            "bind": "actions",
+            "when": "today"
+          },
+          "kind": "action_list",
+          "label": "Today"
+        },
+        {
+          "actions": {
+            "bind": "actions",
+            "limit": 2,
+            "when": "next"
+          },
+          "kind": "action_list",
+          "label": "Next"
+        },
+        {
+          "actions": {
+            "bind": "actions",
+            "when": "week"
+          },
+          "kind": "week_strip",
+          "label": "This week",
+          "startDay": {
+            "bind": "week_start"
+          }
+        },
+        {
+          "kind": "milestone_timeline",
+          "label": "Milestones",
+          "milestones": [
+            {
+              "done": false,
+              "due": "2026-12-15",
+              "title": "First 5k"
+            }
+          ]
+        },
+        {
+          "kind": "module_checklist",
+          "label": "Modules",
+          "modules": [
+            {
+              "done": true,
+              "minutes": 20,
+              "title": "Form basics"
+            }
+          ]
+        },
+        {
+          "deadline": {
+            "bind": "deadline"
+          },
+          "kind": "countdown",
+          "label": "Until the deadline"
+        }
+      ],
+      "title": "Planning"
+    },
+    {
+      "items": [
+        {
+          "body": "Weight is down two weeks in a row.",
+          "kind": "insight_card",
+          "persona": "Coach",
+          "title": "Steady progress"
+        },
+        {
+          "changes": [
+            {
+              "after": "Sat 09:00",
+              "before": "Fri 07:00",
+              "op": "move",
+              "title": "Run"
+            }
+          ],
+          "kind": "proposal_card",
+          "persona": "Coach",
+          "summary": "Move Friday's run to Saturday."
+        },
+        {
+          "input": {
+            "kind": "number_input",
+            "label": "Weight",
+            "step": 0.1,
+            "unit": "kg",
+            "value": null
+          },
+          "kind": "question_card",
+          "persona": "Coach",
+          "question": "How much did you weigh this morning?"
+        }
+      ],
+      "title": "Agent"
+    }
+  ],
+  "title": "Every kind",
+  "tools": [
+    "web_search"
+  ],
+  "trackers": [
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "weight",
+          "kind": "number",
+          "label": "Weight",
+          "target": 78.0,
+          "unit": "kg"
+        }
+      ],
+      "name": "Weight"
+    },
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "ml",
+          "kind": "number",
+          "label": "Water",
+          "unit": "ml"
+        },
+        {
+          "choices": [],
+          "key": "note",
+          "kind": "text",
+          "label": "Note",
+          "unit": null
+        }
+      ],
+      "name": "Water"
+    }
+  ]
+}

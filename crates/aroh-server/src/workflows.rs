@@ -27,12 +27,13 @@ const WORKFLOWS: [(&str, &str); 3] = [
     (LOG_INTAKE, include_str!("../workflows/log-intake.toml")),
 ];
 
-const PERSONAS: [(&str, &str); 5] = [
+const PERSONAS: [(&str, &str); 6] = [
     ("intake-interviewer", include_str!("../personas/intake-interviewer.toml")),
     ("goal-researcher", include_str!("../personas/goal-researcher.toml")),
     ("goal-planner", include_str!("../personas/goal-planner.toml")),
     ("adaptation-analyst", include_str!("../personas/adaptation-analyst.toml")),
     ("log-intake", include_str!("../personas/log-intake.toml")),
+    ("plugin-builder", include_str!("../personas/plugin-builder.toml")),
 ];
 
 /// Parses the built-in workflow called `name`.
@@ -131,7 +132,7 @@ mod tests {
                 assert_eq!(persona.model, "default");
             }
         }
-        assert_eq!(persona_names(&workflow(NEW_GOAL).unwrap()), ["goal-planner", "goal-researcher", "intake-interviewer"]);
+        assert_eq!(persona_names(&workflow(NEW_GOAL).unwrap()), ["goal-planner", "goal-researcher", "intake-interviewer", "plugin-builder"]);
         assert!(workflow("nope").is_err());
     }
 }

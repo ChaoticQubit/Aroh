@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod engine;
+pub mod plugins;
 pub mod health;
 pub mod push;
 

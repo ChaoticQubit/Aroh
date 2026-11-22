@@ -357,6 +357,8 @@ impl Engine {
         let mut input = Map::new();
         input.insert("goal".into(), Self::goal_input(&goal, tz, now));
         input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
+        let template = aroh_plugins::template("fitness").expect("the fitness template ships");
+        input.insert("plugin_guide".into(), json!({"template": template, "reference": aroh_plugins::reference()}));
         let run = self.start(user, Some(id), NEW_GOAL, input).await?;
         Ok(Started { goal_id: Some(id), run_id: run.0 })
     }

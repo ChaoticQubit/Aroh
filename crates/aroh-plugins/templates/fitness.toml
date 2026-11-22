@@ -1,0 +1,114 @@
+aroh_plugin = 1
+name = "fitness"
+title = "Fitness"
+description = "Days to the deadline, this week's sessions, weight, protein, workouts and steps, a four-week streak and the next sessions."
+
+[[trackers]]
+name = "Weight"
+
+[[trackers.fields]]
+key = "weight"
+label = "Weight"
+kind = "number"
+unit = "kg"
+health = "body_mass"
+
+[trackers.cadence]
+freq = "daily"
+at = "07:00"
+
+[[trackers]]
+name = "Protein"
+
+[[trackers.fields]]
+key = "protein"
+label = "Protein"
+kind = "number"
+unit = "g"
+
+[[trackers]]
+name = "Workouts"
+
+[[trackers.fields]]
+key = "minutes"
+label = "Workout"
+kind = "number"
+unit = "min"
+health = "workout_minutes"
+
+[[trackers.fields]]
+key = "type"
+label = "Workout type"
+kind = "text"
+health = "workout_type"
+
+[[trackers]]
+name = "Steps"
+
+[[trackers.fields]]
+key = "steps"
+label = "Steps"
+kind = "number"
+unit = "steps"
+health = "steps"
+
+[[sections]]
+title = "Progress"
+
+[[sections.items]]
+kind = "countdown"
+label = "Until the deadline"
+deadline = { bind = "deadline" }
+
+[[sections.items]]
+kind = "progress_ring"
+label = "This week"
+
+[[sections.items.rings]]
+label = "Actions"
+unit = "count"
+value = { bind = "week_done" }
+target = { bind = "week_planned" }
+series = 1
+
+[[sections.items]]
+kind = "line_chart"
+label = "Weight"
+unit = "kg"
+points = { bind = "series", tracker = "Weight", field = "weight" }
+series = 1
+
+[[sections.items]]
+kind = "line_chart"
+label = "Protein"
+unit = "g"
+points = { bind = "series", tracker = "Protein", field = "protein" }
+series = 2
+
+[[sections.items]]
+kind = "line_chart"
+label = "Workout"
+unit = "min"
+points = { bind = "series", tracker = "Workouts", field = "minutes" }
+series = 3
+
+[[sections.items]]
+kind = "line_chart"
+label = "Steps"
+unit = "steps"
+points = { bind = "series", tracker = "Steps", field = "steps" }
+series = 4
+
+[[sections.items]]
+kind = "streak_heatmap"
+label = "Last 4 weeks"
+days = { bind = "streak" }
+series = 2
+
+[[sections]]
+title = "Upcoming"
+
+[[sections.items]]
+kind = "action_list"
+label = "Next sessions"
+actions = { bind = "actions", when = "next", limit = 4 }

@@ -1,222 +1,284 @@
-use aroh_plugins::{parse_agent, parse_plugin, resolve, Effort, Plugin, PluginError};
-use serde_json::json;
+use aroh_domain::rows::Plugin;
+use aroh_plugins::bind::SOURCES;
+use aroh_plugins::contract::KINDS;
+use aroh_plugins::versions::{active, enable, history, next_version};
+use aroh_plugins::{parse, template, Error, TEMPLATES};
+use serde_json::Value;
+use std::collections::BTreeSet;
 
-const WATER: &str = include_str!("../examples-yaml/water-tracker.yaml");
-const COURSE: &str = include_str!("../examples-yaml/course-progress.yaml");
+const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/aroh/src/lib/plugins/fixtures");
+const ALL_KINDS: &str = include_str!("../../../apps/aroh/src/lib/plugins/fixtures/all-kinds.toml");
 
-fn plugin(file: &str, yaml: &str) -> Plugin {
-    parse_plugin(file, yaml).unwrap_or_else(|e| panic!("{e}"))
+const MINIMAL: &str = r#"
+aroh_plugin = 1
+name = "water"
+title = "Water"
+
+[[trackers]]
+name = "Water"
+
+[[trackers.fields]]
+key = "ml"
+label = "Water"
+kind = "number"
+unit = "ml"
+target = 2000
+
+[[sections]]
+title = "Today"
+
+[[sections.items]]
+kind = "counter"
+label = "Water"
+unit = "ml"
+value = { bind = "today_total", tracker = "Water", field = "ml" }
+target = { bind = "target", tracker = "Water", field = "ml" }
+"#;
+
+fn fails(text: &str) -> Error {
+    parse("water.toml", text).expect_err("the bundle is invalid")
 }
 
-fn base(body: &str) -> String {
-    format!("aroh_plugin: 1\nname: t-plugin\nversion: 0.1.0\ntitle: T\n{body}")
+fn edit(from: &str, to: &str) -> String {
+    assert!(MINIMAL.contains(from), "{from}");
+    MINIMAL.replacen(from, to, 1)
 }
 
-fn err(yaml: &str) -> PluginError {
-    match parse_plugin("t.yaml", yaml) {
-        Ok(_) => panic!("expected an error for:\n{yaml}"),
-        Err(e) => e,
+fn assert_field(e: &Error, field: &str, reason: &str) {
+    assert_eq!(e.file, "water.toml");
+    assert_eq!(e.field, field, "{e}");
+    assert!(e.reason.contains(reason), "{e}");
+}
+
+/// Compares `tree` with the pinned JSON file `name` in the app's fixtures,
+/// rewriting the file instead when `AROH_PIN=1`.
+/// The app's tests read the same files.
+fn pinned(name: &str, tree: &Value) {
+    let path = format!("{FIXTURES}/{name}");
+    let text = serde_json::to_string_pretty(tree).unwrap() + "\n";
+    if std::env::var("AROH_PIN").as_deref() == Ok("1") {
+        std::fs::write(&path, &text).unwrap();
+    }
+    assert_eq!(std::fs::read_to_string(&path).expect("pinned tree exists"), text, "rerun with AROH_PIN=1 to repin {name}");
+}
+
+fn kinds_in(v: &Value, out: &mut BTreeSet<String>) {
+    match v {
+        Value::Object(m) => {
+            if let Some(Value::String(k)) = m.get("kind") {
+                out.insert(k.clone());
+            }
+            m.values().for_each(|x| kinds_in(x, out));
+        }
+        Value::Array(a) => a.iter().for_each(|x| kinds_in(x, out)),
+        _ => {}
     }
 }
 
-fn assert_err(e: &PluginError, needle: &str, line: Option<usize>) {
-    assert!(e.message.contains(needle), "message `{}` lacks `{needle}`", e);
-    if line.is_some() {
-        assert_eq!(e.line, line, "wrong line in `{e}`");
+fn sources_in(v: &Value, out: &mut BTreeSet<String>) {
+    match v {
+        Value::Object(m) => {
+            if let Some(Value::String(b)) = m.get("bind") {
+                out.insert(b.clone());
+            }
+            m.values().for_each(|x| sources_in(x, out));
+        }
+        Value::Array(a) => a.iter().for_each(|x| sources_in(x, out)),
+        _ => {}
     }
 }
 
 #[test]
-fn water_example_resolves_to_spec_shape() {
-    let model = resolve(&[plugin("water-tracker.yaml", WATER)]).unwrap();
-    let prompt = "I have had {{today_total}} ml of water today. My target is {{daily_target}} ml.\nIf I am behind for the time of day, write one short, friendly nudge. Otherwise reply OK.\n";
-    let expected = json!({
-        "plugins": [{ "name": "water-tracker", "version": "0.1.0", "title": "Water tracker" }],
-        "slots": {
-            "today.top": [],
-            "goal.detail": [],
-            "today.sidebar": [
-                { "key": "water-tracker/today.sidebar/0", "plugin": "water-tracker", "component": "stat-tile",
-                  "props": { "label": "Water today", "value": { "query": "water.today_total" }, "unit": "ml" } },
-                { "key": "water-tracker/today.sidebar/1", "plugin": "water-tracker", "component": "quick-chips",
-                  "props": { "tracker": "water", "label": "Add water" } }
-            ],
-            "log.trackers": [
-                { "key": "water-tracker/log.trackers/0", "plugin": "water-tracker", "component": "progress-bar",
-                  "props": { "label": "Water vs target", "value": { "query": "water.today_total" }, "max": 2500 } },
-                { "key": "water-tracker/log.trackers/1", "plugin": "water-tracker", "component": "quick-chips",
-                  "props": { "tracker": "water" } }
-            ]
-        },
-        "trackers": [{ "plugin": "water-tracker", "id": "water", "kind": "water", "unit": "ml",
-                       "chips": [250, 500, 750], "daily_target": 2500 }],
-        "agents": [{ "plugin": "water-tracker", "name": "hydration-coach",
-                     "purpose": "Nudge me when I am behind on water.", "tools": ["read_trackers", "notify"],
-                     "variables": ["today_total", "daily_target"], "untrusted": [], "effort": "medium",
-                     "output": null, "system": null, "prompt": prompt }]
-    });
-    assert_eq!(serde_json::to_value(&model).unwrap(), expected);
+fn a_minimal_bundle_parses_into_a_tree() {
+    let b = parse("water.toml", MINIMAL).unwrap();
+    assert_eq!((b.name.as_str(), b.title.as_str()), ("water", "Water"));
+    assert_eq!(b.trackers[0].targets["ml"], 2000.0);
+    assert_eq!(b.tree["format"], 1);
+    assert_eq!(b.tree["trackers"][0]["fields"][0]["target"], 2000.0);
+    let item = &b.tree["sections"][0]["items"][0];
+    assert_eq!(item["kind"], "counter");
+    assert_eq!(item["value"]["bind"], "today_total");
+    assert_eq!(item["target"]["field"], "ml");
 }
 
 #[test]
-fn both_examples_resolve_sorted_with_defaults() {
-    let early = base("order: 10\nslots:\n  today.top:\n    - component: text-note\n      text: first\n");
-    let model = resolve(&[
-        plugin("water-tracker.yaml", WATER),
-        plugin("course-progress.yaml", COURSE),
-        plugin("t.yaml", &early),
-    ])
-    .unwrap();
-    let v = serde_json::to_value(&model).unwrap();
-    let names: Vec<_> = v["plugins"].as_array().unwrap().iter().map(|p| p["name"].clone()).collect();
-    assert_eq!(names, [json!("t-plugin"), json!("water-tracker"), json!("course-progress")]);
-    let top = v["slots"]["today.top"].as_array().unwrap();
-    assert_eq!(top[0]["plugin"], "t-plugin");
-    assert_eq!(top[1]["props"], json!({ "label": "Today's sessions", "items": { "query": "today.actions" }, "limit": 5 }));
-    assert_eq!(v["slots"]["goal.detail"].as_array().unwrap().len(), 3);
-    assert_eq!(v["agents"][1]["untrusted"], json!(["course_url"]));
+fn errors_name_the_file_and_the_field() {
+    assert_field(&fails(&edit("title = \"Water\"", "title = \"Water\"\ncolour = 1")), "colour", "unknown key");
+    assert_field(&fails(&edit("aroh_plugin = 1", "aroh_plugin = 2")), "aroh_plugin", "must be 1");
+    assert_field(&fails(&edit("name = \"water\"", "name = \"Water!\"")), "name", "slug");
+    assert_field(&fails(&edit("kind = \"counter\"", "kind = \"gauge\"")), "sections[0].items[0].kind", "unknown kind `gauge`");
+    assert_field(&fails(&edit("unit = \"ml\"\nvalue", "unit = \"ml\"\nshade = 2\nvalue")), "sections[0].items[0].shade", "unknown key");
+    assert_field(&fails(&edit("unit = \"ml\"\nvalue", "unit = \"litre\"\nvalue")), "sections[0].items[0].unit", "one of kg");
+    assert_field(&fails(&edit("label = \"Water\"\nunit = \"ml\"\nvalue", "label = 3\nunit = \"ml\"\nvalue")), "sections[0].items[0].label", "a string");
+    assert_field(&fails(&edit("tracker = \"Water\", field = \"ml\" }\ntarget", "tracker = \"Wter\", field = \"ml\" }\ntarget")), "sections[0].items[0].value.tracker", "no tracker named `Wter`");
+    assert_field(&fails(&edit("field = \"ml\" }\ntarget", "field = \"cups\" }\ntarget")), "sections[0].items[0].value.field", "no field `cups`");
+    assert_field(&fails(&edit("bind = \"today_total\"", "bind = \"sum\"")), "sections[0].items[0].value.bind", "unknown source `sum`");
+    assert_field(&fails(&edit("bind = \"today_total\"", "bind = \"series\"")), "sections[0].items[0].value", "gives Point[], this prop needs number");
+    assert_field(&fails(&edit("field = \"ml\" }\ntarget", "field = \"ml\", when = \"next\" }\ntarget")), "sections[0].items[0].value.when", "unknown key");
+    assert_field(&fails(&edit("target = 2000\n", "")), "sections[0].items[0].target.field", "declares no target");
+    assert_field(&fails(&edit("kind = \"number\"\nunit = \"ml\"\ntarget = 2000", "kind = \"text\"")), "sections[0].items[0].value.field", "not a number field");
+    assert_field(&fails(&edit("target = { bind", "colour = { bind")), "sections[0].items[0].colour", "unknown key");
+    assert_field(&fails(&edit("title = \"Today\"", "title = \"\"")), "sections[0].title", "length 0");
+    assert_field(&fails(&edit("unit = \"ml\"\ntarget = 2000", "unit = \"ml\"\ntarget = \"lots\"")), "trackers[0].fields[0].target", "finite number");
+    assert_field(&fails(&edit("kind = \"number\"", "kind = \"colour\"")), "trackers[0].fields[0]", "unknown variant");
+    assert_field(&fails("aroh_plugin = 1\nname = \"water\"\ntitle = [1"), "(toml)", "");
+    assert_field(&fails(&edit("[[sections]]\ntitle = \"Today\"", "")), "sections", "expected a list");
 }
 
 #[test]
-fn action_list_limit_defaults_to_five() {
-    let y = base("slots:\n  today.top:\n    - component: action-list\n      label: L\n      items: today.actions\n");
-    let v = serde_json::to_value(resolve(&[plugin("t.yaml", &y)]).unwrap()).unwrap();
-    assert_eq!(v["slots"]["today.top"][0]["props"]["limit"], 5);
+fn fields_declare_a_health_source_that_fits_their_kind() {
+    use aroh_domain::rows::HealthMetric;
+    let b = parse("fitness.toml", template("fitness").unwrap()).unwrap();
+    let sources: Vec<(&str, &str, Option<HealthMetric>)> =
+        b.trackers.iter().flat_map(|t| t.fields.iter().map(move |f| (t.name.as_str(), f.key.as_str(), f.health))).collect();
+    assert_eq!(
+        sources,
+        [
+            ("Weight", "weight", Some(HealthMetric::BodyMass)),
+            ("Protein", "protein", None),
+            ("Workouts", "minutes", Some(HealthMetric::WorkoutMinutes)),
+            ("Workouts", "type", Some(HealthMetric::WorkoutType)),
+            ("Steps", "steps", Some(HealthMetric::Steps)),
+        ]
+    );
+    assert_field(&fails(&edit("unit = \"ml\"\ntarget = 2000", "unit = \"ml\"\nhealth = \"workout_type\"\ntarget = 2000")), "trackers[0]", "does not fit");
+    assert_field(&fails(&edit("unit = \"ml\"\ntarget = 2000", "unit = \"ml\"\nhealth = \"heart_rate\"\ntarget = 2000")), "trackers[0].fields[0]", "unknown variant");
 }
 
 #[test]
-fn yaml_syntax_error() {
-    let e = err("aroh_plugin: 1\nname: [oops\n");
-    assert!(e.line.is_some(), "{e}");
+fn literal_urls_are_refused_anywhere_in_the_bundle() {
+    assert_field(&fails(&edit("title = \"Water\"", "title = \"See https://x.example\"")), "(bundle)", "line 4: literal URL");
+    assert_field(&fails(&edit("label = \"Water\"\nkind", "label = \"www.water.example\"\nkind")), "(bundle)", "literal URL");
+    assert_field(&fails(&edit("label = \"Water\"\nunit = \"ml\"\nvalue", "label = \"JavaScript:alert(1)\"\nunit = \"ml\"\nvalue")), "(bundle)", "literal URL");
+    let persona = format!("{MINIMAL}\n[[personas]]\nname = \"coach\"\ntoml = \"\"\"\nname = \"coach\"\ninstructions = \"Read ftp://files.example\"\n\"\"\"\n");
+    assert_field(&fails(&persona), "(bundle)", "literal URL");
 }
 
 #[test]
-fn unknown_key() {
-    let e = err(&base("colour: red\n"));
-    assert_err(&e, "colour", Some(5));
-    assert!(e.to_string().starts_with("t.yaml:5: "), "{e}");
+fn trackers_sections_and_nesting_are_checked() {
+    let twice = format!("{MINIMAL}\n[[trackers]]\nname = \"Water\"\n[[trackers.fields]]\nkey = \"ml\"\nlabel = \"Water\"\nkind = \"number\"\n");
+    assert_field(&fails(&twice), "trackers[1].name", "duplicate tracker name");
+    let section = "\n[[sections]]\ntitle = \"Today\"\n[[sections.items]]\nkind = \"check_off\"\nlabel = \"Done\"\ndone = false\n";
+    assert_field(&fails(&format!("{MINIMAL}{section}")), "sections[1].title", "duplicate section title");
+    let bad_cadence = edit("target = 2000\n", "target = 2000\n[trackers.cadence]\nfreq = \"weekly\"\nat = \"07:00\"\n");
+    assert_field(&fails(&bad_cadence), "trackers[0]", "weekdays");
+    let nested = format!(
+        "{MINIMAL}\n[[sections.items]]\nkind = \"question_card\"\npersona = \"A\"\nquestion = \"Q\"\n[sections.items.input]\nkind = \"question_card\"\npersona = \"B\"\nquestion = \"R\"\n"
+    );
+    assert_field(&fails(&nested), "sections[0].items[1].input.kind", "cannot ask through");
+    let photo = format!("{MINIMAL}\n[[sections.items]]\nkind = \"photo_timeline\"\nlabel = \"P\"\n[[sections.items.photos]]\nat = \"2026-11-21\"\nsrc = \"https://evil.example/x.png\"\n");
+    assert_field(&fails(&photo), "sections[0].items[1].photos", "only a binding");
+    let ring = format!("{MINIMAL}\n[[sections.items]]\nkind = \"progress_ring\"\nlabel = \"R\"\n[[sections.items.rings]]\nlabel = \"A\"\nunit = \"count\"\nvalue = 1\ntarget = 2\nseries = 7\n");
+    assert_field(&fails(&ring), "sections[0].items[1].rings[0].series", "one of [1, 2, 3, 4, 5, 6]");
+    let missing = edit("label = \"Water\"\nunit = \"ml\"\nvalue", "unit = \"ml\"\nvalue");
+    assert_field(&fails(&missing), "sections[0].items[0].label", "missing");
 }
 
 #[test]
-fn unknown_prop_for_component() {
-    let e = err(&base("slots:\n  today.top:\n    - component: text-note\n      text: hi\n      items: today.actions\n"));
-    assert_err(&e, "items", Some(9));
+fn limits_bound_a_generated_bundle() {
+    let big = format!("{MINIMAL}\ndescription_pad = \"{}\"", "x".repeat(70_000));
+    assert_field(&fails(&big), "(bundle)", "at most 65536");
+    let item = "\n[[sections.items]]\nkind = \"check_off\"\nlabel = \"Done\"\ndone = false\n";
+    assert_field(&fails(&format!("{MINIMAL}{}", item.repeat(24))), "sections[0].items", "25 entries, expected 1 to 24");
+    let options: Vec<String> = (0..51).map(|i| format!("\"o{i}\"")).collect();
+    let choice = format!("{MINIMAL}\n[[sections.items]]\nkind = \"choice\"\nlabel = \"C\"\noptions = [{}]\nmulti = false\nvalue = []\n", options.join(", "));
+    assert_field(&fails(&choice), "sections[0].items[1].options", "at most 50");
+    let tools = parse("water.toml", &format!("tools = [\"web_search\", \"mail\"]\n{MINIMAL}")).unwrap();
+    assert_field(&tools.check_tools("water.toml", &["web_search"]).unwrap_err(), "tools[1]", "unknown tool `mail`");
+    assert!(tools.check_tools("water.toml", &["web_search", "mail"]).is_ok());
 }
 
 #[test]
-fn missing_key() {
-    assert_err(&err("aroh_plugin: 1\nname: t-plugin\nversion: 0.1.0\n"), "title", None);
-    let e = err(&base("slots:\n  today.top:\n    - component: stat-tile\n      label: Lonely\n"));
-    assert_err(&e, "value", None);
-    assert!(e.path.starts_with("slots.today.top[0]"), "{e}");
+fn the_all_kinds_fixture_uses_every_kind_and_every_source() {
+    let b = parse("all-kinds.toml", ALL_KINDS).unwrap();
+    let mut kinds = BTreeSet::new();
+    kinds_in(&b.tree["sections"], &mut kinds);
+    let all: BTreeSet<String> = KINDS.iter().map(|k| k.name.to_string()).collect();
+    assert_eq!(kinds, all);
+    let mut sources = BTreeSet::new();
+    sources_in(&b.tree["sections"], &mut sources);
+    let every: BTreeSet<String> = SOURCES.iter().map(|s| s.name.to_string()).collect();
+    assert_eq!(sources, every);
+    assert_eq!(b.personas[0].name, "coach");
+    assert_eq!(b.tree["sections"][0]["items"][1]["value"], Value::Null, "a left-out nullable prop is null");
+    pinned("all-kinds.tree.json", &b.tree);
 }
 
 #[test]
-fn wrong_type() {
-    assert_err(&err(&base("order: high\n")), "invalid type", Some(5));
-    assert_err(&err(&base("slots:\n  today.top:\n    - component: progress-bar\n      label: P\n      value: water.today_total\n      max: [1]\n")), "max", Some(10));
+fn every_template_validates_and_fitness_is_pinned() {
+    for (name, text) in TEMPLATES {
+        let b = parse(&format!("{name}.toml"), text).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(&b.name, name);
+    }
+    let fitness = parse("fitness.toml", template("fitness").unwrap()).unwrap();
+    assert_eq!(fitness.trackers.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["Weight", "Protein", "Workouts", "Steps"]);
+    pinned("fitness.tree.json", &fitness.tree);
+    assert!(template("chess").is_none());
+}
+
+fn row(id: &str, goal: Option<&str>, version: i64, enabled: bool) -> Plugin {
+    Plugin {
+        id: id.into(),
+        user_id: "u".into(),
+        goal_id: goal.map(str::to_string),
+        name: "fitness".into(),
+        version,
+        bundle_toml: String::new(),
+        enabled,
+        updated_at: String::new(),
+        deleted: false,
+    }
 }
 
 #[test]
-fn unknown_slot() {
-    let e = err(&base("slots:\n  today.bottom:\n    - component: text-note\n      text: hi\n"));
-    assert_err(&e, "today.bottom", Some(6));
+fn versions_pick_the_highest_enabled_row() {
+    let mut rows = vec![row("a", Some("g"), 1, true), row("b", Some("g"), 2, true), row("c", Some("g"), 3, false), row("d", Some("h"), 9, true)];
+    assert_eq!(active(&rows, "g").unwrap().id, "b", "a half-synced flip still picks one");
+    assert_eq!(history(&rows, "g").iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["c", "b", "a"]);
+    assert_eq!(next_version(&rows, Some("g"), "fitness"), 4);
+    assert_eq!(next_version(&rows, Some("g"), "piano"), 1);
+    assert_eq!(next_version(&rows, None, "fitness"), 1);
+    rows[1].deleted = true;
+    assert_eq!(active(&rows, "g").unwrap().id, "a");
+    assert_eq!(next_version(&rows, Some("g"), "fitness"), 4, "a deleted version number is never reused");
+    assert!(active(&rows, "nope").is_none());
 }
 
 #[test]
-fn unknown_component() {
-    let e = err(&base("slots:\n  today.top:\n    - component: pie-chart\n"));
-    assert_err(&e, "pie-chart", Some(7));
-    assert!(e.path.starts_with("slots.today.top[0]"), "{e}");
+fn enable_turns_one_version_on_and_the_rest_off() {
+    let rows = vec![row("a", Some("g"), 1, true), row("b", Some("g"), 2, false), row("d", Some("h"), 1, true)];
+    let writes = enable(&rows, "g", Some("b")).unwrap();
+    assert_eq!(writes.iter().map(|p| (p.id.as_str(), p.enabled)).collect::<Vec<_>>(), [("b", true), ("a", false)], "target first");
+    assert_eq!(enable(&rows, "g", Some("a")).unwrap().len(), 0, "already the only enabled one");
+    let off = enable(&rows, "g", None).unwrap();
+    assert_eq!(off.iter().map(|p| (p.id.as_str(), p.enabled)).collect::<Vec<_>>(), [("a", false)]);
+    assert!(enable(&rows, "g", Some("d")).is_none(), "another goal's row");
+    assert!(enable(&rows, "g", Some("zz")).is_none());
 }
 
 #[test]
-fn unknown_query() {
-    let e = err(&base("slots:\n  today.top:\n    - component: stat-tile\n      label: S\n      value: water.yesterday\n"));
-    assert_err(&e, "water.yesterday", Some(9));
-    assert_eq!(e.path, "slots.today.top[0].value");
+fn missing_trackers_are_derived_once_per_goal_and_name() {
+    let user = "0190f5c4-0000-7000-8000-000000000001";
+    let goal = "0190f5c4-0000-7000-8000-000000000002";
+    let b = parse("fitness.toml", template("fitness").unwrap()).unwrap();
+    let all = aroh_plugins::missing_trackers(&b, &[], user, goal);
+    assert_eq!(all.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["Weight", "Protein", "Workouts", "Steps"]);
+    assert_eq!(all[0].id, aroh_plugins::missing_trackers(&b, &[], user, goal)[0].id, "derived, so every engine agrees");
+    assert!(all.iter().all(|t| t.goal_id == goal && t.user_id == user && !t.fields.is_empty()));
+    let left = aroh_plugins::missing_trackers(&b, &all[..1], user, goal);
+    assert_eq!(left.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["Protein", "Workouts", "Steps"]);
+    let mut gone = all[0].clone();
+    gone.deleted = true;
+    assert_eq!(aroh_plugins::missing_trackers(&b, &[gone], user, goal).len(), 4);
 }
 
 #[test]
-fn query_type_mismatch() {
-    let e = err(&base("slots:\n  today.top:\n    - component: stat-tile\n      label: S\n      value: today.actions\n"));
-    assert_err(&e, "today.actions", Some(9));
-    let e = err(&base("slots:\n  goal.detail:\n    - component: checklist\n      label: C\n      items: goal.progress\n"));
-    assert_err(&e, "goal.progress", Some(9));
-}
-
-#[test]
-fn goal_query_outside_goal_detail() {
-    let e = err(&base("slots:\n  today.sidebar:\n    - component: stat-tile\n      label: S\n      value: goal.actions_left\n"));
-    assert_err(&e, "goal.detail", Some(9));
-}
-
-#[test]
-fn unknown_tracker_in_quick_chips() {
-    let y = base("slots:\n  today.top:\n    - component: quick-chips\n      tracker: nope_tracker\n");
-    let e = resolve(&[plugin("t.yaml", &y)]).unwrap_err();
-    assert_err(&e, "nope_tracker", Some(8));
-    let cross = base("slots:\n  today.top:\n    - component: quick-chips\n      tracker: water\n");
-    resolve(&[plugin("t.yaml", &cross), plugin("water-tracker.yaml", WATER)]).unwrap();
-}
-
-#[test]
-fn unknown_tool() {
-    let e = err(&base("agents:\n  - name: a-gent\n    purpose: P\n    tools: [read_goals, hack_disk]\n    prompt: hi\n"));
-    assert_err(&e, "hack_disk", Some(8));
-}
-
-#[test]
-fn undeclared_prompt_variable() {
-    let e = err(&base("agents:\n  - name: a-gent\n    purpose: P\n    tools: []\n    prompt: hi {{secret_thing}}\n"));
-    assert_err(&e, "secret_thing", Some(9));
-}
-
-#[test]
-fn unused_prompt_variable() {
-    let e = err(&base("agents:\n  - name: a-gent\n    purpose: P\n    tools: []\n    variables: [used_var, extra_var]\n    prompt: hi {{used_var}}\n"));
-    assert_err(&e, "extra_var", Some(9));
-}
-
-#[test]
-fn bad_name_or_version() {
-    let e = err("aroh_plugin: 1\nname: Bad_Name\nversion: 0.1.0\ntitle: T\n");
-    assert_err(&e, "Bad_Name", Some(2));
-    let e = err("aroh_plugin: 1\nname: t-plugin\nversion: '1.0'\ntitle: T\n");
-    assert_err(&e, "1.0", Some(3));
-}
-
-#[test]
-fn file_size_limit() {
-    let big = base(&format!("description: {}\n", "x".repeat(64 * 1024)));
-    assert_err(&err(&big), "64 KiB", None);
-}
-
-#[test]
-fn component_per_slot_limit() {
-    let note = "    - component: text-note\n      text: hi\n";
-    let e = err(&base(&format!("slots:\n  today.top:\n{}", note.repeat(9))));
-    assert_err(&e, "at most 8", None);
-}
-
-#[test]
-fn duplicates_across_plugins() {
-    let e = resolve(&[plugin("a.yaml", WATER), plugin("b.yaml", WATER)]).unwrap_err();
-    assert_err(&e, "duplicate plugin name `water-tracker`", Some(2));
-    let tracker = base("trackers:\n  - id: water\n    kind: water\n    unit: ml\n");
-    let e = resolve(&[plugin("w.yaml", WATER), plugin("t.yaml", &tracker)]).unwrap_err();
-    assert_err(&e, "duplicate tracker id `water`", None);
-    let agent = base("agents:\n  - name: hydration-coach\n    purpose: P\n    tools: []\n    prompt: hi\n");
-    let e = resolve(&[plugin("w.yaml", WATER), plugin("t.yaml", &agent)]).unwrap_err();
-    assert_err(&e, "duplicate agent name `hydration-coach`", None);
-}
-
-#[test]
-fn standalone_agent() {
-    let a = parse_agent("name: planner\npurpose: Plan.\ntools: [read_goals]\nvariables: [page]\nuntrusted: [page]\nsystem: Data {{page}}\nprompt: Go.\n").unwrap();
-    assert_eq!(a.effort, Effort::Medium);
-    assert_eq!(a.untrusted, ["page"]);
-    let e = parse_agent("name: planner\npurpose: Plan.\ntools: []\nvariables: [page]\nuntrusted: [other_var]\nprompt: '{{page}}'\n").unwrap_err();
-    assert_err(&e, "other_var", Some(5));
-    assert!(parse_agent("name: planner\npurpose: Plan.\ntools: []\nprompt: Go.\nmodel: opus\n").is_err());
+fn the_reference_lists_every_kind_and_source() {
+    let text = aroh_plugins::reference();
+    for k in KINDS {
+        assert!(text.contains(&format!("kind: '{}'", k.name)), "{}", k.name);
+    }
+    for s in SOURCES {
+        assert!(text.contains(&format!("\n{}: keys bind", s.name)), "{}", s.name);
+    }
 }

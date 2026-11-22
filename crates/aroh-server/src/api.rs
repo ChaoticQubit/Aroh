@@ -1,6 +1,7 @@
 use crate::auth::{Service, UserId, Verifier};
 use crate::engine::{Answer, Engine, KeyTest, RunSummary, RunView, SetKey, StartGoal, StartReplan, Started, SubmitLog, TickSummary, Waiting};
 use crate::error::{ErrorBody, ErrorDetail, ServerError};
+use crate::plugins::{PluginView, SavePlugin, Writer};
 use crate::push::{ApnsEnv, DeviceInfo, Platform, PushSummary, RegisterDevice};
 use crate::vault::KeyInfo;
 use axum::extract::rejection::JsonRejection;
@@ -187,6 +188,47 @@ async fn answer(
     Ok((StatusCode::ACCEPTED, Json(Accepted { run_id })))
 }
 
+fn writer(s: &AppState, user: Uuid) -> Writer<'_> {
+    let deps = s.engine.deps();
+    Writer { pool: &deps.pool, hlc: &deps.hlc, user }
+}
+
+#[utoipa::path(get, path = "/v1/goals/{goal_id}/plugins", tag = "plugins", security(("bearer" = [])),
+    params(("goal_id" = Uuid, Path)),
+    responses((status = 200, description = "The goal's plugin versions, newest first", body = [PluginView]), (status = 404, body = ErrorBody)))]
+async fn list_plugins(State(s): State<AppState>, UserId(user): UserId, Path(goal_id): Path<Uuid>) -> Result<Json<Vec<PluginView>>, ServerError> {
+    Ok(Json(writer(&s, user).list(goal_id).await?.iter().map(PluginView::from).collect()))
+}
+
+#[utoipa::path(put, path = "/v1/goals/{goal_id}/plugins", tag = "plugins", security(("bearer" = [])),
+    params(("goal_id" = Uuid, Path)),
+    request_body = SavePlugin,
+    responses((status = 201, description = "Stored as the goal's next version", body = PluginView), (status = 404, body = ErrorBody), (status = 422, description = "invalid bundle: the error names the file and field", body = ErrorBody)))]
+async fn save_plugin(
+    State(s): State<AppState>,
+    UserId(user): UserId,
+    Path(goal_id): Path<Uuid>,
+    json: Result<Json<SavePlugin>, JsonRejection>,
+) -> Result<(StatusCode, Json<PluginView>), ServerError> {
+    let req = body(json, true)?;
+    let row = writer(&s, user).store(goal_id, &req.bundle_toml, Uuid::now_v7().to_string(), req.enable.unwrap_or(true)).await?;
+    Ok((StatusCode::CREATED, Json(PluginView::from(&row))))
+}
+
+#[utoipa::path(get, path = "/v1/plugins/{plugin_id}", tag = "plugins", security(("bearer" = [])),
+    params(("plugin_id" = Uuid, Path)),
+    responses((status = 200, body = PluginView), (status = 404, body = ErrorBody)))]
+async fn get_plugin(State(s): State<AppState>, UserId(user): UserId, Path(plugin_id): Path<Uuid>) -> Result<Json<PluginView>, ServerError> {
+    Ok(Json(PluginView::from(&writer(&s, user).get(&plugin_id.to_string()).await?)))
+}
+
+#[utoipa::path(post, path = "/v1/plugins/{plugin_id}/enable", tag = "plugins", security(("bearer" = [])),
+    params(("plugin_id" = Uuid, Path)),
+    responses((status = 200, description = "Now the only enabled version of its goal", body = PluginView), (status = 404, body = ErrorBody)))]
+async fn enable_plugin(State(s): State<AppState>, UserId(user): UserId, Path(plugin_id): Path<Uuid>) -> Result<Json<PluginView>, ServerError> {
+    Ok(Json(PluginView::from(&writer(&s, user).enable(&plugin_id.to_string()).await?)))
+}
+
 #[utoipa::path(post, path = "/v1/tick", tag = "engine", security(("bearer" = [])),
     responses((status = 200, description = "Step mode: due jobs processed (service role only)", body = TickSummary), (status = 403, body = ErrorBody)))]
 async fn tick(State(s): State<AppState>, _svc: Service) -> Result<Json<TickSummary>, ServerError> {
@@ -250,8 +292,10 @@ impl Modify for Bearer {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
-    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, list_runs, get_run, answer, tick, enqueue_hook, register_device, unregister_device, push_tick),
-    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv)),
+    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, list_runs, get_run, answer, tick, enqueue_hook, register_device, unregister_device, push_tick,
+        list_plugins, save_plugin, get_plugin, enable_plugin),
+    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
+        SavePlugin, PluginView)),
     modifiers(&Bearer)
 )]
 pub struct ApiDoc;
@@ -280,6 +324,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/runs/{run_id}/answers", post(answer))
         .route("/v1/tick", post(tick))
         .route("/v1/hooks/enqueue", post(enqueue_hook))
+        .route("/v1/goals/{goal_id}/plugins", get(list_plugins).put(save_plugin))
+        .route("/v1/plugins/{plugin_id}", get(get_plugin))
+        .route("/v1/plugins/{plugin_id}/enable", post(enable_plugin))
         .route("/v1/devices/{device_id}", put(register_device).delete(unregister_device))
         .route("/v1/push/tick", post(push_tick))
         .with_state(state)

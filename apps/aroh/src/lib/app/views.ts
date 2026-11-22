@@ -3,7 +3,7 @@ import type { ActionView, CategorySlot, ChangeView, ComponentSpec, Point, SpecOf
 import { daysBetween, formatDate, formatYmd, minuteOfDay, mondayOf, shiftDay } from '$lib/ui/format';
 import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, RunView, SettingsView } from '$lib/ui/screens/types';
 import { catalog } from './catalog';
-import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerField } from './client';
+import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerEntry, TrackerField } from './client';
 import type { RunSummary } from './engine';
 
 const SEEDED_SLOTS: Record<string, CategorySlot> = { Learning: 1, 'Health and Fitness': 2, Financial: 3, 'Hobby and Skill': 4, 'Career and Projects': 5, Habit: 6 };
@@ -114,7 +114,8 @@ export function checkInData(due: DueCheckIn, answer: unknown): Record<string, nu
 	return typeof answer === 'number' && Number.isFinite(answer) ? { [due.key]: answer } : null;
 }
 
-function points(s: Snapshot, trackerId: string, key: string): Point[] {
+/** The numeric values of field `key` of tracker `trackerId`, oldest first, as chart points. */
+export function points(s: Snapshot, trackerId: string, key: string): Point[] {
 	return s.entries
 		.filter((e) => e.tracker_id === trackerId && typeof e.data[key] === 'number')
 		.map((e) => ({ at: e.logged_at, value: e.data[key] as number }))
@@ -144,7 +145,11 @@ export function goalHeader(s: Snapshot, goal: Goal, zone: string): GoalHeader {
 	};
 }
 
-function streak(actions: Action[], today: string, zone: string): SpecOf<'streak_heatmap'>['days'] {
+/**
+ * The 28 days up to `today` as heatmap days: level 0 with no done action, 3 when all of the day's
+ * actions are done, 2 for at least half, else 1.
+ */
+export function streak(actions: Action[], today: string, zone: string): SpecOf<'streak_heatmap'>['days'] {
 	return Array.from({ length: 28 }, (_, i) => {
 		const date = shiftDay(today, i - 27);
 		const day = actions.filter((a) => formatYmd(a.start_at, zone) === date);
@@ -154,19 +159,36 @@ function streak(actions: Action[], today: string, zone: string): SpecOf<'streak_
 	});
 }
 
+/** The actions of `actions` that start in the current Monday-to-Sunday week of the clock's zone. */
+export function weekActions(actions: Action[], clock: Clock): Action[] {
+	const week = mondayOf(formatYmd(clock.now, clock.zone));
+	return actions.filter((a) => {
+		const d = formatYmd(a.start_at, clock.zone);
+		return d >= week && d < shiftDay(week, 7);
+	});
+}
+
+/** The first `limit` planned actions of `views` that start after the clock's now, in their order. */
+export function nextPlanned(views: ActionView[], clock: Clock, limit: number): ActionView[] {
+	return views.filter((a) => a.status === 'planned' && Date.parse(a.start) > Date.parse(clock.now)).slice(0, limit);
+}
+
+/** One tracker entry as a log list line: raw text or tracker name, and its first numeric value. */
+export function entryView(e: TrackerEntry, tracker: Tracker | undefined): SpecOf<'log_list'>['entries'][number] {
+	const field = tracker?.fields.find((f) => typeof e.data[f.key] === 'number');
+	const value = field ? (e.data[field.key] as number) : undefined;
+	return { at: e.logged_at, text: e.raw_text ?? tracker?.name ?? 'Entry', value, unit: field ? unitOf(field.unit) : undefined };
+}
+
 /**
- * The goal dashboard until plugin view trees exist: countdown, this week's actions ring, one line
+ * The derived goal dashboard, shown when the goal has no plugin: countdown, this week's actions ring, one line
  * chart per number tracker field with entries, the last 28 days as a streak and the next 4
  * planned actions. Sections with nothing to show are left out.
  */
 export function goalView(s: Snapshot, goal: Goal, clock: Clock): ViewSpec {
 	const actions = s.actions.filter((a) => a.goal_id === goal.id);
 	const today = formatYmd(clock.now, clock.zone);
-	const week = mondayOf(today);
-	const thisWeek = actions.filter((a) => {
-		const d = formatYmd(a.start_at, clock.zone);
-		return d >= week && d < shiftDay(week, 7);
-	});
+	const thisWeek = weekActions(actions, clock);
 	const progress: ComponentSpec[] = [];
 	if (goal.deadline) progress.push({ kind: 'countdown', label: `Until ${formatDate(goal.deadline, { day: 'numeric', month: 'short' })}`, deadline: deadlineAt(goal.deadline, clock.zone) });
 	if (thisWeek.length) {
@@ -177,8 +199,7 @@ export function goalView(s: Snapshot, goal: Goal, clock: Clock): ViewSpec {
 		progress.push({ kind: 'line_chart', label: t.field.label, unit: unitOf(t.field.unit), points: t.points, series: ((i % 6) + 1) as 1 | 2 | 3 | 4 | 5 | 6 })
 	);
 	if (actions.length) progress.push({ kind: 'streak_heatmap', label: 'Last 4 weeks', days: streak(actions, today, clock.zone), series: 2 });
-	const views = actionViews({ ...s, actions });
-	const next = views.filter((a) => a.status === 'planned' && Date.parse(a.start) > Date.parse(clock.now)).slice(0, 4);
+	const next = nextPlanned(actionViews({ ...s, actions }), clock, 4);
 	const sections = [
 		{ title: 'Progress', items: progress },
 		{ title: 'Upcoming', items: [{ kind: 'action_list', label: 'Next sessions', actions: next } as ComponentSpec] }
@@ -283,12 +304,7 @@ export function settingsView(s: Snapshot, last4: Record<string, string | null> =
 /** The Log screen: due check-ins, texts waiting for the engine and the 20 newest entries. */
 export function logView(s: Snapshot, clock: Clock): { checkIns: DueCheckIn[]; waiting: SpecOf<'log_list'>; recent: SpecOf<'log_list'> } {
 	const trackers = new Map(s.trackers.map((t) => [t.id, t]));
-	const recent = s.entries.slice(0, RECENT).map((e) => {
-		const tracker = trackers.get(e.tracker_id);
-		const field = tracker?.fields.find((f) => typeof e.data[f.key] === 'number');
-		const value = field ? (e.data[field.key] as number) : undefined;
-		return { at: e.logged_at, text: e.raw_text ?? tracker?.name ?? 'Entry', value, unit: field ? unitOf(field.unit) : undefined };
-	});
+	const recent = s.entries.slice(0, RECENT).map((e) => entryView(e, trackers.get(e.tracker_id)));
 	return {
 		checkIns: dueCheckIns(s, clock),
 		waiting: { kind: 'log_list', label: 'Waiting for the engine', entries: [...s.pending_logs].reverse().map((p) => ({ at: p.at, text: p.text })) },

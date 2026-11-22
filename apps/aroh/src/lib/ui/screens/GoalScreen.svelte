@@ -13,14 +13,27 @@
 	/**
 	 * Goal dashboard built from the goal's view spec, with the persona chat entry and autonomy level.
 	 * `onautonomy` gets the picked level, `onchat` fires on the chat button; `chatStatus` shows under it.
+	 * With `versions`, a Dashboard card picks the plugin version shown; `onversion` gets its value.
 	 */
 	let {
 		goal,
 		view,
 		chatStatus = null,
+		versions = [],
+		version = '',
 		onautonomy,
-		onchat
-	}: { goal: GoalHeader; view: ViewSpec; chatStatus?: string | null; onautonomy?: (level: AutonomyLabel) => void; onchat?: () => void } = $props();
+		onchat,
+		onversion
+	}: {
+		goal: GoalHeader;
+		view: ViewSpec;
+		chatStatus?: string | null;
+		versions?: { value: string; label: string }[];
+		version?: string;
+		onautonomy?: (level: AutonomyLabel) => void;
+		onchat?: () => void;
+		onversion?: (value: string) => void;
+	} = $props();
 
 	const { zone } = getClock();
 	let picked = $state<AutonomyLabel | null>(null);
@@ -67,6 +80,13 @@
 			<Segmented label="Autonomy level" bind:value={() => autonomy, pick} options={[{ value: 'Ask', label: 'Ask' }, { value: 'Balanced', label: 'Balanced' }, { value: 'Auto', label: 'Auto' }]} />
 			<p class="text-sm text-muted">{AUTONOMY[autonomy]} Locked and hand-edited actions are never moved without asking.</p>
 		</Card.Root>
+		{#if versions.length > 1}
+			<Card.Root size="sm" class="gap-3 px-4">
+				<p class="text-sm font-medium">Dashboard</p>
+				<Segmented label="Dashboard version" bind:value={() => version, (v) => onversion?.(v)} options={versions} />
+				<p class="text-sm text-muted">Pick a plugin version, or Derived to build the view from your plan and trackers.</p>
+			</Card.Root>
+		{/if}
 	</div>
 
 	{#each view.sections as section (section.title)}

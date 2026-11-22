@@ -112,6 +112,73 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/goals/{goal_id}/plugins:
+    get:
+      tags:
+      - plugins
+      operationId: list_plugins
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: The goal's plugin versions, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PluginView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    put:
+      tags:
+      - plugins
+      operationId: save_plugin
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavePlugin'
+        required: true
+      responses:
+        '201':
+          description: Stored as the goal's next version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: 'invalid bundle: the error names the file and field'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/goals/{goal_id}/replan:
     post:
       tags:
@@ -321,6 +388,60 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorBody'
         '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/plugins/{plugin_id}:
+    get:
+      tags:
+      - plugins
+      operationId: get_plugin
+      parameters:
+      - name: plugin_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/plugins/{plugin_id}/enable:
+    post:
+      tags:
+      - plugins
+      operationId: enable_plugin
+      parameters:
+      - name: plugin_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Now the only enabled version of its goal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginView'
+        '404':
           description: ''
           content:
             application/json:
@@ -613,6 +734,34 @@ components:
       description: Push platform of a device; only iOS for now (FCM comes with Android, Q22).
       enum:
       - ios
+    PluginView:
+      type: object
+      description: |-
+        One plugin version as the API returns it: the row's fields.
+        `enabled` marks the version the goal dashboard renders.
+        Newest first in lists.
+      required:
+      - id
+      - name
+      - version
+      - enabled
+      - bundle_toml
+      properties:
+        bundle_toml:
+          type: string
+        enabled:
+          type: boolean
+        goal_id:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+          format: int64
     PushSummary:
       type: object
       description: |-
@@ -736,6 +885,22 @@ components:
             $ref: '#/components/schemas/Waiting'
         workflow:
           type: string
+    SavePlugin:
+      type: object
+      description: |-
+        Body of `PUT /v1/goals/{goal_id}/plugins`: a bundle to store as the
+        goal's next version, and whether to enable it (default true).
+        The bundle is validated first.
+      required:
+      - bundle_toml
+      properties:
+        bundle_toml:
+          type: string
+        enable:
+          type:
+          - boolean
+          - 'null'
+      additionalProperties: false
     SetKey:
       type: object
       description: |-

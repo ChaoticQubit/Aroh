@@ -128,13 +128,23 @@ pub fn within_availability(output: &Value, args: &[Value]) -> Result<(), String>
     Ok(())
 }
 
+/// Eval `valid_plugin(path)`: the string at `path` is a plugin bundle the
+/// server would store (bundle rules, allowed tools, valid personas).
+/// Returns the validator's error naming the file and field.
+pub fn valid_plugin(output: &Value, args: &[Value]) -> Result<(), String> {
+    let path = args.first().and_then(Value::as_str).filter(|_| args.len() == 1).ok_or("takes (path)")?;
+    let text = lookup(output, path).into_iter().find_map(Value::as_str).ok_or_else(|| format!("no bundle text at `{path}`"))?;
+    crate::plugins::check(text).map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// Builds the eval registry every Aroh run uses: the built-in `min_items`
-/// plus the domain evals `no_overlap` and `within_availability`.
-/// Returns the registry.
+/// plus the domain evals `no_overlap`, `within_availability` and
+/// `valid_plugin`. Returns the registry.
 pub fn registry() -> EvalRegistry {
     let mut r = EvalRegistry::new();
     r.register("no_overlap", Arc::new(no_overlap)).expect("fresh name");
     r.register("within_availability", Arc::new(within_availability)).expect("fresh name");
+    r.register("valid_plugin", Arc::new(valid_plugin)).expect("fresh name");
     r
 }
 
@@ -196,5 +206,21 @@ mod tests {
         assert!(slots(&json!({"title": "x", "start": null, "minutes": null})).unwrap().is_empty());
         let r = registry();
         assert!(r.get("no_overlap").is_some() && r.get("within_availability").is_some() && r.get("min_items").is_some());
+    }
+
+    #[test]
+    fn valid_plugin_checks_the_bundle_text() {
+        let args = [json!("bundle_toml")];
+        let good = json!({"bundle_toml": aroh_plugins::template("fitness").unwrap()});
+        assert!(valid_plugin(&good, &args).is_ok());
+        let e = valid_plugin(&json!({"bundle_toml": "aroh_plugin = 1\nname = \"x1\"\ntitle = \"X\""}), &args).unwrap_err();
+        assert!(e.contains("plugin.toml: sections: missing"), "{e}");
+        let tool = format!("tools = [\"send_mail\"]\n{}", aroh_plugins::template("fitness").unwrap());
+        assert!(valid_plugin(&json!({"bundle_toml": tool}), &args).unwrap_err().contains("unknown tool `send_mail`"));
+        let persona = format!("{}\n[[personas]]\nname = \"coach\"\ntoml = \"name = 3\"\n", aroh_plugins::template("fitness").unwrap());
+        assert!(valid_plugin(&json!({"bundle_toml": persona}), &args).unwrap_err().contains("personas[0].toml"));
+        assert!(valid_plugin(&json!({}), &args).is_err());
+        assert!(valid_plugin(&good, &[]).is_err());
+        assert!(registry().get("valid_plugin").is_some());
     }
 }
