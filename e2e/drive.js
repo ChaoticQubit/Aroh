@@ -45,6 +45,11 @@
     const el = [...document.querySelectorAll('body *')].find((x) => x.children.length === 0 && x.textContent.includes(needle));
     if (el) el.scrollIntoView({ block: 'center' });
   };
+  const openTomorrow = () => {
+    const tomorrow = new Date(Date.now() + 864e5);
+    const day = tomorrow.toLocaleDateString('en-GB', { weekday: 'short' });
+    [...document.querySelectorAll('button')].find((b) => b.textContent.includes(day) && b.textContent.includes(String(tomorrow.getDate())))?.click();
+  };
   const say = async (message) => {
     const box = document.querySelector('textarea[placeholder="Message your personas"]');
     type(box, message, false);
@@ -96,11 +101,16 @@
     await sleep(4000);
     await mark('shot 06-approved');
 
+    const synced = () => text().includes('Core workout') || text().includes('Morning plank');
     await go('/today');
-    await until('actions synced', () => text().includes('Core workout') || text().includes('Morning plank'), 60000);
+    const today = await until('actions synced', synced, 15000).then(() => true, () => false);
     await mark('shot 07-today');
     await go('/calendar');
     await sleep(1000);
+    if (!today) {
+      openTomorrow();
+      await until('actions synced', synced, 45000);
+    }
     show('Core workout');
     await mark('shot 08-calendar');
 
@@ -127,9 +137,7 @@
 
     await go('/calendar');
     await sleep(1000);
-    const tomorrow = new Date(Date.now() + 864e5);
-    const day = tomorrow.toLocaleDateString('en-GB', { weekday: 'short' });
-    [...document.querySelectorAll('button')].find((b) => b.textContent.includes(day) && b.textContent.includes(String(tomorrow.getDate())))?.click();
+    openTomorrow();
     await sleep(1500);
     show('Make-up core workout');
     await mark('shot 13-calendar-replanned');
