@@ -37,7 +37,10 @@ const WORKFLOWS: [(&str, &str); 5] = [
     (CALENDAR_TRIAGE, include_str!("../workflows/calendar-triage.toml")),
 ];
 
-const PERSONAS: [(&str, &str); 8] = [
+/// Every persona the server ships, by name: the workflow personas and the
+/// category teams' research and plan personas. Owners copy them into their
+/// library to edit them; the shipped text never changes at run time.
+pub const PERSONAS: [(&str, &str); 15] = [
     ("intake-interviewer", include_str!("../personas/intake-interviewer.toml")),
     ("goal-researcher", include_str!("../personas/goal-researcher.toml")),
     ("goal-planner", include_str!("../personas/goal-planner.toml")),
@@ -46,7 +49,21 @@ const PERSONAS: [(&str, &str); 8] = [
     ("calendar-triage", include_str!("../personas/calendar-triage.toml")),
     ("plugin-builder", include_str!("../personas/plugin-builder.toml")),
     ("preference-analyst", include_str!("../personas/preference-analyst.toml")),
+    ("tutor", include_str!("../personas/tutor.toml")),
+    ("practice-planner", include_str!("../personas/practice-planner.toml")),
+    ("instrument-teacher", include_str!("../personas/instrument-teacher.toml")),
+    ("practice-coach", include_str!("../personas/practice-coach.toml")),
+    ("budget-coach", include_str!("../personas/budget-coach.toml")),
+    ("savings-planner", include_str!("../personas/savings-planner.toml")),
+    ("habit-coach", include_str!("../personas/habit-coach.toml")),
 ];
+
+/// Returns the shipped persona text called `name`, if any.
+/// Linear scan over `PERSONAS`.
+/// The text parses (tested).
+pub fn shipped(name: &str) -> Option<&'static str> {
+    PERSONAS.iter().find(|(n, _)| *n == name).map(|(_, t)| *t)
+}
 
 /// Parses the built-in workflow called `name`.
 /// Returns `NotFound` for an unknown name and `Config` when the shipped
@@ -146,5 +163,50 @@ mod tests {
         }
         assert_eq!(persona_names(&workflow(NEW_GOAL).unwrap()), ["goal-planner", "goal-researcher", "intake-interviewer", "plugin-builder"]);
         assert!(workflow("nope").is_err());
+    }
+
+    const HEALTH: &str = "Safety: no medical diagnosis or treatment advice; refer to a doctor for pain, illness or medical conditions.";
+    const FINANCE: &str = "Safety: no individual investment, tax or legal advice; refer to a licensed financial professional for those.";
+
+    async fn load(name: &str) -> troupekit_agent::Persona {
+        PersonaLoader::new(vec![Arc::new(aroh_personas())]).load(name).await.unwrap_or_else(|e| panic!("{name}: {e}"))
+    }
+
+    #[tokio::test]
+    async fn every_shipped_persona_is_valid_with_registered_evals() {
+        let evals = crate::evals::registry();
+        for (name, _) in PERSONAS {
+            let p = load(name).await;
+            assert_eq!(p.model, "default", "{name}");
+            assert!(p.output.is_some(), "{name} has typed output");
+            assert!(!p.guardrails.is_empty(), "{name} has guardrails");
+            assert!(p.tools.iter().all(|t| crate::plugins::PLUGIN_TOOLS.contains(&t.as_str())), "{name}");
+            assert!(p.evals.iter().all(|e| e.name == "judge" || evals.get(&e.name).is_some()), "{name}");
+        }
+        assert!(shipped("tutor").is_some() && shipped("nobody").is_none());
+    }
+
+    #[tokio::test]
+    async fn team_personas_fit_their_workflow_slots() {
+        use crate::teams::{PLAN_SLOT, RESEARCH_SLOT, TEAMS};
+        let research = load(RESEARCH_SLOT).await;
+        let plan = load(PLAN_SLOT).await;
+        for t in TEAMS {
+            let r = load(t.research).await;
+            assert_eq!((&r.output, &r.tools, &r.evals), (&research.output, &research.tools, &research.evals), "{}", t.research);
+            assert!(!r.evals.is_empty(), "{}", t.research);
+            let p = load(t.plan).await;
+            assert_eq!((&p.output, &p.evals), (&plan.output, &plan.evals), "{}", t.plan);
+        }
+    }
+
+    #[tokio::test]
+    async fn health_and_finance_personas_carry_safety_guardrails() {
+        for name in ["goal-researcher", "goal-planner", "habit-coach"] {
+            assert!(load(name).await.guardrails.iter().any(|g| g == HEALTH), "{name}");
+        }
+        for name in ["budget-coach", "savings-planner"] {
+            assert!(load(name).await.guardrails.iter().any(|g| g == FINANCE), "{name}");
+        }
     }
 }

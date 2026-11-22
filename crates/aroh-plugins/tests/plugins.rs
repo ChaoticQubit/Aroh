@@ -205,14 +205,15 @@ fn the_all_kinds_fixture_uses_every_kind_and_every_source() {
 }
 
 #[test]
-fn every_template_validates_and_fitness_is_pinned() {
+fn every_template_validates_and_is_pinned() {
+    assert_eq!(TEMPLATES.iter().map(|(n, _)| *n).collect::<Vec<_>>(), ["fitness", "music", "learning", "finance", "habits"]);
     for (name, text) in TEMPLATES {
         let b = parse(&format!("{name}.toml"), text).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(&b.name, name);
+        pinned(&format!("{name}.tree.json"), &b.tree);
     }
     let fitness = parse("fitness.toml", template("fitness").unwrap()).unwrap();
     assert_eq!(fitness.trackers.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["Weight", "Protein", "Workouts", "Steps"]);
-    pinned("fitness.tree.json", &fitness.tree);
     assert!(template("chess").is_none());
 }
 

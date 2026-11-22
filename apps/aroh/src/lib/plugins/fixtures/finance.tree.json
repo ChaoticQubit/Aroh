@@ -1,0 +1,128 @@
+{
+  "description": "Savings against the owner's target, savings over time, spending entries, today's spending and the next money tasks.",
+  "format": 1,
+  "name": "finance",
+  "personas": [],
+  "sections": [
+    {
+      "items": [
+        {
+          "actual": {
+            "bind": "latest",
+            "field": "amount",
+            "tracker": "Savings"
+          },
+          "kind": "target_vs_actual",
+          "label": "Saved toward the target",
+          "target": {
+            "bind": "target",
+            "field": "amount",
+            "tracker": "Savings"
+          },
+          "unit": "usd"
+        },
+        {
+          "kind": "line_chart",
+          "label": "Savings",
+          "points": {
+            "bind": "series",
+            "field": "amount",
+            "tracker": "Savings"
+          },
+          "series": 1,
+          "target": {
+            "bind": "target",
+            "field": "amount",
+            "tracker": "Savings"
+          },
+          "unit": "usd"
+        }
+      ],
+      "title": "Savings"
+    },
+    {
+      "items": [
+        {
+          "kind": "stat_tile",
+          "label": "Spent today",
+          "unit": "usd",
+          "value": {
+            "bind": "today_total",
+            "field": "amount",
+            "tracker": "Spending"
+          }
+        },
+        {
+          "kind": "bar_chart",
+          "label": "Spending",
+          "points": {
+            "bind": "series",
+            "field": "amount",
+            "tracker": "Spending"
+          },
+          "series": 4,
+          "unit": "usd"
+        },
+        {
+          "entries": {
+            "bind": "entries",
+            "tracker": "Spending"
+          },
+          "kind": "log_list",
+          "label": "Recent spending"
+        }
+      ],
+      "title": "Spending"
+    },
+    {
+      "items": [
+        {
+          "actions": {
+            "bind": "actions",
+            "limit": 4,
+            "when": "next"
+          },
+          "kind": "action_list",
+          "label": "Next money tasks"
+        }
+      ],
+      "title": "Upcoming"
+    }
+  ],
+  "title": "Savings and spending",
+  "tools": [],
+  "trackers": [
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "amount",
+          "kind": "number",
+          "label": "Saved so far",
+          "target": 5000.0,
+          "unit": "usd"
+        }
+      ],
+      "name": "Savings"
+    },
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "amount",
+          "kind": "number",
+          "label": "Spent",
+          "unit": "usd"
+        },
+        {
+          "choices": [],
+          "key": "what",
+          "kind": "text",
+          "label": "What for",
+          "unit": null
+        }
+      ],
+      "name": "Spending"
+    }
+  ]
+}

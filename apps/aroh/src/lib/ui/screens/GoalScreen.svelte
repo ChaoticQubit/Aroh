@@ -94,7 +94,7 @@
 			<h3 class="text-sm font-semibold text-fg">{section.title}</h3>
 			<div class="grid gap-4 @3xl:grid-cols-2">
 				{#each section.items as item, i (i)}
-					<div class={item.kind === 'line_chart' || item.kind === 'action_list' ? '@3xl:col-span-2' : ''}><Render spec={item} /></div>
+					<div class="min-w-0 {item.kind === 'line_chart' || item.kind === 'action_list' ? '@3xl:col-span-2' : ''}"><Render spec={item} /></div>
 				{/each}
 			</div>
 		</section>

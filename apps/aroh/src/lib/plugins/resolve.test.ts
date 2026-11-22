@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { Action, Snapshot } from '$lib/app/client';
 import type { ComponentSpec, ViewSpec } from '$lib/ui/contract';
 import { goalView } from '$lib/app/views';
-import { parseTree, resolve, SOURCES } from './resolve';
+import { parseTree, resolve, SOURCES, type PluginTree } from './resolve';
 import allKinds from './fixtures/all-kinds.tree.json';
 import fitness from './fixtures/fitness.tree.json';
+import music from './fixtures/music.tree.json';
+import learning from './fixtures/learning.tree.json';
+import finance from './fixtures/finance.tree.json';
+import habits from './fixtures/habits.tree.json';
 
 const clock = { now: '2026-11-25T12:00:00Z', zone: 'UTC' };
 const goalId = 'g1';
@@ -54,6 +58,24 @@ function fixture(): Snapshot {
 		settings: {},
 		pending_logs: []
 	};
+}
+
+/** The six-pack fixture with its trackers swapped for `tree`'s, each logged yesterday and today. */
+function filled(tree: PluginTree): Snapshot {
+	const s = fixture();
+	s.trackers = tree.trackers.map((t, i) => ({ id: `tt${i}`, goal_id: goalId, name: t.name, fields: t.fields.map((f) => ({ key: f.key, label: f.label, kind: f.kind as 'number', unit: f.unit, choices: [] })), cadence: null }));
+	const value = (kind: string, n: number) => (kind === 'number' ? n : kind === 'bool' ? true : 'Bars 1 to 8');
+	s.entries = s.trackers.flatMap((t, i) =>
+		['2026-11-25T08:00:00Z', '2026-11-24T08:00:00Z'].map((at, j) => ({
+			id: `te${i}-${j}`,
+			tracker_id: t.id,
+			data: Object.fromEntries(t.fields.map((f) => [f.key, value(f.kind, 40 - j * 5)])),
+			source: 'log' as const,
+			raw_text: null,
+			logged_at: at
+		}))
+	);
+	return s;
 }
 
 function items(view: ViewSpec): ComponentSpec[] {
@@ -125,6 +147,21 @@ describe('plugin resolver', () => {
 		});
 		expect(items(derived).map((i) => i.kind)).toEqual(['countdown', 'progress_ring', 'line_chart', 'line_chart', 'streak_heatmap', 'action_list']);
 		expect(withoutCountdownLabel(fromPlugin)).toEqual(withoutCountdownLabel(derived));
+	});
+
+	it.each([
+		['music', music],
+		['learning', learning],
+		['finance', finance],
+		['habits', habits]
+	])('resolves every item of the %s template when its trackers have data', (_name, json) => {
+		const tree = parseTree(json);
+		const s = filled(tree);
+		const view = resolve(tree, s, s.goals[0], clock);
+		const declared = tree.sections.flatMap((sec) => sec.items.map((i) => (i as { kind: string }).kind));
+		expect(view.sections.map((sec) => sec.title)).toEqual(tree.sections.map((sec) => sec.title));
+		expect(items(view).map((i) => i.kind)).toEqual(declared);
+		expect(hasBinding(view)).toBe(false);
 	});
 
 	it('rejects a tree of another format', () => {

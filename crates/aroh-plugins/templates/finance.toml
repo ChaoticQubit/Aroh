@@ -1,0 +1,80 @@
+aroh_plugin = 1
+name = "finance"
+title = "Savings and spending"
+description = "Savings against the owner's target, savings over time, spending entries, today's spending and the next money tasks."
+
+[[trackers]]
+name = "Savings"
+
+[[trackers.fields]]
+key = "amount"
+label = "Saved so far"
+kind = "number"
+unit = "usd"
+target = 5000
+
+[trackers.cadence]
+freq = "weekly"
+weekdays = ["Sun"]
+at = "19:00"
+
+[[trackers]]
+name = "Spending"
+
+[[trackers.fields]]
+key = "amount"
+label = "Spent"
+kind = "number"
+unit = "usd"
+
+[[trackers.fields]]
+key = "what"
+label = "What for"
+kind = "text"
+
+[[sections]]
+title = "Savings"
+
+[[sections.items]]
+kind = "target_vs_actual"
+label = "Saved toward the target"
+unit = "usd"
+target = { bind = "target", tracker = "Savings", field = "amount" }
+actual = { bind = "latest", tracker = "Savings", field = "amount" }
+
+[[sections.items]]
+kind = "line_chart"
+label = "Savings"
+unit = "usd"
+points = { bind = "series", tracker = "Savings", field = "amount" }
+target = { bind = "target", tracker = "Savings", field = "amount" }
+series = 1
+
+[[sections]]
+title = "Spending"
+
+[[sections.items]]
+kind = "stat_tile"
+label = "Spent today"
+unit = "usd"
+value = { bind = "today_total", tracker = "Spending", field = "amount" }
+
+[[sections.items]]
+kind = "bar_chart"
+label = "Spending"
+unit = "usd"
+points = { bind = "series", tracker = "Spending", field = "amount" }
+series = 4
+
+[[sections.items]]
+kind = "log_list"
+label = "Recent spending"
+entries = { bind = "entries", tracker = "Spending" }
+
+[[sections]]
+title = "Upcoming"
+
+[[sections.items]]
+kind = "action_list"
+label = "Next money tasks"
+actions = { bind = "actions", when = "next", limit = 4 }

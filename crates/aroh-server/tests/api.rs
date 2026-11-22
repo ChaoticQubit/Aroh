@@ -834,3 +834,157 @@ async fn triage_rejects_bad_requests() {
     }
     assert_eq!(api.call(Method::Post, "/v1/calendar/triage", None, Some(json!({}))).await.0, 401);
 }
+
+fn music_plan() -> Value {
+    json!({
+        "summary": "Learn Clair de Lune section by section, then raise the tempo.",
+        "timezone": "Europe/Berlin",
+        "items": [
+            {"title": "Piano practice: bars 1 to 14", "start": "2026-11-23T19:00:00", "minutes": 30, "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA", "notes": "Hands separately, slow"},
+            {"title": "Record a run-through", "start": "2026-11-29T11:00:00", "minutes": 20, "rrule": null, "notes": null}
+        ],
+        "trackers": [
+            {"name": "Practice", "fields": [{"key": "minutes", "label": "Practice", "kind": "number", "unit": "min"}], "cadence": {"freq": "daily", "weekdays": [], "at": "20:00"}, "rules": null},
+            {"name": "Tempo", "fields": [{"key": "bpm", "label": "Tempo", "kind": "number", "unit": "bpm"}], "cadence": null, "rules": null},
+            {"name": "Pieces", "fields": [{"key": "piece", "label": "Piece or passage", "kind": "text", "unit": null}, {"key": "progress", "label": "Progress", "kind": "number", "unit": "%"}], "cadence": null, "rules": null}
+        ]
+    })
+}
+
+fn music_models() -> Arc<FnTransport> {
+    FnTransport::new(move |req| {
+        let body = body_text(req);
+        if !body.contains("\"stream\":true") {
+            return json_reply(200, json!({"id": "msg_k", "type": "message", "role": "assistant", "content": [{"type": "text", "text": "OK"}],
+                "stop_reason": "max_tokens", "usage": {"input_tokens": 5, "output_tokens": 1}}));
+        }
+        if body.contains("You are Plugin builder") && body.contains("Music practice") {
+            return builder_reply(aroh_plugins::template("music").unwrap());
+        }
+        if body.contains("You are Intake interviewer") {
+            return sse_text(&json!({"questions": [{"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": []}]}).to_string());
+        }
+        if body.contains("You are Instrument teacher") {
+            return sse_text(&json!({"summary": "Learn it in four sections, slow practice first.", "sources": [{"title": "Clair de Lune guide", "url": "https://example.org/clair"}]}).to_string());
+        }
+        if body.contains("You are Practice coach") {
+            return sse_text(&music_plan().to_string());
+        }
+        Reply { status: 400, content_type: "application/json", body: json!({"error": "unexpected request"}).to_string() }
+    })
+}
+
+impl Api {
+    async fn run_personas(&self, run: &str) -> Vec<String> {
+        let map: Value = db::query_scalar("select personas from public.runs where id::text = $1").bind(run).fetch_one(&self.pool).await.unwrap();
+        map.as_object().unwrap().keys().cloned().collect()
+    }
+
+    async fn goal_category(&self, goal: &str) -> Option<String> {
+        db::query_scalar("select category_id::text from public.goals where id::text = $1").bind(goal).fetch_one(&self.pool).await.unwrap()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_music_goal_runs_with_the_music_team_category_and_template() {
+    let models = music_models();
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let body = json!({"title": "Learn Clair de Lune on piano by March", "deadline": "2027-03-31", "timezone": "Europe/Berlin"});
+    let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(body)).await;
+    assert_eq!(status, 202, "{started}");
+    let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
+    assert_eq!(api.run_personas(&run).await, ["instrument-teacher", "intake-interviewer", "plugin-builder", "practice-coach"]);
+    assert_eq!(api.goal_category(&goal).await, aroh_server::teams::seeded_id(u, "hobby-skill"));
+
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "level", "answer": "Two years"}])).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "approve", "{view}");
+    assert_eq!(view["waiting"][0]["data"]["plan"]["trackers"][1]["name"], "Tempo");
+    api.answer(&t, &run, "approve", json!(true)).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["status"]["status"], "done", "{view}");
+    assert_eq!(api.count("select count(*) from public.plugins where goal_id::text = $1 and enabled and version = 1 and name = 'music'", &goal).await, 1);
+    assert_eq!(api.count("select count(*) from public.trackers where goal_id::text = $1", &goal).await, 3);
+    let calls: Vec<String> = models.sent().iter().map(body_text).filter(|b| b.contains("\"stream\":true")).collect();
+    assert_eq!(calls.len(), 4, "intake, research, plan, plugin");
+    assert!(calls.iter().all(|b| !b.contains("You are Goal planner") && !b.contains("You are Goal researcher")));
+
+    let learning = aroh_server::teams::seeded_id(u, "learning").unwrap();
+    let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "category_id": learning, "timezone": "UTC"}))).await;
+    assert_eq!(status, 202, "{started}");
+    assert_eq!(api.run_personas(started["run_id"].as_str().unwrap()).await, ["intake-interviewer", "plugin-builder", "practice-planner", "tutor"]);
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Ship my side project", "timezone": "UTC"}))).await;
+    assert_eq!(api.goal_category(started["goal_id"].as_str().unwrap()).await, None, "the general team leaves the category open");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn persona_library_lists_copies_and_edits_and_runs_use_the_copy() {
+    let api = api(music_models(), offline()).await;
+    let (_u, t) = api.signed_up().await;
+    let (status, list) = api.call(Method::Get, "/v1/personas", Some(&t), None).await;
+    assert_eq!(status, 200, "{list}");
+    let entries = list.as_array().unwrap();
+    assert_eq!(entries.len(), 15);
+    assert!(entries.iter().all(|p| p["source"] == "builtin" && p["builtin"] == true));
+    let coach = entries.iter().find(|p| p["name"] == "practice-coach").unwrap();
+    assert_eq!((coach["display_name"].as_str(), coach["teams"].clone()), (Some("Practice coach"), json!(["music"])));
+    let shipped = coach["toml"].as_str().unwrap().to_string();
+
+    let copy = |name: &str| format!("/v1/personas/{name}/copy");
+    let (status, copied) = api.call(Method::Post, &copy("practice-coach"), Some(&t), None).await;
+    assert_eq!((status, copied["source"].as_str(), copied["toml"].as_str()), (201, Some("library"), Some(shipped.as_str())), "{copied}");
+    assert_eq!(api.call(Method::Post, &copy("practice-coach"), Some(&t), None).await.0, 409);
+    assert_eq!(api.call(Method::Post, &copy("nobody"), Some(&t), None).await.0, 404);
+    let edit = |name: &str, toml: &str| (format!("/v1/personas/{name}"), json!({"toml": toml}));
+    let (path, body) = edit("budget-coach", aroh_server::workflows::shipped("budget-coach").unwrap());
+    assert_eq!(api.call(Method::Put, &path, Some(&t), Some(body)).await.0, 404, "copy first");
+
+    let edited = shipped.replace("15 to 45 minutes", "20 to 40 minutes");
+    assert_ne!(edited, shipped);
+    for (bad, why) in [
+        (edited.replace("name = \"practice-coach\"", "name = \"other-coach\""), "name"),
+        (edited.replace("model = \"default\"", "model = \"default\"\ntools = [\"send_mail\"]"), "send_mail"),
+        (edited.replace("evals = [", "evals = [\"vibes(items)\", "), "vibes"),
+        (edited.replace("summary = \"string\"", "summary = \"int\""), "output"),
+        ("name = 3".to_string(), "practice-coach.toml"),
+    ] {
+        let (path, body) = edit("practice-coach", &bad);
+        let (status, err) = api.call(Method::Put, &path, Some(&t), Some(body)).await;
+        assert_eq!(status, 422, "{why}: {err}");
+        assert!(err["error"]["message"].as_str().unwrap().contains(why), "{why}: {err}");
+    }
+    let (path, body) = edit("practice-coach", &edited);
+    let (status, saved) = api.call(Method::Put, &path, Some(&t), Some(body)).await;
+    assert_eq!((status, saved["toml"].as_str(), saved["source"].as_str()), (200, Some(edited.as_str()), Some("library")), "{saved}");
+
+    assert_eq!(api.call(Method::Post, &copy("budget-coach"), Some(&t), None).await.0, 201);
+    let unsafe_edit: String = aroh_server::workflows::shipped("budget-coach").unwrap().lines().filter(|l| !l.contains("Safety:")).collect::<Vec<_>>().join("\n");
+    let (path, body) = edit("budget-coach", &unsafe_edit);
+    let (status, err) = api.call(Method::Put, &path, Some(&t), Some(body)).await;
+    assert_eq!(status, 422, "{err}");
+    assert!(err["error"]["message"].as_str().unwrap().contains("Safety:"), "{err}");
+
+    let (_, list) = api.call(Method::Get, "/v1/personas", Some(&t), None).await;
+    let sources: Vec<(String, String)> = list.as_array().unwrap().iter().filter(|p| p["source"] == "library").map(|p| (p["name"].as_str().unwrap().into(), p["toml"].as_str().unwrap().into())).collect();
+    assert_eq!(sources.len(), 2);
+    assert!(sources.contains(&("practice-coach".into(), edited.clone())));
+
+    let (_v, tv) = api.signed_up().await;
+    let (_, other) = api.call(Method::Get, "/v1/personas", Some(&tv), None).await;
+    assert!(other.as_array().unwrap().iter().all(|p| p["source"] == "builtin"));
+    let (path, body) = edit("practice-coach", &edited);
+    assert_eq!(api.call(Method::Put, &path, Some(&tv), Some(body)).await.0, 404);
+
+    let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Learn Clair de Lune on piano by March", "timezone": "UTC"}))).await;
+    assert_eq!(status, 202, "{started}");
+    let run = started["run_id"].as_str().unwrap();
+    let text: String = db::query_scalar("select personas->>'practice-coach' from public.runs where id::text = $1").bind(run).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(text, edited, "the run snapshots the owner's library copy");
+    assert_eq!(api.call(Method::Get, "/v1/personas", None, None).await.0, 401);
+}

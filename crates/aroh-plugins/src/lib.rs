@@ -39,7 +39,13 @@ const PLACEHOLDER_ID: &str = "00000000-0000-7000-8000-000000000000";
 /// The built-in templates by name: the bundles an owner can reuse and the
 /// plugin-builder persona starts from.
 /// Each one validates (tested).
-pub const TEMPLATES: &[(&str, &str)] = &[("fitness", include_str!("../templates/fitness.toml"))];
+pub const TEMPLATES: &[(&str, &str)] = &[
+    ("fitness", include_str!("../templates/fitness.toml")),
+    ("music", include_str!("../templates/music.toml")),
+    ("learning", include_str!("../templates/learning.toml")),
+    ("finance", include_str!("../templates/finance.toml")),
+    ("habits", include_str!("../templates/habits.toml")),
+];
 
 /// Returns the built-in template called `name`, if any.
 /// The text is a complete bundle.

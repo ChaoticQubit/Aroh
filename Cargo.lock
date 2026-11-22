@@ -258,6 +258,7 @@ dependencies = [
  "troupekit-host",
  "troupekit-providers",
  "troupekit-tools",
+ "url",
  "utoipa",
  "uuid",
  "zeroize",

@@ -6,6 +6,8 @@ import zoneinfo
 
 FMT = "%Y-%m-%dT%H:%M:%S"
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "aroh-plugins", "templates", "fitness.toml")
+MUSIC = os.path.join(os.path.dirname(TEMPLATE), "music.toml")
+MUSIC_GOAL = "Clair de Lune"
 
 
 def plan_times(now, room=30):
@@ -104,6 +106,53 @@ def calendar_rules(now):
     ]
 
 
+def music_times(now):
+    """Local starts of the music plan: a one-off listen-through and the daily practice series.
+    Input: aware local now. Output: (one-off start, series start). The one-off is 100 minutes
+    out (rounded to 5), clear of the six-pack workout, or 12:30 tomorrow when that is too late."""
+    start = (now + datetime.timedelta(minutes=100)).replace(second=0, microsecond=0)
+    start = max(start.replace(minute=start.minute - start.minute % 5), now.replace(hour=8, minute=0, second=0, microsecond=0))
+    if start + datetime.timedelta(minutes=20) > now.replace(hour=22, minute=0, second=0, microsecond=0):
+        start = (now + datetime.timedelta(days=1)).replace(hour=12, minute=30, second=0, microsecond=0)
+    return start, (now + datetime.timedelta(days=1)).replace(hour=19, minute=0, second=0, microsecond=0)
+
+
+def music_rules(now):
+    """Script rules for the music flow, matched before the six-pack rules: Clair de Lune intake
+    questions, the instrument teacher's research, the practice coach's plan and the music template.
+    Input: aware local now. Output: the rules as a list."""
+    with open(MUSIC, encoding="utf8") as f:
+        bundle = f.read()
+    listen, practice = music_times(now)
+    questions = {"questions": [
+        {"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": []},
+        {"id": "minutes", "text": "How many minutes a day can you practise?", "kind": "number", "choices": []},
+    ]}
+    research = {"summary": "Clair de Lune is an advanced intermediate piece; learn it in four sections, hands separately and slow first, then raise the tempo step by step.",
+                "sources": [{"title": "Learning Clair de Lune", "url": "https://example.org/clair-de-lune"}]}
+    plan = {
+        "summary": "Daily 30 minute practice, one section at a time, with a weekly run-through until March.",
+        "timezone": str(now.tzinfo),
+        "items": [
+            {"title": "Listen through Clair de Lune with the score", "start": listen.strftime(FMT), "minutes": 20, "rrule": None, "notes": "Mark the four sections"},
+            {"title": "Piano practice", "start": practice.strftime(FMT), "minutes": 30, "rrule": "FREQ=DAILY", "notes": "Hands separately, slow"},
+        ],
+        "trackers": [
+            {"name": "Practice", "fields": [{"key": "minutes", "label": "Practice", "kind": "number", "unit": "min"}],
+             "cadence": {"freq": "daily", "weekdays": [], "at": "20:00"}, "rules": None},
+            {"name": "Tempo", "fields": [{"key": "bpm", "label": "Tempo", "kind": "number", "unit": "bpm"}], "cadence": None, "rules": None},
+            {"name": "Pieces", "fields": [{"key": "piece", "label": "Piece or passage", "kind": "text", "unit": None},
+                                          {"key": "progress", "label": "Progress", "kind": "number", "unit": "%"}], "cadence": None, "rules": None},
+        ],
+    }
+    return [
+        {"when": ["You are Intake interviewer", MUSIC_GOAL], "reply": {"text": json.dumps(questions)}},
+        {"when": ["You are Instrument teacher"], "reply": {"text": json.dumps(research)}},
+        {"when": ["You are Practice coach"], "reply": {"text": json.dumps(plan)}},
+        {"when": ["You are Plugin builder", MUSIC_GOAL], "reply": {"text": json.dumps({"bundle_toml": bundle})}},
+    ]
+
+
 PREFERENCE = "Plan the morning plank in the evening instead."
 
 
@@ -124,6 +173,7 @@ def main():
     path, zone, minutes = sys.argv[1], sys.argv[2], int(sys.argv[3])
     flow = sys.argv[4] if len(sys.argv) > 4 else "drive.js"
     calendar = flow == "drive-calendar.js"
+    music = flow == "drive-music.js"
     now = datetime.datetime.now(zoneinfo.ZoneInfo(zone))
     data = script(now, minutes)
     assert len(data["rules"]) == 7
@@ -138,6 +188,9 @@ def main():
     if flow == "pod15.js":
         pod15(data, plan, now)
         assert len(data["rules"]) == 8
+    if music:
+        data["rules"] = data["rules"][:1] + music_rules(now) + data["rules"][1:]
+        assert len(data["rules"]) == 11
     with open(path, "w", encoding="utf8") as f:
         json.dump(data, f)
     print(json.dumps({"now": now.strftime(FMT), "items": [i["start"] for i in plan["items"]], "meals_at": plan["trackers"][1]["cadence"]["at"]}))

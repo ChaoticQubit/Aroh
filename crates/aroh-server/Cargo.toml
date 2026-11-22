@@ -39,6 +39,7 @@ base64 = "0.22"
 jsonwebtoken = "9"
 utoipa = { version = "5", features = ["yaml", "uuid", "chrono"] }
 schemars = { version = "1", features = ["chrono04"] }
+url = "2"
 
 [dev-dependencies]
 aroh-server = { path = ".", features = ["fake-transports"] }

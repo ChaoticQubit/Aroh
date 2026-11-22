@@ -1,0 +1,137 @@
+{
+  "description": "Days to the deadline, this week's study sessions, minutes studied, modules done, quiz scores, a four-week study streak and the next sessions.",
+  "format": 1,
+  "name": "learning",
+  "personas": [],
+  "sections": [
+    {
+      "items": [
+        {
+          "deadline": {
+            "bind": "deadline"
+          },
+          "kind": "countdown",
+          "label": "Until the deadline"
+        },
+        {
+          "kind": "progress_ring",
+          "label": "This week",
+          "rings": [
+            {
+              "label": "Sessions",
+              "series": 1,
+              "target": {
+                "bind": "week_planned"
+              },
+              "unit": "count",
+              "value": {
+                "bind": "week_done"
+              }
+            }
+          ]
+        },
+        {
+          "delta": {
+            "bind": "change",
+            "field": "done",
+            "tracker": "Modules"
+          },
+          "kind": "stat_tile",
+          "label": "Modules done",
+          "unit": "count",
+          "value": {
+            "bind": "latest",
+            "field": "done",
+            "tracker": "Modules"
+          }
+        },
+        {
+          "kind": "bar_chart",
+          "label": "Minutes studied",
+          "points": {
+            "bind": "series",
+            "field": "minutes",
+            "tracker": "Sessions"
+          },
+          "series": 2,
+          "unit": "min"
+        },
+        {
+          "kind": "line_chart",
+          "label": "Quiz score (%)",
+          "points": {
+            "bind": "series",
+            "field": "score",
+            "tracker": "Quizzes"
+          },
+          "series": 3,
+          "unit": "count"
+        },
+        {
+          "days": {
+            "bind": "streak",
+            "tracker": "Sessions"
+          },
+          "kind": "streak_heatmap",
+          "label": "Study, last 4 weeks",
+          "series": 2
+        }
+      ],
+      "title": "Progress"
+    },
+    {
+      "items": [
+        {
+          "actions": {
+            "bind": "actions",
+            "limit": 4,
+            "when": "next"
+          },
+          "kind": "action_list",
+          "label": "Next sessions"
+        }
+      ],
+      "title": "Upcoming"
+    }
+  ],
+  "title": "Learning",
+  "tools": [],
+  "trackers": [
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "minutes",
+          "kind": "number",
+          "label": "Study time",
+          "unit": "min"
+        }
+      ],
+      "name": "Sessions"
+    },
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "done",
+          "kind": "number",
+          "label": "Modules done",
+          "unit": "count"
+        }
+      ],
+      "name": "Modules"
+    },
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "score",
+          "kind": "number",
+          "label": "Quiz score",
+          "unit": "%"
+        }
+      ],
+      "name": "Quizzes"
+    }
+  ]
+}

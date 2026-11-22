@@ -521,6 +521,94 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/personas:
+    get:
+      tags:
+      - personas
+      operationId: list_personas
+      responses:
+        '200':
+          description: Every built-in persona, replaced by the owner's library copy when there is one
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PersonaView'
+      security:
+      - bearer: []
+  /v1/personas/{name}:
+    put:
+      tags:
+      - personas
+      operationId: edit_persona
+      parameters:
+      - name: name
+        in: path
+        description: Library persona name
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditPersona'
+        required: true
+      responses:
+        '200':
+          description: The edited library copy; later runs use it
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaView'
+        '404':
+          description: 'not in the library: copy it first'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: 'invalid persona: the error names the file and field'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/personas/{name}/copy:
+    post:
+      tags:
+      - personas
+      operationId: copy_persona
+      parameters:
+      - name: name
+        in: path
+        description: Built-in persona name
+        required: true
+        schema:
+          type: string
+      responses:
+        '201':
+          description: Copied into the owner's library
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: already in the library
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/plugins/{plugin_id}:
     get:
       tags:
@@ -782,6 +870,18 @@ components:
           format: int64
         zone:
           type: string
+    EditPersona:
+      type: object
+      description: |-
+        Body of `PUT /v1/personas/{name}`: the full persona TOML that replaces
+        the owner's library copy.
+        Validated before it is stored.
+      required:
+      - toml
+      properties:
+        toml:
+          type: string
+      additionalProperties: false
     ErrorBody:
       type: object
       description: |-
@@ -894,6 +994,59 @@ components:
           - 'null'
         ok:
           type: boolean
+    Kind:
+      type: string
+      description: |-
+        The kind of goal a team is built for.
+        Serialized in snake case, as the persona list shows it.
+        `General` covers goals no other kind matches.
+      enum:
+      - general
+      - fitness
+      - learning
+      - music
+      - finance
+      - habits
+    Origin:
+      type: string
+      description: |-
+        Where a listed persona's text comes from: the server's shipped file or
+        the owner's library copy, which runs use instead.
+        Serialized in snake case.
+      enum:
+      - builtin
+      - library
+    PersonaView:
+      type: object
+      description: |-
+        One persona as the library lists it: name, display name and role from
+        its text, the team kinds that use it for research or planning, where
+        the text comes from, whether a built-in exists, and the TOML itself.
+      required:
+      - name
+      - display_name
+      - role
+      - teams
+      - source
+      - builtin
+      - toml
+      properties:
+        builtin:
+          type: boolean
+        display_name:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        source:
+          $ref: '#/components/schemas/Origin'
+        teams:
+          type: array
+          items:
+            $ref: '#/components/schemas/Kind'
+        toml:
+          type: string
     Platform:
       type: string
       description: Push platform of a device; only iOS for now (FCM comes with Android, Q22).

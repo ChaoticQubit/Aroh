@@ -6,6 +6,7 @@ use crate::queue::PgQueue;
 use crate::rows::{get_row, insert_run, list_rows, prepare_reads, put_row, run_row, run_row_for, utc, RunRow};
 use crate::tools::local_text;
 use crate::vault::{check_vendor, KeyInfo};
+use crate::teams;
 use crate::triage::{triage_input, StartTriage};
 use crate::workflows::{self, CALENDAR_TRIAGE, LOG_INTAKE, NEW_GOAL, REPLAN};
 use crate::db;
@@ -26,7 +27,7 @@ use troupekit_agent::{Limits, PeriodLimit};
 use troupekit_core::ids::RunId;
 use troupekit_core::secret::Secret;
 use troupekit_core::store::CheckpointStore;
-use troupekit_graph::{Ask, GraphRun};
+use troupekit_graph::{Ask, GraphRun, Workflow};
 use troupekit_host::{JobQueue, Lease, Processed, Runner, TickOptions, TickReport, WorkOptions};
 use troupekit_providers::CompletionRequest;
 use utoipa::ToSchema;
@@ -182,6 +183,13 @@ fn parse_tz(name: &str) -> Result<Tz, ServerError> {
     name.parse().map_err(|_| ServerError::BadRequest(format!("unknown timezone `{name}`")))
 }
 
+/// Joins a goal's `title` and optional `context` into one text.
+/// The team classifier in `teams` reads this text for keywords.
+/// Returns the joined text; an absent context adds nothing.
+fn about(title: &str, context: Option<&str>) -> String {
+    format!("{title} {}", context.unwrap_or(""))
+}
+
 fn check_text(field: &str, text: &str) -> Result<(), ServerError> {
     let n = text.chars().count();
     if n == 0 || n > MAX_TEXT || text.trim().is_empty() {
@@ -296,13 +304,20 @@ impl Engine {
     }
 
     pub(crate) async fn start(&self, user: Uuid, goal: Option<Uuid>, name: &str, input: Map<String, Value>) -> Result<RunId, ServerError> {
-        let wf = workflows::workflow(name)?;
+        self.launch(user, goal, workflows::workflow(name)?, input).await
+    }
+
+    /// Runs the parsed workflow `wf` for `user` (and `goal`) on `input`.
+    /// Takes a parsed workflow so a caller can staff its agent nodes first.
+    /// Returns the new run id, or the setup error.
+    async fn launch(&self, user: Uuid, goal: Option<Uuid>, wf: Workflow, input: Map<String, Value>) -> Result<RunId, ServerError> {
+        let name = wf.name.clone();
         let personas = workflows::snapshot(&self.deps.pool, user, goal, &wf).await?;
         let events = Arc::new(EventBuffer::default());
         let io = RunIo::build(self.deps.clone(), user, goal, None, &personas, events.clone()).await?;
         let limits = self.limits(user, goal).await?;
         let run = GraphRun::new(wf, input, limits, &io).await?;
-        let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name.to_string(), personas };
+        let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name, personas };
         insert_run(&self.deps.pool, &row).await?;
         let runner = self.runner(events, io);
         runner.enqueue(&run).await?;
@@ -389,10 +404,12 @@ impl Engine {
             Some(g) if !g.deleted => g,
             Some(_) => return Err(ServerError::NotFound(format!("goal {id}"))),
             None => {
+                let inferred = || teams::pick(None, &about(&req.title, req.context.as_deref())).category.and_then(|c| teams::seeded_id(user, c));
+                let category = req.category_id.map(|c| c.to_string()).or_else(inferred);
                 let mut g = Goal {
                     id: id.to_string(),
                     user_id: user.to_string(),
-                    category_id: req.category_id.map(|c| c.to_string()),
+                    category_id: category,
                     title: req.title.clone(),
                     context: req.context.clone(),
                     deadline: req.deadline.clone(),
@@ -411,9 +428,13 @@ impl Engine {
         input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
         input.insert("profile".into(), json!(self.profile(user).await?));
         input.insert("busy".into(), json!(self.busy(user, tz, now).await?));
-        let template = aroh_plugins::template("fitness").expect("the fitness template ships");
+        let slug = goal.category_id.as_deref().and_then(|c| teams::seeded_slug(user, c));
+        let team = teams::pick(slug, &about(&goal.title, goal.context.as_deref()));
+        let template = aroh_plugins::template(team.template).expect("every team template ships");
         input.insert("plugin_guide".into(), json!({"template": template, "reference": aroh_plugins::reference()}));
-        let run = self.start(user, Some(id), NEW_GOAL, input).await?;
+        let mut wf = workflows::workflow(NEW_GOAL)?;
+        teams::staff(&mut wf, team);
+        let run = self.launch(user, Some(id), wf, input).await?;
         self.ensure_review(user, id, tz).await?;
         Ok(Started { goal_id: Some(id), run_id: run.0 })
     }

@@ -2,7 +2,9 @@ use crate::auth::{Service, UserId, Verifier};
 use crate::engine::{Answer, Engine, KeyTest, RunSummary, RunView, SetKey, StartGoal, StartReplan, Started, SubmitLog, TickSummary, Waiting};
 use crate::error::{ErrorBody, ErrorDetail, ServerError};
 use crate::insights::{self, Insight};
+use crate::personas::{EditPersona, Origin, PersonaView};
 use crate::plugins::{PluginView, SavePlugin, Writer};
+use crate::teams::Kind;
 use crate::push::{ApnsEnv, DeviceInfo, Platform, PushSummary, RegisterDevice};
 use crate::triage::{StartTriage, TriageEvent};
 use crate::triggers::{ReviewSchedule, SetReview};
@@ -281,6 +283,33 @@ async fn enable_plugin(State(s): State<AppState>, UserId(user): UserId, Path(plu
     Ok(Json(PluginView::from(&writer(&s, user).enable(&plugin_id.to_string()).await?)))
 }
 
+#[utoipa::path(get, path = "/v1/personas", tag = "personas", security(("bearer" = [])),
+    responses((status = 200, description = "Every built-in persona, replaced by the owner's library copy when there is one", body = [PersonaView])))]
+async fn list_personas(State(s): State<AppState>, UserId(user): UserId) -> Result<Json<Vec<PersonaView>>, ServerError> {
+    Ok(Json(writer(&s, user).list_personas().await?))
+}
+
+#[utoipa::path(post, path = "/v1/personas/{name}/copy", tag = "personas", security(("bearer" = [])),
+    params(("name" = String, Path, description = "Built-in persona name")),
+    responses((status = 201, description = "Copied into the owner's library", body = PersonaView), (status = 404, body = ErrorBody), (status = 409, description = "already in the library", body = ErrorBody)))]
+async fn copy_persona(State(s): State<AppState>, UserId(user): UserId, Path(name): Path<String>) -> Result<(StatusCode, Json<PersonaView>), ServerError> {
+    Ok((StatusCode::CREATED, Json(writer(&s, user).copy_persona(&name).await?)))
+}
+
+#[utoipa::path(put, path = "/v1/personas/{name}", tag = "personas", security(("bearer" = [])),
+    params(("name" = String, Path, description = "Library persona name")),
+    request_body = EditPersona,
+    responses((status = 200, description = "The edited library copy; later runs use it", body = PersonaView), (status = 404, description = "not in the library: copy it first", body = ErrorBody), (status = 422, description = "invalid persona: the error names the file and field", body = ErrorBody)))]
+async fn edit_persona(
+    State(s): State<AppState>,
+    UserId(user): UserId,
+    Path(name): Path<String>,
+    json: Result<Json<EditPersona>, JsonRejection>,
+) -> Result<Json<PersonaView>, ServerError> {
+    let req = body(json, true)?;
+    Ok(Json(writer(&s, user).edit_persona(&name, &req.toml).await?))
+}
+
 #[utoipa::path(post, path = "/v1/tick", tag = "engine", security(("bearer" = [])),
     responses((status = 200, description = "Step mode: due jobs processed (service role only)", body = TickSummary), (status = 403, body = ErrorBody)))]
 async fn tick(State(s): State<AppState>, _svc: Service) -> Result<Json<TickSummary>, ServerError> {
@@ -345,9 +374,11 @@ impl Modify for Bearer {
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
     paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, start_triage, list_runs, get_run, answer, tick, enqueue_hook, register_device, unregister_device, push_tick,
-        list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review),
+        list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review,
+        list_personas, copy_persona, edit_persona),
     components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
-        SavePlugin, PluginView, Insight, ReviewSchedule, SetReview)),
+        SavePlugin, PluginView, Insight, ReviewSchedule, SetReview,
+        EditPersona, PersonaView, Origin, Kind)),
     modifiers(&Bearer)
 )]
 pub struct ApiDoc;
@@ -380,6 +411,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/goals/{goal_id}/plugins", get(list_plugins).put(save_plugin))
         .route("/v1/plugins/{plugin_id}", get(get_plugin))
         .route("/v1/plugins/{plugin_id}/enable", post(enable_plugin))
+        .route("/v1/personas", get(list_personas))
+        .route("/v1/personas/{name}", put(edit_persona))
+        .route("/v1/personas/{name}/copy", post(copy_persona))
         .route("/v1/devices/{device_id}", put(register_device).delete(unregister_device))
         .route("/v1/push/tick", post(push_tick))
         .route("/v1/insights", get(list_insights))

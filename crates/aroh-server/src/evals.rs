@@ -156,9 +156,45 @@ pub fn valid_plugin(output: &Value, args: &[Value]) -> Result<(), String> {
     crate::plugins::check(text).map(|_| ()).map_err(|e| e.to_string())
 }
 
+const PRIVATE_SUFFIXES: [&str; 4] = [".localhost", ".local", ".internal", ".lan"];
+
+fn public_url(text: &str) -> Result<(), String> {
+    let url = url::Url::parse(text).map_err(|e| format!("`{text}` is not a URL: {e}"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("`{text}` is not http or https"));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(format!("`{text}` carries credentials"));
+    }
+    let public = match url.host() {
+        Some(url::Host::Ipv4(ip)) => troupekit_tools::http::is_public_ip(ip.into()),
+        Some(url::Host::Ipv6(ip)) => troupekit_tools::http::is_public_ip(ip.into()),
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            d.contains('.') && d != "localhost" && !PRIVATE_SUFFIXES.iter().any(|s| d.ends_with(s))
+        }
+        None => false,
+    };
+    if !public {
+        return Err(format!("`{text}` is not a public address"));
+    }
+    Ok(())
+}
+
+/// Eval `public_sources(path)`: every `url` of the list at `path` is an
+/// http or https address on a public host, without credentials. An empty
+/// list passes, so research without search still succeeds.
+pub fn public_sources(output: &Value, args: &[Value]) -> Result<(), String> {
+    let path = args.first().and_then(Value::as_str).filter(|_| args.len() == 1).ok_or("takes (path)")?;
+    for url in lookup(output, &format!("{path}.url")) {
+        public_url(url.as_str().ok_or_else(|| format!("{path}: a url is not a string"))?)?;
+    }
+    Ok(())
+}
+
 /// Builds the eval registry every Aroh run uses: the built-in `min_items`
-/// plus the domain evals `no_overlap`, `within_availability` and
-/// `valid_plugin`. Returns the registry, with no busy time bound.
+/// plus the domain evals `no_overlap`, `within_availability`, `valid_plugin`
+/// and `public_sources`. Returns the registry, with no busy time bound.
 pub fn registry() -> EvalRegistry {
     registry_with_busy(Vec::new())
 }
@@ -168,6 +204,7 @@ pub fn registry() -> EvalRegistry {
 /// checked against each other. Returns the registry.
 pub fn registry_with_busy(busy: Vec<Slot>) -> EvalRegistry {
     let mut r = EvalRegistry::new();
+    r.register("public_sources", Arc::new(public_sources)).expect("fresh name");
     let overlap = move |output: &Value, args: &[Value]| {
         if args.len() != 1 {
             return Err("takes (path)".to_string());
@@ -276,5 +313,32 @@ mod tests {
         assert!(valid_plugin(&json!({}), &args).is_err());
         assert!(valid_plugin(&good, &[]).is_err());
         assert!(registry().get("valid_plugin").is_some());
+    }
+
+    #[test]
+    fn public_sources_accepts_public_and_empty_lists_only() {
+        let args = [json!("sources")];
+        let with = |urls: &[&str]| json!({"sources": urls.iter().map(|u| json!({"title": "t", "url": u})).collect::<Vec<_>>()});
+        assert!(public_sources(&with(&[]), &args).is_ok());
+        assert!(public_sources(&json!({"summary": "no search"}), &args).is_ok());
+        assert!(public_sources(&with(&["https://example.org/core", "http://8.8.8.8/x", "https://[2606:4700::1]/"]), &args).is_ok());
+        for bad in [
+            "http://localhost:8080/x",
+            "http://127.0.0.1/x",
+            "http://10.0.0.5/x",
+            "http://192.168.1.1/",
+            "http://169.254.169.254/latest",
+            "http://[::1]/",
+            "https://user:pw@example.org/",
+            "file:///etc/passwd",
+            "https://printer.local/",
+            "https://intranet/",
+            "not a url",
+        ] {
+            assert!(public_sources(&with(&["https://example.org/", bad]), &args).is_err(), "{bad}");
+        }
+        assert!(public_sources(&json!({"sources": [{"title": "t", "url": 3}]}), &args).is_err());
+        assert!(public_sources(&with(&[]), &[]).is_err());
+        assert!(registry().get("public_sources").is_some());
     }
 }

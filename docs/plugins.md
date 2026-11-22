@@ -81,4 +81,13 @@ Field sources need a number field. When a binding has no data (no entries, no de
 
 ## Templates
 
-`crates/aroh-plugins/templates/` ships the built-in bundles. `fitness` reproduces the derived dashboard for its Weight, Protein, Workouts and Steps trackers: countdown, this week's ring, one line per tracker with data, the four-week streak and the next four sessions. Weight, workouts and steps declare their Apple Health sources. The plugin builder gets it as its example, and owners can reuse it with `plugins_use_template`.
+`crates/aroh-plugins/templates/` ships the built-in bundles. `fitness` reproduces the derived dashboard for its Weight, Protein, Workouts and Steps trackers: countdown, this week's ring, one line per tracker with data, the four-week streak and the next four sessions. Weight, workouts and steps declare their Apple Health sources.
+
+| Template | Trackers | View |
+|---|---|---|
+| `music` | Practice (minutes), Tempo (bpm), Pieces (piece, progress %) | countdown, week ring, minutes bar chart, tempo line, practice streak, piece progress tile, practice notes, next sessions |
+| `learning` | Sessions (minutes), Modules (done), Quizzes (score %) | countdown, week ring, modules tile with weekly change, minutes bar chart, quiz line, study streak, next sessions |
+| `finance` | Savings (amount with a target), Spending (amount, what for) | savings vs target, savings line, spent today, spending bar chart and log, next money tasks |
+| `habits` | Check-in (done, note) | today's checks, week ring, check-in and action streaks, notes |
+
+Units outside the contract's list (bpm, percent) chart as `count` with the unit in the label. The server gives the plugin builder the template of the goal's team (`crates/aroh-server/src/teams.rs`): fitness for health and fitness, music for music goals in Hobby and Skill, learning, finance, and habits for habit and general goals. Owners can reuse any template with `plugins_use_template`.

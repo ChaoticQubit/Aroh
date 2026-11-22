@@ -51,7 +51,7 @@
 	const SCREENS: { name: string; title: string; tab: TabId | 'settings'; screen: Component<any>; props: Record<string, unknown> }[] = [
 		{ name: 'Today', title: 'Today', tab: 'today', screen: TodayScreen, props: { actions: sixpackActions, checkIn: weightCheckIn, insight: sixpackInbox.insights[0] } },
 		{ name: 'Calendar', title: 'Calendar', tab: 'calendar', screen: CalendarScreen, props: { actions: sixpackActions, categories } },
-		{ name: 'Goals', title: 'Goals', tab: 'goals', screen: GoalsScreen, props: { goals: sixpackGoals } },
+		{ name: 'Goals', title: 'Goals', tab: 'goals', screen: GoalsScreen, props: { goals: sixpackGoals, categories } },
 		{ name: 'Goal', title: 'Goals', tab: 'goals', screen: GoalScreen, props: { goal: sixpackHeader, view: sixpackView, versions: [{ value: 'derived', label: 'Derived' }, { value: 'p2', label: 'v2' }, { value: 'p1', label: 'v1' }], version: 'p2' } },
 		{ name: 'New goal', title: 'New goal', tab: 'goals', screen: NewGoalScreen, props: { messages: sixpackChat } },
 		{ name: 'Inbox', title: 'Inbox', tab: 'inbox', screen: InboxScreen, props: { ...sixpackInboxItems, runs: sixpackInbox.runs } },
