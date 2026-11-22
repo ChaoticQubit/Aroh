@@ -14,7 +14,10 @@ const ACCOUNT: &str = "account";
 const PENDING: &str = "pending_logs";
 
 /// Settings the owner may write, all stored as text.
-pub const SETTINGS: [&str; 6] = ["server_url", "goal_budget_usd", "calendars", "health", "supabase_url", "supabase_anon_key"];
+pub const SETTINGS: [&str; 7] = ["server_url", "goal_budget_usd", "calendars", "health", "supabase_url", "supabase_anon_key", "dismissed_insights"];
+
+/// Most insight ids `dismissed_insights` holds: the Inbox shows the 30 newest insights.
+pub const MAX_DISMISSED: usize = 30;
 
 /// Most free-text logs that may wait for the engine at once.
 pub const MAX_PENDING: usize = 100;
@@ -64,8 +67,8 @@ pub fn settings(conn: &Connection) -> Result<BTreeMap<String, String>> {
 
 /// Validates and stores one owner setting; an empty value clears it.
 /// Errors with `Invalid` for an unknown name, a non-https server URL, a negative or
-/// non-numeric budget, a bad Supabase URL or anon key, or a switch that is
-/// not `true` or `false`.
+/// non-numeric budget, a bad Supabase URL or anon key, a dismissed list that is not
+/// at most [`MAX_DISMISSED`] comma-separated uuids, or a switch that is not `true` or `false`.
 pub fn set_setting(conn: &Connection, name: &str, value: &str) -> Result<()> {
     if !SETTINGS.contains(&name) {
         return Err(invalid(format!("setting {name}")));
@@ -76,6 +79,15 @@ pub fn set_setting(conn: &Connection, name: &str, value: &str) -> Result<()> {
             "server_url" => aroh_domain::rows::check_url("server_url", value)?,
             "supabase_url" => aroh_domain::rows::check_url("supabase_url", value)?,
             "supabase_anon_key" => aroh_domain::rows::check_public_key("supabase_anon_key", value)?,
+            "dismissed_insights" => {
+                let ids: Vec<&str> = value.split(',').collect();
+                if ids.len() > MAX_DISMISSED {
+                    return Err(invalid("dismissed_insights"));
+                }
+                for id in ids {
+                    aroh_domain::rows::check_uuid("dismissed_insights", id)?;
+                }
+            }
             "goal_budget_usd" => {
                 let usd: f64 = value.parse().map_err(|_| invalid("goal_budget_usd"))?;
                 if !usd.is_finite() || !(0.0..=1_000_000.0).contains(&usd) {

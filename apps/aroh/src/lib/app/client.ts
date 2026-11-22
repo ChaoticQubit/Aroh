@@ -86,7 +86,7 @@ export type Snapshot = {
 	providers: ProviderSetting[];
 	search: SearchSetting[];
 	budgets: Budget[];
-	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key', string>>;
+	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights', string>>;
 	pending_logs: { text: string; at: string }[];
 	busy?: BusyBlock[];
 };
@@ -125,7 +125,7 @@ export const saveProvider = (vendor: string, model: string) => invoke<ProviderSe
 export const saveBudget = (usd: number | null) => invoke<null>('app_save_budget', { usd });
 
 /** Stores one device setting. */
-export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key', value: string) => invoke<null>('app_set_setting', { name, value });
+export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights', value: string) => invoke<null>('app_set_setting', { name, value });
 
 /** Asks for notification permission once and reports whether it is granted. */
 export const notificationPermission = () => invoke<boolean>('app_notification_permission');

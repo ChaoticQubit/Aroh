@@ -150,12 +150,15 @@ fn no_search() -> Toolkit {
     Toolkit::new("search").with(Arc::new(tool))
 }
 
-/// Router condition `autonomy_gate()` of the replan workflow: `ask` when
-/// the goal's autonomy is `ask`, the proposal is big under `balanced`, or
-/// it touches a locked action; `apply` otherwise (Q19).
+/// Router condition `autonomy_gate()` of the replan workflow: `none` when
+/// the proposal has no change; `ask` when the goal's autonomy is `ask`, the
+/// proposal is big under `balanced`, or it touches a locked action; else `apply` (Q19).
 pub fn autonomy_gate(state: &Map<String, Value>, _args: &[Value]) -> Result<String, String> {
     let autonomy = state.get("autonomy").and_then(Value::as_str).ok_or("autonomy is not set")?;
     let record = state.get("proposal_record").ok_or("proposal_record is not set")?;
+    if record.get("changes").and_then(Value::as_array).is_some_and(Vec::is_empty) {
+        return Ok("none".into());
+    }
     let size = record.get("size").and_then(Value::as_str).ok_or("proposal has no size")?;
     let locked = record.get("touches_locked").and_then(Value::as_bool).ok_or("proposal has no touches_locked")?;
     let ask = locked || autonomy == "ask" || (autonomy == "balanced" && size != "small");
@@ -328,5 +331,7 @@ mod tests {
         assert_eq!(autonomy_gate(&state("ask", "small", false), &[]).unwrap(), "ask");
         assert_eq!(autonomy_gate(&state("auto", "small", true), &[]).unwrap(), "ask");
         assert!(autonomy_gate(&Map::new(), &[]).is_err());
+        let empty = json!({"autonomy": "ask", "proposal_record": {"size": "small", "touches_locked": false, "changes": []}});
+        assert_eq!(autonomy_gate(empty.as_object().unwrap(), &[]).unwrap(), "none");
     }
 }

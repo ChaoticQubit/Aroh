@@ -4,19 +4,21 @@
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { follow } from '$lib/app/chat.svelte';
-	import { engine, type RunSummary, type Waiting } from '$lib/app/engine';
+	import { engine, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
 	import { decisionsFrom, finishTriage, triageCards } from '$lib/app/calendar';
 	import { inboxView } from '$lib/app/views';
 
 	const s = $derived(data.snapshot);
 	let runs = $state<RunSummary[]>([]);
+	let insights = $state<Insight[]>([]);
 	let triage = $state<{ runId: string; waiting: Waiting } | null>(null);
 	let answers: Record<string, unknown> = {};
 
-	/** Reads the engine's newest runs; offline leaves the list empty. */
+	/** Reads the engine's newest runs and insights; offline leaves both lists empty. */
 	async function loadRuns() {
-		const r = await engine.runs();
+		const [r, i] = await Promise.all([engine.runs(), engine.insights()]);
 		runs = r.ok ? r.value : [];
+		insights = i.ok ? i.value : [];
 		await loadTriage();
 	}
 
@@ -58,11 +60,22 @@
 		return null;
 	}
 
-	/** Applies or rejects a proposal (through its waiting run when it has one), or decides a suggestion. */
+	/** The dismissed insight ids still shown, plus `id`: the list stays as short as the Inbox. */
+	function dismissedWith(id: string): string {
+		const shown = new Set(insights.map((i) => i.id));
+		const kept = (s?.settings.dismissed_insights ?? '').split(',').filter((x) => shown.has(x) && x !== id);
+		return [...kept, id].slice(-30).join(',');
+	}
+
+	/**
+	 * Routes a card decision: a calendar group answer, a suggestion, an insight dismissal, or a
+	 * proposal applied or rejected (through its waiting run when it has one).
+	 */
 	async function ondecide(group: 'triage' | 'approval' | 'suggestion' | 'insight', id: string, decision: unknown) {
 		if (group === 'triage') return decideGroup(id, decision);
 		const yes = decision === 'apply';
 		if (group === 'suggestion') return data.run(() => client.decidePreference(id, yes));
+		if (group === 'insight') return data.run(() => client.setSetting('dismissed_insights', dismissedWith(id)));
 		if (group !== 'approval') return;
 		const goalId = s?.proposals.find((p) => p.id === id)?.goal_id;
 		const runId = goalId ? await waitingRun(goalId, id) : null;
@@ -75,5 +88,5 @@
 </script>
 
 {#if s}
-	<InboxScreen {...inboxView(s, runs)} triage={triageCards(triage?.waiting)} {ondecide} />
+	<InboxScreen {...inboxView(s, runs, insights)} triage={triageCards(triage?.waiting)} {ondecide} />
 {/if}

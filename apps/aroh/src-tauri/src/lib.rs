@@ -126,6 +126,7 @@ pub fn run() {
             commands::health::app_dev_health_seed,
             commands::push::app_dev_push_probe,
             commands::calendar_import::app_calendar_import,
+            commands::learning::app_edit_action,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

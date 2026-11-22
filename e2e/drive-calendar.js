@@ -1,5 +1,5 @@
 (async () => {
-  const { cfg, invoke, sleep, mark, text, until, go, button, show, openTomorrow, say, started, signUp, saveKey, fail } = window.AROH_LIB;
+  const { cfg, invoke, sleep, mark, text, until, go, button, show, openTomorrow, say, started, signUp, saveKey, planGoal, fail } = window.AROH_LIB;
   const card = (needle) => [...document.querySelectorAll('[data-slot=card]')].find((c) => c.textContent.includes(needle));
   const press = (root, name) => {
     const b = [...root.querySelectorAll('button')].find((x) => x.textContent.trim() === name);
@@ -17,7 +17,7 @@
   };
   const onDay = async (needle) => {
     await sleep(1500);
-    if (!text().includes(needle)) openTomorrow();
+    if (!text().includes(needle)) await openTomorrow();
     await until(needle, () => text().includes(needle), 60000);
     show(needle);
   };
@@ -54,16 +54,7 @@
     await invoke('app_sync');
     await mark('shot 05-busy-on-calendar');
 
-    await go('/goals/new');
-    await say('Six pack by Feb 1');
-    await until('question cards', () => text().includes('How many days'), 120000);
-    await say('4');
-    await say('No nuts');
-    await until('plan', () => text().includes('Approve plan'), 180000);
-    await mark('shot 06-plan-around-busy');
-    button('Approve plan').click();
-    await until('plan written', () => text().split('The plan is on your calendar').length > 2, 120000);
-    await sleep(4000);
+    await planGoal({ plan: 'shot 06-plan-around-busy' }, 180000);
 
     await go('/calendar');
     await onDay('Core workout');

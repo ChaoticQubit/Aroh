@@ -8,7 +8,9 @@ pub mod error;
 pub mod evals;
 #[cfg(feature = "fake-transports")]
 pub mod fake;
+pub mod insights;
 pub mod io;
+pub mod learning;
 pub mod ledger;
 pub mod plugins;
 pub mod push;
@@ -16,5 +18,6 @@ pub mod queue;
 pub mod rows;
 pub mod tools;
 pub mod triage;
+pub mod triggers;
 pub mod vault;
 pub mod workflows;

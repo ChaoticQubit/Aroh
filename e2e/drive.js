@@ -1,5 +1,5 @@
 (async () => {
-  const { cfg, invoke, sleep, mark, text, until, go, button, show, openTomorrow, say, started, signUp, saveKey, fail } = window.AROH_LIB;
+  const { cfg, invoke, sleep, mark, text, until, go, button, show, openTomorrow, say, started, signUp, saveKey, planGoal, fail } = window.AROH_LIB;
 
   try {
     await started();
@@ -10,18 +10,7 @@
     await saveKey();
     await mark('shot 03-key-saved');
 
-    await go('/goals/new');
-    await say('Six pack by Feb 1');
-    await until('question cards', () => text().includes('How many days'), 120000);
-    await mark('shot 04-questions');
-    await say('4');
-    await say('No nuts');
-    await until('plan', () => text().includes('Approve plan'), 120000);
-    await mark('shot 05-plan');
-    button('Approve plan').click();
-    await until('plan written', () => text().split('The plan is on your calendar').length > 2, 120000);
-    await sleep(4000);
-    await mark('shot 06-approved');
+    await planGoal({ questions: 'shot 04-questions', plan: 'shot 05-plan', approved: 'shot 06-approved' });
 
     const synced = () => text().includes('Core workout') || text().includes('Morning plank');
     await go('/today');
@@ -30,7 +19,7 @@
     await go('/calendar');
     await sleep(1000);
     if (!today) {
-      openTomorrow();
+      await openTomorrow();
       await until('actions synced', synced, 45000);
     }
     show('Core workout');
@@ -59,7 +48,7 @@
 
     await go('/calendar');
     await sleep(1000);
-    openTomorrow();
+    await openTomorrow();
     await sleep(1500);
     show('Make-up core workout');
     await mark('shot 13-calendar-replanned');

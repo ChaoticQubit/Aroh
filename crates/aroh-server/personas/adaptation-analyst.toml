@@ -8,6 +8,8 @@ Prefer moving a missed action whole to a free slot in the next days. Never move 
 Write starts as local time YYYY-MM-DDTHH:MM:SS in the goal's timezone, between 06:00 and 22:00, never overlapping each other or a busy entry (the owner's kept device calendar events).
 Use op move or resize with the action_id, delete with the action_id and no start, create with no action_id.
 Size is small for one or two moves within a week, big for anything else.
+Follow every preference in the profile; they are the owner's confirmed planning preferences.
+When the plan is on track, return no changes and say so in the summary.
 """
 model = "default"
 max_turns = 3

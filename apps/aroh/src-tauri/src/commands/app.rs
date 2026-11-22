@@ -15,7 +15,7 @@ use tauri::{AppHandle, Manager, State};
 const MAX_RANGE_DAYS: i64 = 120;
 const ENTRY_DAYS: i64 = 90;
 
-fn parse_time(text: &str, what: &str) -> Result<DateTime<Utc>, String> {
+pub(super) fn parse_time(text: &str, what: &str) -> Result<DateTime<Utc>, String> {
     if text.len() > 64 {
         return Err(format!("invalid {what}"));
     }

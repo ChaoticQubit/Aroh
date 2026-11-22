@@ -46,9 +46,9 @@ def script(now, reminder_minutes):
         ],
         "trackers": [
             {"name": "Weight", "fields": [{"key": "weight", "label": "Weight", "kind": "number", "unit": "kg"}],
-             "cadence": {"freq": "daily", "weekdays": [], "at": "00:00"}},
+             "cadence": {"freq": "daily", "weekdays": [], "at": "00:00"}, "rules": None},
             {"name": "Meals", "fields": [{"key": "kcal", "label": "Calories", "kind": "number", "unit": "kcal"}],
-             "cadence": {"freq": "daily", "weekdays": [], "at": meals_at}},
+             "cadence": {"freq": "daily", "weekdays": [], "at": meals_at}, "rules": None},
         ],
     }
     makeup = (now + datetime.timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
@@ -104,12 +104,26 @@ def calendar_rules(now):
     ]
 
 
+PREFERENCE = "Plan the morning plank in the evening instead."
+
+
+def pod15(data, plan, now):
+    """Turns the six-pack script into the pod 15 loop at local time `now`: the
+    one-off workout moves to yesterday at 21:00, so it is already missed, and a
+    preference analyst reply joins the rules. Mutates `data` and `plan` in place."""
+    yesterday = (now - datetime.timedelta(days=1)).replace(hour=21, minute=0, second=0, microsecond=0)
+    plan["items"][0]["start"] = yesterday.strftime(FMT)
+    data["rules"][3]["reply"]["text"] = json.dumps(plan)
+    data["rules"].append({"when": ["You are Preference analyst"], "reply": {"text": json.dumps({"fact": PREFERENCE})}})
+
+
 def main():
     """Writes the script to argv[1] for zone argv[2], reminder argv[3] minutes ahead.
     Input: output path, IANA zone, minutes. Output: the file, and the local
     times it chose on stdout."""
     path, zone, minutes = sys.argv[1], sys.argv[2], int(sys.argv[3])
-    calendar = len(sys.argv) > 4 and sys.argv[4] == "drive-calendar.js"
+    flow = sys.argv[4] if len(sys.argv) > 4 else "drive.js"
+    calendar = flow == "drive-calendar.js"
     now = datetime.datetime.now(zoneinfo.ZoneInfo(zone))
     data = script(now, minutes)
     assert len(data["rules"]) == 7
@@ -121,6 +135,9 @@ def main():
         data["rules"] = calendar_rules(now) + data["rules"]
         with open(os.path.join(os.path.dirname(path), "seed.json"), "w", encoding="utf8") as f:
             json.dump(calendar_seed(now), f)
+    if flow == "pod15.js":
+        pod15(data, plan, now)
+        assert len(data["rules"]) == 8
     with open(path, "w", encoding="utf8") as f:
         json.dump(data, f)
     print(json.dumps({"now": now.strftime(FMT), "items": [i["start"] for i in plan["items"]], "meals_at": plan["trackers"][1]["cadence"]["at"]}))

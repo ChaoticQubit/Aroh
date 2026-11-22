@@ -38,8 +38,11 @@ export type RunStatus = {
 /** One run event; `body.type` is the event kind. */
 export type RunEvent = { seq: number; at_ms: number; body: { type: string; step?: string; error?: string; name?: string } };
 
-/** A run as `GET /v1/runs/{id}` returns it. */
-export type RunView = { run_id: string; goal_id: string | null; workflow: string; status: RunStatus; waiting: Waiting[]; events: RunEvent[] };
+/** A run as `GET /v1/runs/{id}` returns it; `summary` is the proposal and its outcome when there is one. */
+export type RunView = { run_id: string; goal_id: string | null; workflow: string; status: RunStatus; waiting: Waiting[]; events: RunEvent[]; summary?: string | null };
+
+/** One insight of `GET /v1/insights`: what the engine noticed and did without being asked. */
+export type Insight = { id: string; goal_id: string | null; run_id: string | null; source: string; title: string; body: string; state: string | null; created_at: string };
 
 /** One device event as `POST /v1/calendar/triage` takes it: ids, calendar, title, times, recurrence. */
 export type TriageEvent = { event_id: string; calendar_id: string; calendar: string; title: string; start_at: string; end_at: string; rrule: string | null };
@@ -61,6 +64,7 @@ const STEP_TEXT: Record<string, string> = {
 	adapt: 'Looking at what changed',
 	record: 'Writing the proposal',
 	apply: 'Applying the change',
+	analyze: 'Looking at your edits',
 	group: 'Grouping your calendar events',
 	save_rules: 'Saving your calendar rules'
 };
@@ -245,6 +249,11 @@ export class Engine {
 	runs(filter: { goalId?: string; state?: string } = {}): Promise<EngineResult<RunSummary[]>> {
 		const q = [filter.goalId && `goal_id=${filter.goalId}`, filter.state && `state=${filter.state}`].filter(Boolean).join('&');
 		return this.request('GET', `/v1/runs${q ? `?${q}` : ''}`);
+	}
+
+	/** Lists the 30 newest insights, optionally of one goal. */
+	insights(goalId?: string): Promise<EngineResult<Insight[]>> {
+		return this.request('GET', `/v1/insights${goalId ? `?goal_id=${goalId}` : ''}`);
 	}
 
 	/** Answers a run's human node. */

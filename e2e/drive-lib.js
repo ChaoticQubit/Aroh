@@ -42,13 +42,22 @@ window.AROH_LIB = (() => {
     return b;
   };
   const show = (needle) => {
-    const el = [...document.querySelectorAll('body *')].find((x) => x.children.length === 0 && x.textContent.includes(needle));
+    const seen = (x) => {
+      const r = x.getBoundingClientRect();
+      return r.width > 4 && r.height > 4;
+    };
+    const el = [...document.querySelectorAll('body *')].find((x) => x.children.length === 0 && x.textContent.includes(needle) && seen(x));
     if (el) el.scrollIntoView({ block: 'center' });
   };
-  const openTomorrow = () => {
+  const openTomorrow = async () => {
     const tomorrow = new Date(Date.now() + 864e5);
     const day = tomorrow.toLocaleDateString('en-GB', { weekday: 'short' });
-    [...document.querySelectorAll('button')].find((b) => b.textContent.includes(day) && b.textContent.includes(String(tomorrow.getDate())))?.click();
+    const find = () => [...document.querySelectorAll('button')].find((b) => b.textContent.includes(day) && b.textContent.includes(String(tomorrow.getDate())));
+    if (!find()) {
+      document.querySelector('button[aria-label="Next"]')?.click();
+      await sleep(1000);
+    }
+    find()?.click();
   };
   const say = async (message) => {
     const box = document.querySelector('textarea[placeholder="Message your personas"]');
@@ -87,9 +96,23 @@ window.AROH_LIB = (() => {
     await until('key test', () => text().includes('Connected.') || text().includes('refused'));
     await until('key status', () => text().includes(`ends ${cfg.key.slice(-4)}`));
   };
+  const planGoal = async (shots = {}, planMs = 120000) => {
+    await go('/goals/new');
+    await say('Six pack by Feb 1');
+    await until('question cards', () => text().includes('How many days'), 120000);
+    if (shots.questions) await mark(shots.questions);
+    await say('4');
+    await say('No nuts');
+    await until('plan', () => text().includes('Approve plan'), planMs);
+    if (shots.plan) await mark(shots.plan);
+    button('Approve plan').click();
+    await until('plan written', () => text().split('The plan is on your calendar').length > 2, 120000);
+    await sleep(4000);
+    if (shots.approved) await mark(shots.approved);
+  };
   const fail = async (e) => {
     await invoke('app_dev_mark', { mark: `fail ${String(e.message ?? e).replace(/[^\x20-\x7e]/g, '?').slice(0, 70)}` }).catch(() => {});
     await mark('shot 99-failure');
   };
-  return { cfg, invoke, sleep, mark, text, until, go, field, type, button, show, openTomorrow, say, started, signUp, saveKey, fail };
+  return { cfg, invoke, sleep, mark, text, until, go, field, type, button, show, openTomorrow, say, started, signUp, saveKey, planGoal, fail };
 })();

@@ -50,6 +50,18 @@ fn settings_are_whitelisted_and_validated() {
 }
 
 #[test]
+fn dismissed_insights_hold_at_most_30_uuids() {
+    let (conn, _, _) = setup();
+    let ids: Vec<String> = (0..30).map(|i| format!("0190f2a0-0000-7000-8000-{i:012}")).collect();
+    local::set_setting(&conn, "dismissed_insights", &ids.join(",")).unwrap();
+    assert_eq!(local::setting(&conn, "dismissed_insights").unwrap(), Some(ids.join(",")));
+    let too_many = format!("{},0190f2a0-0000-7000-8000-999999999999", ids.join(","));
+    assert!(local::set_setting(&conn, "dismissed_insights", &too_many).is_err());
+    assert!(local::set_setting(&conn, "dismissed_insights", "not-a-uuid").is_err());
+    assert!(local::set_setting(&conn, "dismissed_insights", "true").is_err());
+}
+
+#[test]
 fn tick_seeds_materializes_and_is_idempotent() {
     let (conn, mut clock, user) = seeded();
     let first = tick::tick(&conn, &mut clock, &user, now()).unwrap();
@@ -188,6 +200,27 @@ fn done_status_stamps_done_at() {
     let undone = write::set_action_status(&conn, &mut clock, &planned.id, ActionStatus::Planned, now()).unwrap();
     assert_eq!(undone.done_at, None);
     assert!(write::set_action_status(&conn, &mut clock, &planned.id, ActionStatus::Missed, now()).is_err());
+}
+
+#[test]
+fn edit_action_moves_resizes_deletes_and_locks() {
+    let (conn, mut clock, user) = seeded();
+    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    let planned = repo::list::<Action>(&conn, &[("status", "planned")]).unwrap().remove(0);
+    assert!(!planned.locked);
+    let start = planned.start_at + Duration::hours(10);
+    let moved = write::edit_action(&conn, &mut clock, &planned.id, Some((start, start + Duration::minutes(45)))).unwrap();
+    assert_eq!((moved.start_at, moved.end_at, moved.locked), (start, start + Duration::minutes(45), true));
+    let resized = write::edit_action(&conn, &mut clock, &planned.id, Some((start, start + Duration::minutes(20)))).unwrap();
+    assert_eq!(resized.end_at - resized.start_at, Duration::minutes(20));
+    assert!(write::edit_action(&conn, &mut clock, &planned.id, Some((start, start))).is_err());
+    assert!(write::edit_action(&conn, &mut clock, &planned.id, Some((start, start + Duration::hours(25)))).is_err());
+    let gone = write::edit_action(&conn, &mut clock, &planned.id, None).unwrap();
+    assert!(gone.deleted && gone.locked);
+    assert!(write::edit_action(&conn, &mut clock, &planned.id, None).is_err());
+    let stored: (bool, bool) =
+        conn.query_row("SELECT deleted, locked FROM actions WHERE id = ?1", [&planned.id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+    assert_eq!(stored, (true, true));
 }
 
 #[test]

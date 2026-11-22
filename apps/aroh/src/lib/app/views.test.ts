@@ -69,6 +69,31 @@ describe('views', () => {
 		expect(suggestions[0]).toMatchObject({ id: 'f1', spec: { kind: 'proposal_card', persona: 'Planner', changes: [] } });
 	});
 
+	it('maps engine insights to insight cards titled by goal', () => {
+		const insight = (id: string, source: string, goal: string | null) => ({
+			id,
+			goal_id: goal,
+			run_id: null,
+			source,
+			title: source === 'edits' ? 'Repeated edits' : 'Missed or late actions',
+			body: 'Missed: Core (Sun 10:00).',
+			state: 'done',
+			created_at: '2026-11-26T06:00:00Z'
+		});
+		const { insights } = inboxView(fixture(), [], [insight('i1', 'actions', goalId), insight('i2', 'edits', null)]);
+		expect(insights).toEqual([
+			{ id: 'i1', spec: { kind: 'insight_card', persona: 'Adaptation analyst', title: 'Missed or late actions: Six pack by Feb 1', body: 'Missed: Core (Sun 10:00).' } },
+			{ id: 'i2', spec: { kind: 'insight_card', persona: 'Preference analyst', title: 'Repeated edits', body: 'Missed: Core (Sun 10:00).' } }
+		]);
+	});
+
+	it('hides insights the owner dismissed on this device', () => {
+		const s = fixture();
+		s.settings.dismissed_insights = 'i1';
+		const insight = { id: 'i1', goal_id: null, run_id: null, source: 'review', title: 'Weekly review', body: 'On track.', state: 'done', created_at: '2026-11-26T06:00:00Z' };
+		expect(inboxView(s, [], [insight, { ...insight, id: 'i2' }]).insights.map((i) => i.id)).toEqual(['i2']);
+	});
+
 	it('derives a goal dashboard with countdown, weight chart and upcoming actions', () => {
 		const s = fixture();
 		const view = goalView(s, s.goals[0], { now: '2026-11-26T08:15:00Z', zone });

@@ -256,6 +256,71 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/goals/{goal_id}/review:
+    get:
+      tags:
+      - insights
+      operationId: get_review
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: The goal's weekly review
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSchedule'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    put:
+      tags:
+      - insights
+      operationId: set_review
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetReview'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSchedule'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/hooks/enqueue:
     post:
       tags:
@@ -281,6 +346,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/insights:
+    get:
+      tags:
+      - insights
+      operationId: list_insights
+      parameters:
+      - name: goal_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: What the engine noticed and did without being asked, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Insight'
       security:
       - bearer: []
   /v1/keys:
@@ -730,6 +818,45 @@ components:
       properties:
         ok:
           type: boolean
+    Insight:
+      type: object
+      description: |-
+        One Inbox insight: what the engine noticed and did without being
+        asked. `source` is `actions`, `rule`, `review` or `edits`; `body` is
+        the reason plus the run summary; `state` the run's state, if any.
+      required:
+      - id
+      - source
+      - title
+      - body
+      - created_at
+      properties:
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        run_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        source:
+          type: string
+        state:
+          type:
+          - string
+          - 'null'
+        title:
+          type: string
     KeyInfo:
       type: object
       description: |-
@@ -856,6 +983,36 @@ components:
         zone:
           type: string
       additionalProperties: false
+    ReviewSchedule:
+      type: object
+      description: |-
+        A goal's weekly review: weekday (0 = Sunday), local `at` (`HH:MM`),
+        the owner's zone, whether it runs, and the next slot in UTC.
+        Answer of `GET` and `PUT /v1/goals/{goal_id}/review`.
+      required:
+      - goal_id
+      - weekday
+      - at
+      - timezone
+      - enabled
+      - next_at
+      properties:
+        at:
+          type: string
+        enabled:
+          type: boolean
+        goal_id:
+          type: string
+          format: uuid
+        next_at:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+        weekday:
+          type: integer
+          format: int32
+          minimum: 0
     RunSummary:
       type: object
       description: |-
@@ -915,6 +1072,10 @@ components:
           format: uuid
         status:
           type: object
+        summary:
+          type:
+          - string
+          - 'null'
         usage:
           type: object
         waiting:
@@ -966,6 +1127,29 @@ components:
           - 'null'
         vendor:
           type: string
+      additionalProperties: false
+    SetReview:
+      type: object
+      description: |-
+        Body of `PUT /v1/goals/{goal_id}/review`: weekday 0 to 6 (0 = Sunday),
+        local `HH:MM`, on or off, and the owner's IANA zone.
+        The next slot is computed from these.
+      required:
+      - weekday
+      - at
+      - enabled
+      - timezone
+      properties:
+        at:
+          type: string
+        enabled:
+          type: boolean
+        timezone:
+          type: string
+        weekday:
+          type: integer
+          format: int32
+          minimum: 0
       additionalProperties: false
     StartGoal:
       type: object

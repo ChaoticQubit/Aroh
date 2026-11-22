@@ -89,6 +89,17 @@ describe('engine client', () => {
 		await expect(e.startGoal('six pack by Feb 1')).resolves.toMatchObject({ ok: false, reason: 'needs_engine' });
 	});
 
+	it('reads insights, optionally of one goal', async () => {
+		const calls: string[] = [];
+		const e = new Engine((method, path) => {
+			calls.push(`${method} ${path}`);
+			return Promise.resolve({ status: 200, body: [] });
+		});
+		await expect(e.insights()).resolves.toEqual({ ok: true, value: [] });
+		await e.insights('g1');
+		expect(calls).toEqual(['GET /v1/insights', 'GET /v1/insights?goal_id=g1']);
+	});
+
 	it('flushes queued logs in order and stops at the first failure', async () => {
 		const pending = [
 			{ text: 'had pasta', at: '2026-11-22T08:00:00Z' },

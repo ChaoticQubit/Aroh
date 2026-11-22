@@ -3,6 +3,11 @@
 use crate::{invalid, Result};
 use chrono::{DateTime, SecondsFormat, Utc};
 
+/// Minutes after its end a planned action counts as missed, and a done
+/// action counts as done late. The app tick and the server triggers
+/// both use it.
+pub const MISSED_GRACE_MIN: i64 = 15;
+
 /// Formats `t` as RFC 3339 UTC with a `Z` suffix and only the fraction digits
 /// it needs, the same text serde writes for `DateTime<Utc>`.
 /// Output example: `2026-11-21T09:00:00Z`.

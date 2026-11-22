@@ -20,19 +20,24 @@ pub const REPLAN: &str = "replan";
 /// Maps the text to tracker entries and stores them.
 /// Started by `POST /v1/logs`.
 pub const LOG_INTAKE: &str = "log-intake";
+/// Workflow name of learning from edits.
+/// The preference analyst proposes one preference from similar edits.
+/// Started by the trigger scan after 3 or more similar owner edits.
+pub const LEARN_PREFERENCE: &str = "learn-preference";
 /// Workflow name of device calendar triage.
 /// Groups events, asks keep or ignore per group, then writes rules.
 /// Started by `POST /v1/calendar/triage`.
 pub const CALENDAR_TRIAGE: &str = "calendar-triage";
 
-const WORKFLOWS: [(&str, &str); 4] = [
+const WORKFLOWS: [(&str, &str); 5] = [
     (NEW_GOAL, include_str!("../workflows/new-goal.toml")),
     (REPLAN, include_str!("../workflows/replan.toml")),
     (LOG_INTAKE, include_str!("../workflows/log-intake.toml")),
+    (LEARN_PREFERENCE, include_str!("../workflows/learn-preference.toml")),
     (CALENDAR_TRIAGE, include_str!("../workflows/calendar-triage.toml")),
 ];
 
-const PERSONAS: [(&str, &str); 7] = [
+const PERSONAS: [(&str, &str); 8] = [
     ("intake-interviewer", include_str!("../personas/intake-interviewer.toml")),
     ("goal-researcher", include_str!("../personas/goal-researcher.toml")),
     ("goal-planner", include_str!("../personas/goal-planner.toml")),
@@ -40,6 +45,7 @@ const PERSONAS: [(&str, &str); 7] = [
     ("log-intake", include_str!("../personas/log-intake.toml")),
     ("calendar-triage", include_str!("../personas/calendar-triage.toml")),
     ("plugin-builder", include_str!("../personas/plugin-builder.toml")),
+    ("preference-analyst", include_str!("../personas/preference-analyst.toml")),
 ];
 
 /// Parses the built-in workflow called `name`.

@@ -4,7 +4,7 @@ import { daysBetween, formatDate, formatYmd, minuteOfDay, mondayOf, shiftDay } f
 import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, RunView, SettingsView } from '$lib/ui/screens/types';
 import { catalog } from './catalog';
 import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerEntry, TrackerField } from './client';
-import type { RunSummary } from './engine';
+import type { Insight, RunSummary } from './engine';
 
 const SEEDED_SLOTS: Record<string, CategorySlot> = { Learning: 1, 'Health and Fitness': 2, Financial: 3, 'Hobby and Skill': 4, 'Career and Projects': 5, Habit: 6 };
 const UNITS: readonly Unit[] = ['kg', 'lb', 'cm', 'kcal', 'g', 'ml', 'L', 'min', 'reps', 'steps', 'usd', 'count'];
@@ -233,6 +233,7 @@ const WORKFLOW: Record<string, { title: string; persona: string }> = {
 	'new-goal': { title: 'Planning a new goal', persona: 'Goal planner' },
 	replan: { title: 'Replanning', persona: 'Adaptation analyst' },
 	'log-intake': { title: 'Sorting a log', persona: 'Log intake' },
+	'learn-preference': { title: 'Learning from your edits', persona: 'Preference analyst' },
 	'calendar-triage': { title: 'Sorting your calendar', persona: 'Calendar triage' }
 };
 
@@ -264,12 +265,29 @@ function openRuns(s: Snapshot, runs: RunSummary[]): RunView[] {
 	return out;
 }
 
-/** The Inbox groups: open proposals, unconfirmed preferences, and the engine runs not done. */
-export function inboxView(s: Snapshot, runs: RunSummary[] = []): { approvals: InboxItem[]; suggestions: InboxItem[]; insights: InboxItem[]; runs: RunView[] } {
+/**
+ * Engine insights as insight cards: the persona that acted, the title with the goal's, and the body.
+ * Insights dismissed on this device (the `dismissed_insights` setting) are left out.
+ */
+function insightItems(s: Snapshot, insights: Insight[]): InboxItem[] {
+	const dismissed = new Set((s.settings.dismissed_insights ?? '').split(','));
+	return insights.filter((i) => !dismissed.has(i.id)).map((i) => {
+		const goal = s.goals.find((g) => g.id === i.goal_id);
+		const persona = i.source === 'edits' ? 'Preference analyst' : 'Adaptation analyst';
+		return { id: i.id, spec: { kind: 'insight_card', persona, title: goal ? `${i.title}: ${goal.title}` : i.title, body: i.body } };
+	});
+}
+
+/** The Inbox groups: open proposals, unconfirmed preferences, engine insights, and the engine runs not done. */
+export function inboxView(
+	s: Snapshot,
+	runs: RunSummary[] = [],
+	insights: Insight[] = []
+): { approvals: InboxItem[]; suggestions: InboxItem[]; insights: InboxItem[]; runs: RunView[] } {
 	return {
 		approvals: s.proposals.map((p) => ({ id: p.id, spec: { kind: 'proposal_card', persona: personaFor(s, p.goal_id), summary: p.summary, changes: changes(p) } })),
 		suggestions: s.preferences.map((f) => ({ id: f.id, spec: { kind: 'proposal_card', persona: f.source, summary: f.fact, changes: [] } })),
-		insights: [],
+		insights: insightItems(s, insights),
 		runs: openRuns(s, runs)
 	};
 }

@@ -1,9 +1,11 @@
 use crate::auth::{Service, UserId, Verifier};
 use crate::engine::{Answer, Engine, KeyTest, RunSummary, RunView, SetKey, StartGoal, StartReplan, Started, SubmitLog, TickSummary, Waiting};
 use crate::error::{ErrorBody, ErrorDetail, ServerError};
+use crate::insights::{self, Insight};
 use crate::plugins::{PluginView, SavePlugin, Writer};
 use crate::push::{ApnsEnv, DeviceInfo, Platform, PushSummary, RegisterDevice};
 use crate::triage::{StartTriage, TriageEvent};
+use crate::triggers::{ReviewSchedule, SetReview};
 use crate::vault::KeyInfo;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRef, Path, Query, State};
@@ -55,6 +57,15 @@ pub struct EventsQuery {
 #[into_params(parameter_in = Query)]
 pub struct RunsQuery {
     pub state: Option<String>,
+    pub goal_id: Option<Uuid>,
+}
+
+/// Query of `GET /v1/insights`: only insights of `goal_id`.
+/// Omit it for every goal and the edit insights.
+/// Newest first, at most 30.
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct InsightsQuery {
     pub goal_id: Option<Uuid>,
 }
 
@@ -201,6 +212,34 @@ async fn answer(
     Ok((StatusCode::ACCEPTED, Json(Accepted { run_id })))
 }
 
+#[utoipa::path(get, path = "/v1/insights", tag = "insights", security(("bearer" = [])),
+    params(InsightsQuery),
+    responses((status = 200, description = "What the engine noticed and did without being asked, newest first", body = [Insight])))]
+async fn list_insights(State(s): State<AppState>, UserId(user): UserId, Query(q): Query<InsightsQuery>) -> Result<Json<Vec<Insight>>, ServerError> {
+    Ok(Json(insights::list(&s.engine.deps().pool, user, q.goal_id).await?))
+}
+
+#[utoipa::path(get, path = "/v1/goals/{goal_id}/review", tag = "insights", security(("bearer" = [])),
+    params(("goal_id" = Uuid, Path)),
+    responses((status = 200, description = "The goal's weekly review", body = ReviewSchedule), (status = 404, body = ErrorBody)))]
+async fn get_review(State(s): State<AppState>, UserId(user): UserId, Path(goal_id): Path<Uuid>) -> Result<Json<ReviewSchedule>, ServerError> {
+    Ok(Json(s.engine.review(user, goal_id).await?))
+}
+
+#[utoipa::path(put, path = "/v1/goals/{goal_id}/review", tag = "insights", security(("bearer" = [])),
+    params(("goal_id" = Uuid, Path)),
+    request_body = SetReview,
+    responses((status = 200, body = ReviewSchedule), (status = 400, body = ErrorBody), (status = 404, body = ErrorBody)))]
+async fn set_review(
+    State(s): State<AppState>,
+    UserId(user): UserId,
+    Path(goal_id): Path<Uuid>,
+    json: Result<Json<SetReview>, JsonRejection>,
+) -> Result<Json<ReviewSchedule>, ServerError> {
+    let req = body(json, true)?;
+    Ok(Json(s.engine.set_review(user, goal_id, req).await?))
+}
+
 fn writer(s: &AppState, user: Uuid) -> Writer<'_> {
     let deps = s.engine.deps();
     Writer { pool: &deps.pool, hlc: &deps.hlc, user }
@@ -306,9 +345,9 @@ impl Modify for Bearer {
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
     paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, start_triage, list_runs, get_run, answer, tick, enqueue_hook, register_device, unregister_device, push_tick,
-        list_plugins, save_plugin, get_plugin, enable_plugin),
+        list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review),
     components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
-        SavePlugin, PluginView)),
+        SavePlugin, PluginView, Insight, ReviewSchedule, SetReview)),
     modifiers(&Bearer)
 )]
 pub struct ApiDoc;
@@ -343,5 +382,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/plugins/{plugin_id}/enable", post(enable_plugin))
         .route("/v1/devices/{device_id}", put(register_device).delete(unregister_device))
         .route("/v1/push/tick", post(push_tick))
+        .route("/v1/insights", get(list_insights))
+        .route("/v1/goals/{goal_id}/review", get(get_review).put(set_review))
         .with_state(state)
 }

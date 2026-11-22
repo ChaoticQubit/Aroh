@@ -107,15 +107,41 @@ pub struct PlanCadence {
     pub at: String,
 }
 
-/// One tracker the plan creates, with its fields and an optional check-in
-/// cadence. Becomes a `trackers` row of the run's goal.
-/// Names are free text.
+/// One adaptation rule a planned tracker declares (Q20): `op` is
+/// `above`, `below`, `flat` or `missed` over the last `window_days`.
+/// Stored as a `trackers.rules` entry when it validates.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PlanRule {
+    pub field: String,
+    pub op: String,
+    pub value: f64,
+    pub window_days: u32,
+}
+
+/// One tracker the plan creates, with its fields, an optional check-in
+/// cadence and optional rules. Becomes a `trackers` row of the run's
+/// goal. Names are free text.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PlanTracker {
     pub name: String,
     pub fields: Vec<PlanField>,
     #[serde(default)]
     pub cadence: Option<PlanCadence>,
+    #[serde(default)]
+    pub rules: Option<Vec<PlanRule>>,
+}
+
+fn valid_rules(tracker: &Tracker, planned: &[PlanRule]) -> Vec<rows::TrackerRule> {
+    planned
+        .iter()
+        .filter_map(|r| serde_json::from_value::<rows::TrackerRule>(json!(r)).ok())
+        .filter(|rule| {
+            let mut probe = tracker.clone();
+            probe.rules = vec![rule.clone()];
+            probe.updated_at = aroh_domain::seed::SEED_STAMP.into();
+            rows::Record::validate(&probe).is_ok()
+        })
+        .collect()
 }
 
 /// The planner's output: summary, timezone, items and trackers.
@@ -210,6 +236,7 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, ctx: &ToolContext) -> Result<Val
             updated_at: String::new(),
             deleted: false,
         };
+        tracker.rules = valid_rules(&tracker, t.rules.as_deref().unwrap_or_default());
         put_row(&env.pool, &env.hlc, env.user, &mut tracker).await.map_err(failed)?;
     }
     if let Some(mut g) = get_row::<rows::Goal>(&env.pool, env.user, &goal_text).await.map_err(failed)? {
@@ -341,6 +368,10 @@ async fn record_proposal(env: &ToolEnv, args: RecordArgs, ctx: &ToolContext) -> 
             other => return Err(ToolError::InvalidArgs(format!("unknown op `{other}`"))),
         };
         changes.push(Change { op: c.op.clone(), action_id, title: c.title.clone(), before, after });
+    }
+    if changes.is_empty() {
+        let record = ProposalRecord { proposal_id: String::new(), summary: args.proposal.summary, size: args.proposal.size, touches_locked, changes };
+        return Ok(serde_json::to_value(record).expect("records serialize"));
     }
     let mut row = Proposal {
         id: row_id(ctx, "proposal")?,
@@ -557,8 +588,8 @@ fn json_output(v: Value) -> ToolOutput {
 }
 
 /// The Aroh toolkit of one run: `write_plan`, `record_proposal`,
-/// `apply_proposal`, `reject_proposal`, `write_entries` and `store_plugin`,
-/// all writing through the domain rules as `env.user`. Workflow tool nodes call them.
+/// `apply_proposal`, `reject_proposal`, `write_entries`, `store_plugin` and
+/// `propose_preference`, all writing through the domain rules as `env.user`. Workflow tool nodes call them.
 pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
     let e1 = env.clone();
     let write = typed_tool("write_plan", "Store an approved plan as actions, series and trackers.", move |a: PlanArgs, ctx: ToolContext| {
@@ -585,11 +616,20 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
         let env = e5.clone();
         async move { write_entries(&env, a, &ctx).await.map(json_output) }
     });
-    let e6 = env;
+    let e6 = env.clone();
     let plugin = typed_tool("store_plugin", "Validate and store a goal's plugin bundle as its next enabled version.", move |a: StorePluginArgs, ctx: ToolContext| {
         let env = e6.clone();
         async move { store_plugin(&env, &a.plugin_draft, &ctx).await.map(json_output) }
     });
+    let e7 = env;
+    let propose = typed_tool(
+        "propose_preference",
+        "Store one unconfirmed owner preference learned from similar edits.",
+        move |a: crate::learning::ProposeArgs, _ctx: ToolContext| {
+            let env = e7.clone();
+            async move { crate::learning::propose_preference(&env, a).await.map(json_output) }
+        },
+    );
     Toolkit::new("aroh")
         .with(Arc::new(write))
         .with(Arc::new(record))
@@ -597,6 +637,7 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
         .with(Arc::new(reject))
         .with(Arc::new(entries))
         .with(Arc::new(plugin))
+        .with(Arc::new(propose))
 }
 
 /// Returns a naive local time as the `YYYY-MM-DDTHH:MM:SS` text plans use.

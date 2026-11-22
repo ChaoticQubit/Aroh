@@ -249,6 +249,28 @@ pub fn decide_preference(conn: &Connection, clock: &mut Hlc, id: &str, confirm: 
     Ok(())
 }
 
+/// Owner edit of action `id`: moves or resizes it to `span` (start, end),
+/// or deletes it when `span` is `None`. The action is locked, so agents
+/// never move it without asking (Q19, Q37). Output: the stored row.
+pub fn edit_action(conn: &Connection, clock: &mut Hlc, id: &str, span: Option<(DateTime<Utc>, DateTime<Utc>)>) -> Result<Action> {
+    let mut action: Action = repo::get(conn, id)?;
+    if action.deleted {
+        return Err(invalid("action was deleted"));
+    }
+    match span {
+        Some((start_at, end_at)) => {
+            if end_at <= start_at || end_at - start_at > chrono::Duration::days(1) {
+                return Err(invalid("an action lasts more than 0 minutes and at most a day"));
+            }
+            (action.start_at, action.end_at) = (start_at, end_at);
+        }
+        None => action.deleted = true,
+    }
+    action.locked = true;
+    repo::put(conn, clock, &mut action)?;
+    Ok(action)
+}
+
 /// Sets the autonomy level agents follow for goal `goal_id`.
 pub fn set_autonomy(conn: &Connection, clock: &mut Hlc, goal_id: &str, autonomy: Autonomy) -> Result<Goal> {
     let mut goal: Goal = repo::get(conn, goal_id)?;

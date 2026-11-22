@@ -58,6 +58,12 @@ insert into public.devices (id, user_id, platform, token, environment, zone, syn
   values ('0190f2a0-0000-7000-8000-0000000000d1', '00000000-0000-0000-0000-00000000000a', 'ios', repeat('ab', 32), 'sandbox', 'Europe/Berlin', 0, now(), now(), now());
 insert into public.push_sent (device_id, key, sent_at)
   values ('0190f2a0-0000-7000-8000-0000000000d1', 'proposal:x', now());
+insert into public.action_events (user_id, goal_id, action_id, kind, after)
+  values ('00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', gen_random_uuid(), 'missed', '{}');
+insert into public.adaptations (id, user_id, goal_id, source, window_key, reason, created_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', 'actions', 'actions:2026-11-23', 'Missed: Core', now());
+insert into public.review_schedules (user_id, goal_id, weekday, at, timezone, enabled, next_at)
+  values ('00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', 0, '18:00', 'Europe/Berlin', true, now());
 
 create schema rls_test;
 create table rls_test.fixtures (tbl text primary key, cols text not null, forged jsonb not null);
@@ -72,8 +78,8 @@ declare
 begin
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p');
-  if n <> 28 then
-    raise exception 'expected 28 public tables, found %', n;
+  if n <> 31 then
+    raise exception 'expected 31 public tables, found %', n;
   end if;
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity;

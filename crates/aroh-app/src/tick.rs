@@ -8,8 +8,7 @@ use aroh_store::repo;
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::Connection;
 
-/// Minutes after its end a planned action counts as missed.
-pub const MISSED_GRACE_MIN: i64 = 15;
+pub use aroh_domain::time::MISSED_GRACE_MIN;
 
 /// What one tick changed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]

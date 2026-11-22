@@ -5,6 +5,7 @@ pub mod calendar_import;
 pub mod engine;
 pub mod plugins;
 pub mod health;
+pub mod learning;
 pub mod push;
 
 use crate::{AppState, Core};

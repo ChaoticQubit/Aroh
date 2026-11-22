@@ -11,8 +11,10 @@ use crate::workflows::{self, CALENDAR_TRIAGE, LOG_INTAKE, NEW_GOAL, REPLAN};
 use crate::db;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{
-    Action, Autonomy, Budget, BudgetScope, BusyBlock, Goal, GoalStatus, ProviderSetting, SearchSetting, Tracker,
+    Action, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, Goal, GoalStatus, Preference, ProviderSetting, SearchSetting, Tracker,
 };
+use aroh_domain::time::MISSED_GRACE_MIN;
+use crate::triggers;
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use futures_util::future::join_all;
@@ -35,6 +37,7 @@ const DEFAULT_LEASE_MS: i64 = 300_000;
 const PAST_DAYS: i64 = 7;
 const MAX_TEXT: usize = 4_000;
 const RUN_LIST_LIMIT: i64 = 50;
+const PROFILE_LIMIT: usize = 20;
 
 /// Body of `POST /v1/goals`: the goal to plan. Without `goal_id`, or when
 /// the server has no such goal yet, a draft goal row is created with it.
@@ -134,6 +137,7 @@ pub struct RunView {
     pub usage: Value,
     #[schema(value_type = Vec<Object>)]
     pub events: Vec<Value>,
+    pub summary: Option<String>,
 }
 
 /// One row of the run list behind the Inbox: ids, workflow, lifecycle
@@ -194,6 +198,7 @@ pub struct Engine {
     queue: Arc<PgQueue>,
     lease_ms: i64,
     push: Option<Arc<crate::push::Pusher>>,
+    last_scan: std::sync::Mutex<Option<i64>>,
 }
 
 impl Engine {
@@ -202,7 +207,7 @@ impl Engine {
     /// Returns the engine.
     pub fn new(deps: Arc<Deps>) -> Engine {
         let queue = Arc::new(PgQueue::new(deps.pool.clone(), deps.clock.clone()));
-        Engine { deps, queue, lease_ms: DEFAULT_LEASE_MS, push: None }
+        Engine { deps, queue, lease_ms: DEFAULT_LEASE_MS, push: None, last_scan: std::sync::Mutex::new(None) }
     }
 
     /// Sets the lease length; it must be positive and outlast one step.
@@ -247,6 +252,28 @@ impl Engine {
         utc(self.deps.clock.now_ms())
     }
 
+    /// Takes the scan slot of this process when `every_ms` passed since
+    /// the last one taken at `now_ms` (or none was taken yet).
+    /// Returns whether the caller scans now.
+    pub(crate) fn claim_scan(&self, now_ms: i64, every_ms: i64) -> bool {
+        let mut last = self.last_scan.lock().unwrap_or_else(|p| p.into_inner());
+        if last.is_some_and(|t| now_ms - t < every_ms) {
+            return false;
+        }
+        *last = Some(now_ms);
+        true
+    }
+
+    /// The owner's confirmed preferences, newest first, at most 20: the
+    /// user profile memory planning reads as state `profile` (Q12, Q37).
+    /// Returns the facts.
+    pub(crate) async fn profile(&self, user: Uuid) -> Result<Vec<String>, ServerError> {
+        let mut prefs: Vec<Preference> = list_rows::<Preference>(&self.deps.pool, user, &[], false).await?;
+        prefs.retain(|p| p.confirmed);
+        prefs.sort_by(|a, b| b.noted_at.cmp(&a.noted_at));
+        Ok(prefs.into_iter().take(PROFILE_LIMIT).map(|p| p.fact).collect())
+    }
+
     async fn limits(&self, user: Uuid, goal: Option<Uuid>) -> Result<Limits, ServerError> {
         let budgets = list_rows::<Budget>(&self.deps.pool, user, &[], false).await?;
         let goal_text = goal.map(|g| g.to_string());
@@ -268,7 +295,7 @@ impl Engine {
         })
     }
 
-    async fn start(&self, user: Uuid, goal: Option<Uuid>, name: &str, input: Map<String, Value>) -> Result<RunId, ServerError> {
+    pub(crate) async fn start(&self, user: Uuid, goal: Option<Uuid>, name: &str, input: Map<String, Value>) -> Result<RunId, ServerError> {
         let wf = workflows::workflow(name)?;
         let personas = workflows::snapshot(&self.deps.pool, user, goal, &wf).await?;
         let events = Arc::new(EventBuffer::default());
@@ -297,6 +324,10 @@ impl Engine {
             .filter(|a| a.end_at > from && a.start_at < until)
             .collect();
         actions.sort_by_key(|a| a.start_at);
+        let missed_before = self.now() - Duration::minutes(MISSED_GRACE_MIN);
+        for a in actions.iter_mut().filter(|a| a.status == ActionStatus::Planned && a.end_at < missed_before) {
+            a.status = ActionStatus::Missed;
+        }
         Ok(actions
             .iter()
             .map(|a| {
@@ -378,10 +409,12 @@ impl Engine {
         let mut input = Map::new();
         input.insert("goal".into(), Self::goal_input(&goal, tz, now));
         input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
+        input.insert("profile".into(), json!(self.profile(user).await?));
         input.insert("busy".into(), json!(self.busy(user, tz, now).await?));
         let template = aroh_plugins::template("fitness").expect("the fitness template ships");
         input.insert("plugin_guide".into(), json!({"template": template, "reference": aroh_plugins::reference()}));
         let run = self.start(user, Some(id), NEW_GOAL, input).await?;
+        self.ensure_review(user, id, tz).await?;
         Ok(Started { goal_id: Some(id), run_id: run.0 })
     }
 
@@ -391,21 +424,33 @@ impl Engine {
     pub async fn start_replan(&self, user: Uuid, goal_id: Uuid, req: StartReplan) -> Result<Started, ServerError> {
         check_text("reason", &req.reason)?;
         let tz = parse_tz(&req.timezone)?;
-        let now = self.now();
-        prepare_reads(&self.deps.pool, user, now, DEFAULT_WINDOW_DAYS).await?;
         let goal = get_row::<Goal>(&self.deps.pool, user, &goal_id.to_string())
             .await?
             .filter(|g| !g.deleted)
             .ok_or_else(|| ServerError::NotFound(format!("goal {goal_id}")))?;
+        self.ensure_review(user, goal_id, tz).await?;
+        let run = self.replan(user, &goal, &req.reason, tz).await?;
+        Ok(Started { goal_id: Some(goal_id), run_id: run.0 })
+    }
+
+    /// Starts a replan of `user`'s `goal` for `reason` in zone `tz`, for the
+    /// owner and every trigger alike: calendar, profile and autonomy as
+    /// input, then the goal's pending action events are claimed by the run.
+    pub(crate) async fn replan(&self, user: Uuid, goal: &Goal, reason: &str, tz: Tz) -> Result<RunId, ServerError> {
+        let now = self.now();
+        let goal_id = Uuid::parse_str(&goal.id).map_err(|_| ServerError::Db("bad goal id".into()))?;
+        prepare_reads(&self.deps.pool, user, now, DEFAULT_WINDOW_DAYS).await?;
         let mut input = Map::new();
-        input.insert("goal".into(), Self::goal_input(&goal, tz, now));
+        input.insert("goal".into(), Self::goal_input(goal, tz, now));
         let from = now - Duration::days(PAST_DAYS);
         input.insert("calendar".into(), json!(self.calendar(user, tz, Some(&goal.id), from).await?));
         input.insert("busy".into(), json!(self.busy(user, tz, now).await?));
-        input.insert("reason".into(), json!(req.reason));
+        input.insert("reason".into(), json!(reason));
         input.insert("autonomy".into(), serde_json::to_value(goal.autonomy).expect("autonomy serializes"));
+        input.insert("profile".into(), json!(self.profile(user).await?));
         let run = self.start(user, Some(goal_id), REPLAN, input).await?;
-        Ok(Started { goal_id: Some(goal_id), run_id: run.0 })
+        triggers::claim_status_events(&self.deps.pool, user, goal_id, run, now).await?;
+        Ok(run)
     }
 
     /// Starts the log-intake workflow for one free-text log of `user`,
@@ -483,6 +528,7 @@ impl Engine {
                 data: h.data,
             })
             .collect();
+        let summary = crate::insights::run_summary(&row.workflow, run.state());
         let events = events_after(&self.deps.pool, row.id, after_seq)
             .await?
             .into_iter()
@@ -496,6 +542,7 @@ impl Engine {
             waiting,
             usage: serde_json::to_value(run.usage()).expect("usage serializes"),
             events,
+            summary,
         })
     }
 
@@ -605,6 +652,9 @@ impl Engine {
     pub async fn tick(&self, opts: TickOptions) -> Result<TickSummary, ServerError> {
         let start = self.deps.clock.now_ms();
         let mut report = TickReport::default();
+        if let Err(e) = self.scan_if_due().await {
+            report.errors.push(format!("trigger scan: {e}"));
+        }
         while report.processed < opts.max_jobs && self.deps.clock.now_ms() - start < opts.budget_ms {
             let leases = self.queue.claim_due(opts.max_jobs - report.processed, self.lease_ms).await?;
             if leases.is_empty() {

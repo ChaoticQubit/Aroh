@@ -204,16 +204,21 @@ pub struct Cadence {
     pub at: String,
 }
 
-/// Comparison of a tracker rule.
+/// Test of a tracker rule over its window: the average is `Above` or
+/// `Below` the value, the values stay `Flat` within the value, or at
+/// least the value check-ins were `Missed`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuleOp {
     Above,
     Below,
+    Flat,
+    Missed,
 }
 
-/// A tracker rule (Q20): the average of number field `field` over the last
-/// `window_days` days crossing `value` triggers an adaptation.
+/// A tracker rule (Q20) over the last `window_days` days: the average of
+/// number field `field` above or below `value`, its values flat within
+/// `value`, or `value` missed check-ins of the tracker's cadence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrackerRule {
@@ -719,11 +724,24 @@ impl Tracker {
         }
         for rule in &self.rules {
             let field = self.fields.iter().find(|f| f.key == rule.field);
-            if field.map(|f| f.kind) != Some(FieldKind::Number) {
+            if rule.op == RuleOp::Missed {
+                if field.is_none() {
+                    return Err(invalid("trackers.rules.field", format!("{} is not a field", rule.field)));
+                }
+                if self.cadence.is_none() {
+                    return Err(invalid("trackers.rules", "a missed check-in rule needs a cadence"));
+                }
+                if rule.value < 1.0 || rule.value.fract() != 0.0 {
+                    return Err(invalid("trackers.rules", "missed check-ins are a whole count of at least 1"));
+                }
+            } else if field.map(|f| f.kind) != Some(FieldKind::Number) {
                 return Err(invalid("trackers.rules.field", format!("{} is not a number field", rule.field)));
             }
             if !rule.value.is_finite() || !(1..=365).contains(&rule.window_days) {
                 return Err(invalid("trackers.rules", "finite value and window of 1 to 365 days"));
+            }
+            if rule.op == RuleOp::Flat && rule.value < 0.0 {
+                return Err(invalid("trackers.rules", "a flat rule's tolerance is not negative"));
             }
         }
         Ok(())
@@ -1107,6 +1125,32 @@ mod tests {
         tracker.fields[1].choices.clear();
         tracker.fields[1].health = Some(HealthMetric::WorkoutType);
         tracker.validate().unwrap();
+    }
+
+    #[test]
+    fn flat_and_missed_rules_validate() {
+        let mut tracker = samples::tracker();
+        tracker.rules[0] = TrackerRule { field: "weight".into(), op: RuleOp::Flat, value: 0.5, window_days: 14 };
+        tracker.validate().unwrap();
+        tracker.rules[0].value = -0.5;
+        assert_eq!(field_err(tracker.clone()), "trackers.rules");
+        tracker.rules[0] = TrackerRule { field: "meal".into(), op: RuleOp::Flat, value: 0.5, window_days: 14 };
+        assert_eq!(field_err(tracker.clone()), "trackers.rules.field");
+        tracker.rules[0] = TrackerRule { field: "meal".into(), op: RuleOp::Missed, value: 3.0, window_days: 7 };
+        tracker.validate().unwrap();
+        tracker.rules[0].value = 2.5;
+        assert_eq!(field_err(tracker.clone()), "trackers.rules");
+        tracker.rules[0].value = 0.0;
+        assert_eq!(field_err(tracker.clone()), "trackers.rules");
+        tracker.rules[0].value = 3.0;
+        tracker.rules[0].field = "nope".into();
+        assert_eq!(field_err(tracker.clone()), "trackers.rules.field");
+        tracker.rules[0].field = "meal".into();
+        tracker.cadence = None;
+        assert_eq!(field_err(tracker), "trackers.rules");
+        let rule: TrackerRule =
+            serde_json::from_value(serde_json::json!({"field": "weight", "op": "missed", "value": 3, "window_days": 7})).unwrap();
+        assert_eq!(rule.op, RuleOp::Missed);
     }
 
     #[test]

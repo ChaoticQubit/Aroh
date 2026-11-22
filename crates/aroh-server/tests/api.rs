@@ -181,7 +181,7 @@ fn plan() -> Value {
         "trackers": [{"name": "Runs", "fields": [
             {"key": "distance_km", "label": "Distance", "kind": "number", "unit": "km"},
             {"key": "felt_good", "label": "Felt good", "kind": "bool", "unit": null}
-        ], "cadence": null}]
+        ], "cadence": null, "rules": null}]
     })
 }
 
