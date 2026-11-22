@@ -1,6 +1,6 @@
 //! One read of every row the screens show, so the UI maps rows to views in one place.
 
-use crate::local::{self, PendingLog};
+use crate::local::{self, Note, PendingLog};
 use crate::Result;
 use aroh_domain::rows::{
     Action, Budget, BusyBlock, Category, Goal, Persona, Preference, Proposal, ProposalStatus, ProviderSetting, SearchSetting, Tracker,
@@ -13,7 +13,8 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// Live rows of the local user for the screens: actions overlapping the asked range,
-/// entries logged since the asked instant, open proposals and unconfirmed preferences.
+/// entries logged since the asked instant, open proposals, unconfirmed preferences, the
+/// device-local notes and the zone the rows were last shifted to.
 #[derive(Debug, Clone, Serialize)]
 pub struct Snapshot {
     pub user_id: String,
@@ -31,6 +32,8 @@ pub struct Snapshot {
     pub settings: BTreeMap<String, String>,
     pub pending_logs: Vec<PendingLog>,
     pub busy: Vec<BusyBlock>,
+    pub notes: Vec<Note>,
+    pub zone: Option<String>,
 }
 
 /// Busy blocks of `user_id` overlapping `[from, to)`, in start order.
@@ -67,5 +70,7 @@ pub fn snapshot(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateT
         settings: local::settings(conn)?,
         pending_logs: local::pending_logs(conn)?,
         busy: busy_in(conn, user_id, from, to)?,
+        notes: local::notes(conn)?,
+        zone: local::zone(conn)?,
     })
 }

@@ -395,3 +395,44 @@ async fn three_similar_edits_produce_a_preference_proposal() {
     let analyst = w.seen.lock().unwrap().iter().rev().find(|b| b.contains("You are Adaptation analyst")).cloned().unwrap();
     assert!(analyst.contains(FACT), "confirmed preferences reach planning");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn timezone_moves_every_review_of_the_owner() {
+    let w = world(json!(null)).await;
+    let first = w.goal(Autonomy::Ask).await;
+    let second = w.goal(Autonomy::Ask).await;
+    w.engine
+        .set_review(w.user, second, SetReview { weekday: 3, at: "07:30".into(), enabled: true, timezone: "Europe/Berlin".into() })
+        .await
+        .unwrap();
+    let other = user(&w.pool).await;
+    let theirs = Uuid::now_v7();
+    let mut g = Goal {
+        id: theirs.to_string(),
+        user_id: other.to_string(),
+        category_id: None,
+        title: "Run a marathon".into(),
+        context: None,
+        deadline: None,
+        status: GoalStatus::Active,
+        autonomy: Autonomy::Ask,
+        created_at: utc(T0),
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&w.pool, &w.hlc, other, &mut g).await.unwrap();
+    w.engine.set_review(other, theirs, SetReview { weekday: 0, at: "18:00".into(), enabled: true, timezone: "Europe/Berlin".into() }).await.unwrap();
+
+    assert!(matches!(w.engine.set_timezone(w.user, "Mars/Olympus").await, Err(aroh_server::error::ServerError::BadRequest(_))));
+    assert_eq!(w.engine.set_timezone(w.user, "America/New_York").await.unwrap(), 2);
+
+    let a = w.engine.review(w.user, first).await.unwrap();
+    assert_eq!((a.timezone.as_str(), a.weekday, a.at.as_str(), a.enabled), ("America/New_York", 0, "18:00", false));
+    assert_eq!(a.next_at.to_rfc3339(), "2026-11-22T23:00:00+00:00");
+    let b = w.engine.review(w.user, second).await.unwrap();
+    assert_eq!((b.timezone.as_str(), b.weekday, b.at.as_str(), b.enabled), ("America/New_York", 3, "07:30", true));
+    assert_eq!(b.next_at.to_rfc3339(), "2026-11-25T12:30:00+00:00");
+    assert_eq!(w.engine.review(other, theirs).await.unwrap().timezone, "Europe/Berlin");
+    assert_eq!(w.engine.set_timezone(w.user, "America/New_York").await.unwrap(), 2);
+}

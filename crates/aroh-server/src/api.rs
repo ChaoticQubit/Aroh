@@ -7,7 +7,7 @@ use crate::plugins::{PluginView, SavePlugin, Writer};
 use crate::teams::Kind;
 use crate::push::{ApnsEnv, DeviceInfo, Platform, PushSummary, RegisterDevice};
 use crate::triage::{StartTriage, TriageEvent};
-use crate::triggers::{ReviewSchedule, SetReview};
+use crate::triggers::{ReviewSchedule, SetReview, SetTimezone, TimezoneSet};
 use crate::vault::KeyInfo;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRef, Path, Query, State};
@@ -242,6 +242,14 @@ async fn set_review(
     Ok(Json(s.engine.set_review(user, goal_id, req).await?))
 }
 
+#[utoipa::path(put, path = "/v1/timezone", tag = "insights", security(("bearer" = [])),
+    request_body = SetTimezone,
+    responses((status = 200, description = "Every weekly review of the owner now runs in the zone", body = TimezoneSet), (status = 400, body = ErrorBody)))]
+async fn set_timezone(State(s): State<AppState>, UserId(user): UserId, json: Result<Json<SetTimezone>, JsonRejection>) -> Result<Json<TimezoneSet>, ServerError> {
+    let req = body(json, true)?;
+    Ok(Json(TimezoneSet { reviews: s.engine.set_timezone(user, &req.timezone).await? }))
+}
+
 fn writer(s: &AppState, user: Uuid) -> Writer<'_> {
     let deps = s.engine.deps();
     Writer { pool: &deps.pool, hlc: &deps.hlc, user }
@@ -374,10 +382,10 @@ impl Modify for Bearer {
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
     paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, start_triage, list_runs, get_run, answer, tick, enqueue_hook, register_device, unregister_device, push_tick,
-        list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review,
+        list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review, set_timezone,
         list_personas, copy_persona, edit_persona),
     components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
-        SavePlugin, PluginView, Insight, ReviewSchedule, SetReview,
+        SavePlugin, PluginView, Insight, ReviewSchedule, SetReview, SetTimezone, TimezoneSet,
         EditPersona, PersonaView, Origin, Kind)),
     modifiers(&Bearer)
 )]
@@ -418,5 +426,6 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/push/tick", post(push_tick))
         .route("/v1/insights", get(list_insights))
         .route("/v1/goals/{goal_id}/review", get(get_review).put(set_review))
+        .route("/v1/timezone", put(set_timezone))
         .with_state(state)
 }

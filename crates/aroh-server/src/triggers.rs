@@ -674,6 +674,19 @@ pub struct SetReview {
     pub timezone: String,
 }
 
+/// Body of `PUT /v1/timezone`: the IANA zone the owner's device moved to.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetTimezone {
+    pub timezone: String,
+}
+
+/// Answer of `PUT /v1/timezone`: how many weekly reviews now run in the zone.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TimezoneSet {
+    pub reviews: usize,
+}
+
 const DEFAULT_REVIEW_WEEKDAY: u8 = 0;
 const DEFAULT_REVIEW_AT: &str = "18:00";
 
@@ -710,6 +723,21 @@ impl Engine {
         .execute(pool)
         .await?;
         Ok(())
+    }
+
+    /// Moves every weekly review of `user` to the IANA zone `timezone` (the owner
+    /// travelled), keeping each weekday and local time, through [`Self::ensure_review`].
+    /// Returns how many reviews the user has, or `BadRequest` for an unknown zone.
+    pub async fn set_timezone(&self, user: Uuid, timezone: &str) -> Result<usize, ServerError> {
+        let tz = crate::engine::parse_tz(timezone)?;
+        let goals: Vec<Uuid> = db::query_scalar("select goal_id from public.review_schedules where user_id = $1 order by goal_id")
+            .bind(user)
+            .fetch_all(&self.deps().pool)
+            .await?;
+        for goal in &goals {
+            self.ensure_review(user, *goal, tz).await?;
+        }
+        Ok(goals.len())
     }
 
     /// Reads `user`'s weekly review of `goal`.

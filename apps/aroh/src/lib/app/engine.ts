@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ChatMessage, ComponentSpec } from '$lib/ui/contract';
 import type { CoachFields } from '$lib/ui/screens/types';
 import { editError, type PersonaView } from './personas';
+import { deviceZone } from '$lib/ui/clock';
 
 /** Shown wherever an action needs the server engine (Q3) and the app is not connected to it. */
 export const NEEDS_ENGINE = 'This needs a connection to the engine. Sign in and set the server URL in Settings. Everything else works offline.';
@@ -227,11 +228,6 @@ function offline(e: unknown): { ok: false; reason: 'needs_engine' | 'error'; mes
 /** The default transport: the `app_engine` command, which adds the account token in Rust. */
 const tauriCall: Call = (method, path, body) => invoke<Answer>('app_engine', { method, path, body: body ?? null });
 
-/** The device's IANA zone, sent with every start so local times are planned in it. */
-function zone(): string {
-	return Intl.DateTimeFormat().resolvedOptions().timeZone;
-}
-
 /**
  * The AI side of the app, served by the server engine. Every method resolves, never throws.
  * The app holds no provider keys: `saveKey` hands the key to Rust, which sends it to the engine
@@ -255,7 +251,7 @@ export class Engine {
 
 	/** Starts the new-goal run for one line of owner text. */
 	startGoal(text: string): Promise<EngineResult<{ goal_id: string; run_id: string }>> {
-		return this.request('POST', '/v1/goals', { title: text.trim().slice(0, 200), context: text, timezone: zone() });
+		return this.request('POST', '/v1/goals', { title: text.trim().slice(0, 200), context: text, timezone: deviceZone() });
 	}
 
 	/** Reads a run with the events after `afterSeq`. */
@@ -281,7 +277,7 @@ export class Engine {
 
 	/** Starts a replan of a goal with `reason`. */
 	replan(goalId: string, reason: string): Promise<EngineResult<{ goal_id: string; run_id: string }>> {
-		return this.request('POST', `/v1/goals/${goalId}/replan`, { reason, timezone: zone() });
+		return this.request('POST', `/v1/goals/${goalId}/replan`, { reason, timezone: deviceZone() });
 	}
 
 	/**
@@ -310,7 +306,7 @@ export class Engine {
 
 	/** Starts a calendar-triage run for unmatched device events (at most 300, one per series). */
 	triage(events: TriageEvent[]): Promise<EngineResult<{ goal_id: null; run_id: string }>> {
-		return this.request('POST', '/v1/calendar/triage', { timezone: zone(), events });
+		return this.request('POST', '/v1/calendar/triage', { timezone: deviceZone(), events });
 	}
 
 	/** Hands a key for `vendor` to the engine through Rust; the app keeps nothing. Returns the last 4. */
@@ -366,7 +362,7 @@ export class Engine {
 
 	/** Posts the queued logs (see `flushLogs`); returns the accepted ones and their runs. */
 	flushLogs(pending: PendingLog[]): Promise<{ sent: PendingLog[]; runs: string[] }> {
-		return flushLogs(this.call, pending, zone());
+		return flushLogs(this.call, pending, deviceZone());
 	}
 }
 

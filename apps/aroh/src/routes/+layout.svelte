@@ -51,7 +51,7 @@
 
 {#snippet body()}
 	{#if data.error}<p role="alert" class="px-4 pt-3 text-sm text-status-missed">{data.error}</p>{/if}
-	{#key data.day}{@render children()}{/key}
+	{#key data.day + data.zone}{@render children()}{/key}
 {/snippet}
 
 {#if bare}

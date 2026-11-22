@@ -59,7 +59,7 @@
 
 	/** The dismissed insight ids still shown, plus `id`: the list stays as short as the Inbox. */
 	function dismissedWith(id: string): string {
-		const shown = new Set(insights.map((i) => i.id));
+		const shown = new Set([...insights, ...(s?.notes ?? [])].map((i) => i.id));
 		const kept = (s?.settings.dismissed_insights ?? '').split(',').filter((x) => shown.has(x) && x !== id);
 		return [...kept, id].slice(-30).join(',');
 	}

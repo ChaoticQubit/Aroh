@@ -139,6 +139,70 @@ pub fn remove_sent(conn: &Connection, sent: &[PendingLog]) -> Result<usize> {
     Ok(before - logs.len())
 }
 
+const ZONE: &str = "zone";
+const ZONE_PENDING: &str = "zone_pending";
+const NOTES: &str = "notes";
+
+/// Most device-local Inbox notes kept; the oldest beyond it are dropped.
+pub const MAX_NOTES: usize = 30;
+
+/// A device-local Inbox note (for example a time zone change), shown as an insight card.
+/// Its uuid v7 id is what `dismissed_insights` records when the owner dismisses it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Note {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// The IANA zone the store's rows were last shifted to; `None` before the first record.
+pub fn zone(conn: &Connection) -> Result<Option<String>> {
+    Ok(get_state(conn, &key(ZONE))?)
+}
+
+/// Stores `zone` as the zone the rows follow. With `pending` the engine's stored
+/// zone still has to follow (see [`zone_pending`]).
+pub fn set_zone(conn: &Connection, zone: &str, pending: bool) -> Result<()> {
+    assert!(zone.parse::<chrono_tz::Tz>().is_ok(), "zone must be a known IANA name");
+    set_state(conn, &key(ZONE), zone)?;
+    if pending {
+        set_state(conn, &key(ZONE_PENDING), "true")?;
+    }
+    Ok(())
+}
+
+/// Whether a zone change still has to reach the engine.
+pub fn zone_pending(conn: &Connection) -> Result<bool> {
+    Ok(get_state(conn, &key(ZONE_PENDING))?.as_deref() == Some("true"))
+}
+
+/// Marks the stored zone as sent to the engine.
+pub fn clear_zone_pending(conn: &Connection) -> Result<()> {
+    set_state(conn, &key(ZONE_PENDING), "")?;
+    Ok(())
+}
+
+/// The device-local Inbox notes, newest first, at most [`MAX_NOTES`].
+pub fn notes(conn: &Connection) -> Result<Vec<Note>> {
+    match get_state(conn, &key(NOTES))? {
+        None => Ok(Vec::new()),
+        Some(json) => serde_json::from_str(&json).map_err(|_| invalid("stored notes")),
+    }
+}
+
+/// Adds a note with a fresh uuid v7 id in front, dropping the oldest beyond [`MAX_NOTES`].
+/// Output: the note stored.
+pub fn add_note(conn: &Connection, title: &str, body: &str, at: DateTime<Utc>) -> Result<Note> {
+    let note = Note { id: aroh_domain::new_id(), title: title.to_string(), body: body.to_string(), created_at: at };
+    let mut list = notes(conn)?;
+    list.insert(0, note.clone());
+    list.truncate(MAX_NOTES);
+    set_state(conn, &key(NOTES), &serde_json::to_string(&list).expect("notes serialize"))?;
+    assert!(list.len() <= MAX_NOTES);
+    Ok(note)
+}
+
 const HEALTH_ANCHORS: &str = "health_anchors";
 const DEVICE_ID: &str = "device_id";
 

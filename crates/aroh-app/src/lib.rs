@@ -8,6 +8,7 @@ pub mod remind;
 pub mod sample;
 pub mod snapshot;
 pub mod tick;
+pub mod travel;
 pub mod write;
 
 /// Errors raised by the app engine. Messages are safe to show and never carry secrets.

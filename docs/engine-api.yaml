@@ -810,6 +810,32 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/timezone:
+    put:
+      tags:
+      - insights
+      operationId: set_timezone
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetTimezone'
+        required: true
+      responses:
+        '200':
+          description: Every weekly review of the owner now runs in the zone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimezoneSet'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
 components:
   schemas:
     Accepted:
@@ -1349,6 +1375,15 @@ components:
           format: int32
           minimum: 0
       additionalProperties: false
+    SetTimezone:
+      type: object
+      description: 'Body of `PUT /v1/timezone`: the IANA zone the owner''s device moved to.'
+      required:
+      - timezone
+      properties:
+        timezone:
+          type: string
+      additionalProperties: false
     StartGoal:
       type: object
       description: |-
@@ -1475,6 +1510,15 @@ components:
           type: integer
           minimum: 0
         processed:
+          type: integer
+          minimum: 0
+    TimezoneSet:
+      type: object
+      description: 'Answer of `PUT /v1/timezone`: how many weekly reviews now run in the zone.'
+      required:
+      - reviews
+      properties:
+        reviews:
           type: integer
           minimum: 0
     TriageEvent:

@@ -267,16 +267,18 @@ function openRuns(s: Snapshot, runs: RunSummary[]): RunView[] {
 }
 
 /**
- * Engine insights as insight cards: the persona that acted, the title with the goal's, and the body.
- * Insights dismissed on this device (the `dismissed_insights` setting) are left out.
+ * Device notes (newest first, from the Planner) then engine insights as insight cards: the persona
+ * that acted, the title with the goal's, and the body. Cards dismissed on this device (the
+ * `dismissed_insights` setting) are left out.
  */
 function insightItems(s: Snapshot, insights: Insight[]): InboxItem[] {
 	const dismissed = new Set((s.settings.dismissed_insights ?? '').split(','));
-	return insights.filter((i) => !dismissed.has(i.id)).map((i) => {
+	const notes: InboxItem[] = (s.notes ?? []).map((n) => ({ id: n.id, spec: { kind: 'insight_card', persona: 'Planner', title: n.title, body: n.body } }));
+	return notes.concat(insights.map((i) => {
 		const goal = s.goals.find((g) => g.id === i.goal_id);
 		const persona = i.source === 'edits' ? 'Preference analyst' : 'Adaptation analyst';
 		return { id: i.id, spec: { kind: 'insight_card', persona, title: goal ? `${i.title}: ${goal.title}` : i.title, body: i.body } };
-	});
+	})).filter((i) => !dismissed.has(i.id));
 }
 
 /** The Inbox groups: open proposals, unconfirmed preferences, engine insights, and the engine runs not done. */
