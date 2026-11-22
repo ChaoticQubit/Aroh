@@ -112,7 +112,8 @@ impl ModelSpec {
 
 /// One vendor in the catalog: how to reach it and which models it serves.
 /// `open_models` vendors (local servers) also accept model ids the
-/// catalog does not list, at a verified zero price.
+/// catalog does not list, at a verified zero price. `price_source` is the
+/// vendor's price page that verified paid prices were checked against.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VendorSpec {
@@ -121,6 +122,8 @@ pub struct VendorSpec {
     pub protocol: Protocol,
     pub base_url: String,
     pub auth: AuthStyle,
+    #[serde(default)]
+    pub price_source: Option<String>,
     #[serde(default)]
     pub open_models: bool,
     #[serde(default)]
@@ -156,7 +159,8 @@ pub struct Catalog {
 impl Catalog {
     /// Parses and checks a catalog from TOML `text`.
     /// Returns `Parse` for bad TOML or unknown fields, `Invalid` for a
-    /// bad id, base URL, repeated entry or zero long-context threshold.
+    /// bad id, base URL, repeated entry, zero long-context threshold, or a
+    /// verified paid price without an `https://` price source.
     pub fn load(text: &str) -> Result<Self, CatalogError> {
         let catalog: Catalog =
             toml::from_str(text).map_err(|e| CatalogError::Parse(e.to_string()))?;
@@ -266,6 +270,23 @@ impl Catalog {
             if plain && v.auth != AuthStyle::NoKey {
                 return invalid(format!(
                     "vendor {} would send its key over plain http",
+                    v.id
+                ));
+            }
+            if v.price_source
+                .as_deref()
+                .is_some_and(|s| !s.starts_with("https://"))
+            {
+                return invalid(format!(
+                    "vendor {} price_source must start with https://",
+                    v.id
+                ));
+            }
+            let paid =
+                |m: &ModelSpec| m.input_usd_micros_per_mtok > 0 || m.output_usd_micros_per_mtok > 0;
+            if v.price_source.is_none() && v.models.iter().any(|m| m.price_verified && paid(m)) {
+                return invalid(format!(
+                    "vendor {} has verified prices but no price_source",
                     v.id
                 ));
             }

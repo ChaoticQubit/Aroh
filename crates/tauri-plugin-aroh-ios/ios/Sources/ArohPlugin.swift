@@ -22,15 +22,17 @@ class SeedArgs: Decodable {
   let samples: [SeedSample]
 }
 
-/// Native bridges the Aroh Rust commands call: HealthKit import and remote notification
-/// registration. Every command answers on the main queue's completion of its work and
-/// rejects with a code the Rust side turns into a status line.
+/// Native bridges the Aroh Rust commands call: HealthKit import, remote notification
+/// registration and cancelling pending reminders. Loading it also installs the reminder delegate. Every command answers on
+/// the main queue's completion of its work and rejects with a code the Rust side turns into
+/// a status line.
 class ArohPlugin: Plugin {
   private let health = HealthBridge()
 
   override func load(webview: WKWebView) {
     super.load(webview: webview)
     PushBridge.shared.install()
+    ReminderDelegate.shared.install()
   }
 
   @objc public func health_authorize(_ invoke: Invoke) {
@@ -76,6 +78,11 @@ class ArohPlugin: Plugin {
     #else
       invoke.reject("Seeding is for debug builds only.", code: "unsupported")
     #endif
+  }
+
+  @objc public func reminders_cancel(_ invoke: Invoke) {
+    ReminderDelegate.shared.cancelPending()
+    invoke.resolve()
   }
 
   @objc public func push_register(_ invoke: Invoke) {

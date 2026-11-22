@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { chatFromRun, Engine, flushLogs, keyStatus, pauseMessage, route, type Answer, type Call, type RunView, type Waiting } from './engine';
+import { chatFromRun, closeOldestQuestion, Engine, flushLogs, keyStatus, pauseMessage, route, type Answer, type Call, type RunView, type Waiting } from './engine';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -127,5 +127,19 @@ describe('engine client', () => {
 		];
 		expect(keyStatus(keys, providers)).toEqual({ anthropic: '4321', openai: null });
 		expect(keyStatus([{ ...keys[0], setting_id: 'other' }], providers)).toEqual({ anthropic: null, openai: null });
+	});
+});
+
+describe('typed answers', () => {
+	it('close the oldest open question card, one per message', () => {
+		const thread = chatFromRun(view({ status: 'waiting_human' }, [questions]));
+		const open = (m: ReturnType<typeof chatFromRun>) => m.filter((x) => x.type === 'card' && x.spec.kind === 'question_card' && !x.answered).length;
+		expect(open(thread)).toBe(2);
+		const once = closeOldestQuestion(thread);
+		expect(open(once)).toBe(1);
+		const first = once.find((x) => x.type === 'card' && x.spec.kind === 'question_card');
+		expect(first?.type === 'card' && first.spec.kind === 'question_card' && first.answered).toBe(true);
+		expect(open(closeOldestQuestion(once))).toBe(0);
+		expect(closeOldestQuestion(closeOldestQuestion(once))).toEqual(closeOldestQuestion(once));
 	});
 });

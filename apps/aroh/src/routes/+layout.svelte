@@ -15,7 +15,7 @@
 	const TITLES: Record<TabId | 'settings', string> = { today: 'Today', calendar: 'Calendar', goals: 'Goals', inbox: 'Inbox', log: 'Log', settings: 'Settings' };
 	const bare = $derived((page.data as { bare?: boolean }).bare === true);
 	const tab = $derived((Object.keys(TITLES) as (TabId | 'settings')[]).find((t) => page.url.pathname.startsWith(`/${t}`)) ?? 'today');
-	const title = $derived(page.url.pathname === '/goals/new' ? (page.url.searchParams.has('goal') ? 'Goal chat' : 'New goal') : TITLES[tab]);
+	const title = $derived(page.url.pathname === '/goals/new' ? 'New goal' : /^\/goals\/[^/]+\/chat$/.test(page.url.pathname) ? 'Goal chat' : TITLES[tab]);
 	const count = $derived(data.snapshot ? inboxCount(data.snapshot) : 0);
 	const categories = $derived(data.snapshot ? categoryList(data.snapshot) : []);
 	let wide = $state(false);

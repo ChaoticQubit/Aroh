@@ -7,7 +7,8 @@ use tauri::{Manager, Runtime};
 tauri::ios_plugin_binding!(init_plugin_aroh_ios);
 
 /// Rust handle to the Swift `ArohPlugin`: HealthKit (`health_authorize`, `health_fetch`,
-/// `health_seed` in debug builds) and remote notification registration (`push_register`).
+/// `health_seed` in debug builds), remote notification registration (`push_register`) and
+/// cancelling every pending reminder (`reminders_cancel`).
 /// The webview cannot call it; only the app's Rust commands do.
 pub struct Ios<R: Runtime> {
     #[cfg(target_os = "ios")]

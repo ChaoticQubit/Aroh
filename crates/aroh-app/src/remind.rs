@@ -4,7 +4,6 @@
 use crate::Result;
 pub use aroh_domain::remind::{scheduled_until, Planned, PlannedKind, CAP, HORIZON_HOURS};
 use aroh_domain::rows::{Action, Goal, Tracker};
-use aroh_reminders::{reminder_id, ReminderKind};
 use aroh_store::repo;
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
@@ -28,15 +27,9 @@ pub fn synced_seq(conn: &Connection, user_id: &str) -> Result<i64> {
     Ok(actions.min(trackers))
 }
 
-/// Every notification id any action or tracker row (live or deleted) could own, so a
-/// reschedule cancels stale ones without reading the OS pending list.
-pub fn all_ids(conn: &Connection) -> Result<Vec<i32>> {
-    let mut ids = Vec::new();
-    let kinds = [ReminderKind::Soon, ReminderKind::Start, ReminderKind::Nudge];
-    for table in ["actions", "trackers"] {
-        let mut stmt = conn.prepare(&format!("SELECT id FROM {table}"))?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        ids.extend(rows.iter().flat_map(|id| kinds.map(|k| reminder_id(id, k))));
-    }
-    Ok(ids)
+/// Whether this device may schedule local reminders: always for a store that never signed
+/// in, and for a store adopted by an account only while `signed_in`, so a signed-out device
+/// does not keep showing that account's rows. Errors only when the store read fails.
+pub fn reminders_allowed(conn: &Connection, signed_in: bool) -> Result<bool> {
+    Ok(signed_in || crate::local::account(conn)?.is_none())
 }

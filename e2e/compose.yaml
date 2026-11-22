@@ -1,6 +1,10 @@
 services:
   pg:
-    image: pgvector/pgvector:pg17
+    image: aroh-e2e-pg:17
+    build:
+      context: .
+      dockerfile: pg.Dockerfile
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10", "-c", "output_plugin_libraries=wal2json"]
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
@@ -60,11 +64,35 @@ services:
       PGRST_JWT_AUD: authenticated
       PGRST_DB_MAX_ROWS: "1000"
 
+  realtime:
+    image: supabase/realtime:v2.34.47
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PORT: "4000"
+      DB_HOST: pg
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
+      DB_ENC_KEY: supabaserealtime
+      API_JWT_SECRET: ${AROH_E2E_JWT_SECRET}
+      SECRET_KEY_BASE: ${AROH_E2E_JWT_SECRET}${AROH_E2E_JWT_SECRET}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+
   gateway:
     image: nginx:1.27-alpine
     depends_on:
       - auth
       - rest
+      - realtime
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     ports:

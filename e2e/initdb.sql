@@ -10,3 +10,6 @@ create schema extensions;
 grant usage on schema auth to anon, authenticated, service_role;
 grant usage on schema public to anon, authenticated, service_role;
 grant usage on schema extensions to anon, authenticated, service_role;
+create schema _realtime;
+create publication supabase_realtime;
+create schema realtime;

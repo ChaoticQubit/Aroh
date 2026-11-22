@@ -1,9 +1,11 @@
 //! Aroh app network crate: Supabase sign-in with the session in the OS keychain,
-//! the PostgREST `Remote` that drives `aroh_store::sync`, and engine requests.
+//! the PostgREST `Remote` that drives `aroh_store::sync`, engine requests and the Realtime
+//! listener that wakes run views.
 
 pub mod auth;
 pub mod config;
 pub mod engine;
+pub mod realtime;
 pub mod rest;
 
 pub use auth::Session;

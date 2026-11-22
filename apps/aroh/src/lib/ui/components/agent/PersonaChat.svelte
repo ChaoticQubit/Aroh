@@ -8,6 +8,7 @@
 	import * as Card from '$lib/ui/primitives/card';
 	import Render from '../Render.svelte';
 	import Persona from './Persona.svelte';
+	import QuestionCard from './QuestionCard.svelte';
 	import type { ChatMessage, OnChange } from '$lib/ui/contract';
 
 	/**
@@ -61,7 +62,11 @@
 						</div>
 					{/if}
 				{:else if m.type === 'card'}
-					<Render spec={m.spec} onchange={(v) => answer(v)} />
+					{#if m.spec.kind === 'question_card'}
+						<QuestionCard spec={m.spec} answered={m.answered} onchange={(v) => answer(v)} />
+					{:else}
+						<Render spec={m.spec} onchange={(v) => answer(v)} />
+					{/if}
 				{:else if m.type === 'progress'}
 					<div class="flex flex-col gap-1.5 border-l-2 border-border py-1 pl-3" role="status" aria-label="Research progress">
 						{#each m.lines as line (line.text)}
@@ -111,7 +116,7 @@
 			{id}
 			rows="1"
 			placeholder="Message your personas"
-			class="max-h-32 min-h-11 flex-1 resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+			class="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:truncate placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 			bind:value={draft}
 			onkeydown={(e) => {
 				if (e.key === 'Enter' && !e.shiftKey) {

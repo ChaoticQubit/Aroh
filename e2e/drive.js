@@ -33,7 +33,7 @@
 
     const snap = await invoke('app_snapshot', { from: new Date(Date.now() - 864e5).toISOString(), to: new Date(Date.now() + 864e5).toISOString() });
     const goal = snap.goals[0];
-    await go(`/goals/new?goal=${goal.id}`);
+    await go(`/goals/${goal.id}/chat`);
     await say("I missed today's workout");
     await until('replan proposal', () => text().includes('in your Inbox to apply'), 120000);
     await mark('shot 10-replan');

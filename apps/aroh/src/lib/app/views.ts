@@ -66,8 +66,9 @@ function firstNumber(t: Tracker): TrackerField | undefined {
 	return t.fields.find((f) => f.kind === 'number');
 }
 
+/** The goal's persona name, or the planner persona's when the goal has no persona row. */
 function personaFor(s: Snapshot, goalId: string): string {
-	return s.personas.find((p) => p.goal_id === goalId)?.name ?? 'Aroh';
+	return s.personas.find((p) => p.goal_id === goalId)?.name ?? WORKFLOW['new-goal'].persona;
 }
 
 /**

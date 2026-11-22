@@ -241,7 +241,15 @@ fn reminders_cover_actions_and_check_ins() {
     let check_in = planned.iter().find(|p| p.kind == PlannedKind::CheckIn).unwrap();
     assert_eq!(check_in.fire_at.with_timezone(&ZONE).format("%H:%M").to_string(), "07:00");
     assert!(check_in.fire_at <= now() + Duration::hours(24));
-    assert!(remind::all_ids(&conn).unwrap().contains(&check_in.id));
+}
+
+#[test]
+fn reminders_wait_for_sign_in_on_an_adopted_store() {
+    let (mut conn, _, _) = setup();
+    assert!(remind::reminders_allowed(&conn, false).unwrap(), "a local-only store keeps reminders");
+    local::adopt(&mut conn, ACCOUNT).unwrap();
+    assert!(remind::reminders_allowed(&conn, true).unwrap());
+    assert!(!remind::reminders_allowed(&conn, false).unwrap(), "signed out with an account's rows");
 }
 
 #[test]

@@ -67,6 +67,8 @@ describe('views', () => {
 		expect(approvals).toHaveLength(1);
 		expect(approvals[0].spec).toMatchObject({ kind: 'proposal_card', changes: [{ op: 'move', title: 'Strength session', before: 'Wed 18:00', after: 'Thu 18:00' }] });
 		expect(suggestions[0]).toMatchObject({ id: 'f1', spec: { kind: 'proposal_card', persona: 'Planner', changes: [] } });
+		expect(approvals[0].spec).toMatchObject({ persona: 'Fitness coach' });
+		expect(inboxView({ ...fixture(), personas: [] }).approvals[0].spec).toMatchObject({ persona: 'Goal planner' });
 	});
 
 	it('maps engine insights to insight cards titled by goal', () => {

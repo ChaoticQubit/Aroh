@@ -540,7 +540,7 @@ async fn unverified_prices_pause_before_any_call() {
     let api = api(models.clone(), offline()).await;
     let u = user(&api.pool).await;
     let t = user_token(u);
-    let body = json!({"vendor": "openai", "key": "sk-proj-test-OPENAI-0001", "model": "gpt-6.2-sol", "is_default": true});
+    let body = json!({"vendor": "mistral", "key": "test-MISTRAL-key-0001", "model": "mistral-large-latest", "is_default": true});
     assert_eq!(api.call(Method::Put, &format!("/v1/keys/{}", Uuid::now_v7()), Some(&t), Some(body)).await.0, 200);
     let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "UTC"}))).await;
     assert_eq!(status, 202, "{started}");

@@ -96,14 +96,15 @@ window.AROH_LIB = (() => {
     await until('key test', () => text().includes('Connected.') || text().includes('refused'));
     await until('key status', () => text().includes(`ends ${cfg.key.slice(-4)}`));
   };
-  const planGoal = async (shots = {}, planMs = 120000) => {
+  const SIX_PACK = { title: 'Six pack by Feb 1', asks: 'How many days', answers: ['4', 'No nuts'], plan: 'Approve plan' };
+  const planGoal = async (shots = {}, planMs = 120000, goal = SIX_PACK) => {
+    await go('/today');
     await go('/goals/new');
-    await say('Six pack by Feb 1');
-    await until('question cards', () => text().includes('How many days'), 120000);
+    await say(goal.title);
+    await until('question cards', () => text().includes(goal.asks), 120000);
     if (shots.questions) await mark(shots.questions);
-    await say('4');
-    await say('No nuts');
-    await until('plan', () => text().includes('Approve plan'), planMs);
+    for (const answer of goal.answers) await say(answer);
+    await until('plan', () => text().includes('Approve plan') && text().includes(goal.plan), planMs);
     if (shots.plan) await mark(shots.plan);
     button('Approve plan').click();
     await until('plan written', () => text().split('The plan is on your calendar').length > 2, 120000);

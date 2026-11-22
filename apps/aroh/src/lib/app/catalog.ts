@@ -4,7 +4,7 @@ export type CatalogEntry = { id: string; name: string; protocol: string; models:
 /**
  * Model providers offered in Settings, with the vendor and model ids of the engine catalog
  * (`troupekit/catalog/providers.toml`), so a saved provider row resolves on the server.
- * Only Anthropic prices are verified there; other vendors pause runs at `unverified_price`.
+ * Anthropic, OpenAI and Google prices are verified there; other vendors pause runs at `unverified_price`.
  */
 export const catalog: CatalogEntry[] = [
 	{ id: 'anthropic', name: 'Anthropic', protocol: 'anthropic', models: ['claude-sonnet-5-5', 'claude-opus-5-5', 'claude-haiku-5-5'], selfHosted: false },

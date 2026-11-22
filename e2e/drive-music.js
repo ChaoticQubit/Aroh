@@ -13,21 +13,7 @@
     throw new Error(`timed out waiting for ${what}`);
   };
   const chip = (name) => [...document.querySelectorAll('[aria-label="Filter by category"] button')].find((b) => b.textContent.trim() === name);
-  const planMusic = async () => {
-    await go('/today');
-    await go('/goals/new');
-    await say(MUSIC);
-    await until('music questions', () => text().includes('How long have you played piano?'), 120000);
-    await mark('shot 03-music-questions');
-    await say('Two years, Grade 4 pieces');
-    await say('30');
-    await until('music plan', () => text().includes('Approve plan') && text().includes('Piano practice'), 120000);
-    await mark('shot 04-music-plan');
-    button('Approve plan').click();
-    await until('music plan written', () => text().split('The plan is on your calendar').length > 2, 120000);
-    await sleep(3000);
-    await mark('shot 05-music-approved');
-  };
+  const MUSIC_GOAL = { title: MUSIC, asks: 'How long have you played piano?', answers: ['Two years, Grade 4 pieces', '30'], plan: 'Piano practice' };
 
   try {
     await started();
@@ -35,7 +21,7 @@
     await saveKey();
     await mark('shot 02-key-saved');
     await planGoal();
-    await planMusic();
+    await planGoal({ questions: 'shot 03-music-questions', plan: 'shot 04-music-plan', approved: 'shot 05-music-approved' }, 120000, MUSIC_GOAL);
 
     const goal = await poll('music goal synced', async () => (await snapshot()).goals.find((g) => g.title.includes('Clair de Lune') && g.category_id), 60000);
     await poll('music plugin', async () => (await invoke('plugins_list', { goalId: goal.id })).find((p) => p.enabled && p.tree && p.name === 'music'), 120000);

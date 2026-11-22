@@ -73,7 +73,7 @@ const STEP_TEXT: Record<string, string> = {
 export function pauseMessage(status: RunStatus): string | null {
 	if (status.status === 'waiting_budget') {
 		const limit = status.reason?.limit ?? 'spend';
-		if (limit === 'unverified_price') return "Paused: this model's price is not verified, so spend cannot be checked. Pick an Anthropic model in Settings.";
+		if (limit === 'unverified_price') return "Paused: this model's price is not verified, so spend cannot be checked. Pick an Anthropic, OpenAI or Google model in Settings.";
 		return `Paused: the ${limit} budget is reached. Raise it in Settings to continue.`;
 	}
 	if (status.status === 'failed') return `The run stopped: ${status.error ?? 'unknown error'}.`;
@@ -145,6 +145,16 @@ export function chatFromRun(view: RunView): ChatMessage[] {
 		out.push({ type: 'message', from: 'persona', name: 'Aroh', text });
 	}
 	return out;
+}
+
+/**
+ * Marks the oldest open question card of `messages` answered, since each owner message answers
+ * the next question in order (see `route`). Returns a new array; unchanged when no card is open.
+ */
+export function closeOldestQuestion(messages: ChatMessage[]): ChatMessage[] {
+	const i = messages.findIndex((m) => m.type === 'card' && m.spec.kind === 'question_card' && !m.answered);
+	if (i < 0) return messages;
+	return messages.map((m, j) => (j === i && m.type === 'card' && m.spec.kind === 'question_card' ? { ...m, answered: true } : m));
 }
 
 /** What one chat message does to a goal's runs, as `route` decides it. */

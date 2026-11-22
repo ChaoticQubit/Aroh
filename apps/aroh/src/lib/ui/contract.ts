@@ -69,7 +69,7 @@ export type OnChange = (value: unknown) => void;
 /** One entry of a persona chat thread: a message, an inline card, research progress or a plan summary. */
 export type ChatMessage =
 	| { type: 'message'; from: 'owner' | 'persona'; name: string; text: string }
-	| { type: 'card'; spec: ComponentSpec }
+	| { type: 'card'; spec: ComponentSpec; answered?: boolean }
 	| { type: 'progress'; lines: { text: string; done: boolean }[] }
 	| { type: 'plan'; title: string; items: string[] };
 

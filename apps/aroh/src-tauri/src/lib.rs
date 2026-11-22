@@ -2,6 +2,7 @@
 
 mod commands;
 mod notify;
+mod realtime;
 
 use aroh_domain::hlc::{self, Hlc};
 use chrono::Utc;
@@ -91,6 +92,8 @@ pub fn run() {
             let core = open_core(app)?;
             app.manage(AppState { core: Mutex::new(core) });
             app.manage(notify::ReminderState::default());
+            app.manage(realtime::RealtimeState::default());
+            realtime::start(app.handle());
             on_start_or_resume(app.handle());
             #[cfg(debug_assertions)]
             dev_script(app);
@@ -127,6 +130,7 @@ pub fn run() {
             commands::push::app_dev_push_probe,
             commands::calendar_import::app_calendar_import,
             commands::learning::app_edit_action,
+            realtime::app_realtime_up,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

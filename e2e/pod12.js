@@ -1,28 +1,5 @@
 (async () => {
-  const invoke = (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args ?? {});
-  const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
-  const mark = async (text) => {
-    await invoke('app_dev_mark', { mark: text });
-    await sleep(2500);
-  };
-  const until = async (what, ok, ms = 30000) => {
-    const end = Date.now() + ms;
-    while (Date.now() < end) {
-      if (ok()) return;
-      await sleep(300);
-    }
-    throw new Error(`timed out waiting for ${what}`);
-  };
-  const go = async (path) => {
-    const a = document.createElement('a');
-    a.href = path;
-    document.body.append(a);
-    a.click();
-    a.remove();
-    await until(`route ${path}`, () => location.pathname === path);
-    await sleep(1200);
-  };
-  const text = () => document.body.innerText;
+  const { invoke, sleep, mark, until, go, text, button, fail } = window.AROH_LIB;
   const scroller = () => [...document.querySelectorAll('*')].find((el) => el.scrollHeight > el.clientHeight + 40 && getComputedStyle(el).overflowY.match(/auto|scroll/)) ?? document.scrollingElement;
   const scrollTo = async (heading) => {
     const h = [...document.querySelectorAll('h3, p')].find((x) => x.textContent.trim() === heading);
@@ -36,9 +13,7 @@
     await sleep(600);
   };
   const tap = async (name) => {
-    const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === name);
-    if (!b) throw new Error(`no button ${name}`);
-    b.click();
+    button(name).click();
     await sleep(1500);
   };
   const v2 = `aroh_plugin = 1
@@ -133,7 +108,6 @@ series = 3
     await mark('shot 06-no-plugin-derived');
     await mark('done');
   } catch (e) {
-    await invoke('app_dev_mark', { mark: `error ${String(e).replace(/[^ -~]/g, '').slice(0, 70)}` });
-    await mark('shot 99-failure');
+    await fail(e);
   }
 })();

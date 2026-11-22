@@ -111,14 +111,16 @@ async fn tampered_row_fails() {
     let pool = pg().await;
     let a = user(&pool).await;
     let v = vault(&pool);
-    let s = Uuid::now_v7();
-    v.set(a, s, "openai", &key("sk-proj-abcdefgh")).await.unwrap();
-    db::query("update public.provider_credentials set ciphertext = overlay(ciphertext placing '\\xff'::bytea from 1 for 1) where setting_id = $1")
-        .bind(s)
-        .execute(&pool)
-        .await
-        .unwrap();
-    assert!(matches!(v.load(a, s).await, Err(ServerError::Crypto(_))));
+    for _ in 0..512 {
+        let s = Uuid::now_v7();
+        v.set(a, s, "openai", &key("sk-proj-abcdefgh")).await.unwrap();
+        db::query("update public.provider_credentials set ciphertext = set_byte(ciphertext, 0, get_byte(ciphertext, 0) # 1) where setting_id = $1")
+            .bind(s)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(matches!(v.load(a, s).await, Err(ServerError::Crypto(_))));
+    }
     let other = vault_with(&pool, "CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg=");
     let s2 = Uuid::now_v7();
     v.set(a, s2, "openai", &key("sk-proj-abcdefgh")).await.unwrap();

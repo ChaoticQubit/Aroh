@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { niceScale, xOf, yOf } from './chart';
+import { axisWidth, niceScale, xOf, yOf } from './chart';
 
 describe('chart scale', () => {
 	it('covers values and the target with round ticks', () => {
@@ -10,6 +10,18 @@ describe('chart scale', () => {
 	});
 	it('starts bar scales at zero', () => {
 		expect(niceScale([118, 162], 150, true).ticks).toEqual([0, 50, 100, 150, 200]);
+	});
+	it('gives a single value round ticks around it', () => {
+		const s = niceScale([8432]);
+		expect(s.min).toBeLessThan(8432);
+		expect(s.max).toBeGreaterThan(8432);
+		expect(s.ticks.every(Number.isInteger)).toBe(true);
+		expect(s.ticks.length).toBeGreaterThanOrEqual(3);
+		expect(niceScale([0]).ticks).toEqual([-1, -0.5, 0, 0.5, 1]);
+	});
+	it('makes room for the widest tick label', () => {
+		expect(axisWidth({ min: 0, max: 100, ticks: [0, 50, 100] })).toBe(34);
+		expect(axisWidth({ min: 7500, max: 9500, ticks: [7500, 8000, 9500] })).toBeGreaterThanOrEqual(5 * 7 + 12);
 	});
 	it('maps values and indexes to pixels', () => {
 		const s = { min: 0, max: 100, ticks: [0, 100] };

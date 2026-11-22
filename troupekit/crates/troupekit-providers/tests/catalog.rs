@@ -42,9 +42,49 @@ fn shipped_catalog_loads_with_every_required_vendor() {
         ),
         (Protocol::Anthropic, AuthStyle::XApiKey, false)
     );
-    for m in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"] {
-        assert!(c.price(&format!("anthropic/{m}")).unwrap().verified, "{m}");
+    for m in [
+        "anthropic/claude-opus-5-5",
+        "anthropic/claude-sonnet-5-5",
+        "anthropic/claude-haiku-5-5",
+        "openai/gpt-6.2-sol",
+        "openai/gpt-6.1-terra",
+        "openai/gpt-6-luna",
+        "google/gemini-3.8-flash",
+        "google/gemini-3.5-flash-lite",
+        "google/gemini-3.1-pro-preview",
+    ] {
+        let price = c.price(m).unwrap();
+        assert!(
+            price.verified && price.output_usd_micros_per_mtok > 0,
+            "{m}"
+        );
     }
+    for (id, source) in [
+        (
+            "anthropic",
+            "https://platform.claude.com/docs/en/about-claude/pricing",
+        ),
+        ("openai", "https://developers.openai.com/api/docs/pricing"),
+        ("google", "https://ai.google.dev/gemini-api/docs/pricing"),
+    ] {
+        assert_eq!(
+            c.vendor(id).unwrap().price_source.as_deref(),
+            Some(source),
+            "{id}"
+        );
+    }
+    assert_eq!(
+        c.price("openai/gpt-6.2-sol")
+            .unwrap()
+            .cost_usd_micros(&usage(272_001, 1_000_000)),
+        1_088_004 + 15_000_000
+    );
+    assert_eq!(
+        c.price("google/gemini-3.1-pro-preview")
+            .unwrap()
+            .cost_usd_micros(&usage(200_000, 1_000_000)),
+        400_000 + 12_000_000
+    );
     assert_eq!(
         c.vendor("openai").unwrap().quirks.max_tokens_field,
         MaxTokensField::MaxCompletionTokens
@@ -125,6 +165,16 @@ fn resolves_selectors() {
 fn rejects_bad_catalogs() {
     let model = "[[vendor.model]]\nid = \"m\"\ncontext_window = 1\ninput_usd_micros_per_mtok = 0\noutput_usd_micros_per_mtok = 0\nprice_verified = false\n";
     assert!(Catalog::load(&vendor(model)).is_ok());
+    let paid = model
+        .replace(
+            "output_usd_micros_per_mtok = 0",
+            "output_usd_micros_per_mtok = 5",
+        )
+        .replace("price_verified = false", "price_verified = true");
+    assert!(Catalog::load(&vendor(&format!(
+        "price_source = \"https://v.test/prices\"\n{paid}"
+    )))
+    .is_ok());
     let parse = [
         "vendor = = 1".to_string(),
         vendor("color = \"red\""),
@@ -146,6 +196,8 @@ fn rejects_bad_catalogs() {
         vendor(&model.replace("id = \"m\"", "id = \"a b\"")),
         vendor(&format!("{model}{model}")),
         vendor(&format!("{model}long_context = {{ above_input_tokens = 0, input_usd_micros_per_mtok = 1, output_usd_micros_per_mtok = 1 }}\n")),
+        vendor(&paid),
+        vendor(&format!("price_source = \"http://v.test/prices\"\n{paid}")),
     ];
     for text in invalid {
         assert!(

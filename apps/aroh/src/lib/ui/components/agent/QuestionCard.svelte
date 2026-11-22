@@ -6,8 +6,8 @@
 	import Persona from './Persona.svelte';
 	import type { OnChange, SpecOf } from '$lib/ui/contract';
 
-	/** A persona's question with its answer input rendered from the nested spec. Emits the answer on send. */
-	let { spec, onchange }: { spec: SpecOf<'question_card'>; onchange?: OnChange } = $props();
+	/** A persona's question with its answer input rendered from the nested spec. Emits the answer on send; shows it sent once `answered` is set by a typed answer. */
+	let { spec, onchange, answered = false }: { spec: SpecOf<'question_card'>; onchange?: OnChange; answered?: boolean } = $props();
 
 	let answer = $state<unknown>(undefined);
 	let sent = $state(false);
@@ -16,7 +16,7 @@
 <Card.Root size="sm" class="gap-3 px-4">
 	<Persona name={spec.persona} note="Question" />
 	<p class="text-sm font-semibold text-fg">{spec.question}</p>
-	{#if sent}
+	{#if sent || answered}
 		<p class="flex items-center gap-2 text-sm text-status-done" role="status"><Check class="size-4" />Answer sent</p>
 	{:else}
 		<Render spec={spec.input} onchange={(v) => (answer = v)} />

@@ -53,7 +53,7 @@
 
 	/** Opens the goal's persona chat, which answers its waiting run or starts a replan. */
 	function onchat() {
-		if (goal) void goto(`/goals/new?goal=${goal.id}`);
+		if (goal) void goto(`/goals/${goal.id}/chat`);
 	}
 
 	/** Switches the dashboard to a plugin version, or to the derived view. */

@@ -32,7 +32,8 @@ fn text(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-fn supabase(state: &State<'_, AppState>) -> Result<Config, String> {
+/// The Supabase project from the owner's settings, or a UI-safe error when it is not set.
+pub(crate) fn supabase(state: &State<'_, AppState>) -> Result<Config, String> {
     let (url, key) = with_core(state, |c| Ok((local::setting(&c.conn, "supabase_url")?, local::setting(&c.conn, "supabase_anon_key")?)))?;
     match (url, key) {
         (Some(url), Some(key)) => Config::new(&url, &key).map_err(text),
@@ -106,14 +107,16 @@ pub async fn app_sign_in(app: AppHandle, state: State<'_, AppState>, email: Stri
         let _ = auth::sign_out(Some(&config)).await;
         return Err(e);
     }
+    crate::realtime::restart(&app);
     if let Err(e) = run_sync(&app, config).await {
         eprintln!("aroh: first sync failed: {e}");
     }
     Ok(account_of(Some(&session)))
 }
 
-/// Signs out: revokes the session when the server is reachable and removes it from the
-/// keychain. Local rows stay, owned by the account.
+/// Signs out: revokes the session when the server is reachable, removes it from the
+/// keychain and clears the scheduled and delivered reminders. Local rows stay, owned by the
+/// account; no reminders are planned for them until the account signs in again.
 #[tauri::command]
 pub async fn app_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<Account, String> {
     if cfg!(target_os = "ios") {
@@ -121,6 +124,8 @@ pub async fn app_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<
     }
     let config = supabase(&state).ok();
     auth::sign_out(config.as_ref()).await.map_err(text)?;
+    notify::clear(&app).await;
+    crate::realtime::restart(&app);
     Ok(account_of(None))
 }
 

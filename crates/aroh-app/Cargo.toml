@@ -8,7 +8,6 @@ publish = false
 [dependencies]
 aroh-domain.workspace = true
 aroh-store.workspace = true
-aroh-reminders.workspace = true
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true

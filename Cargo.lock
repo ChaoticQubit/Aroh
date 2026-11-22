@@ -124,6 +124,7 @@ dependencies = [
  "tauri-plugin-aroh-speech",
  "tauri-plugin-notification",
  "time",
+ "tokio",
 ]
 
 [[package]]
@@ -148,7 +149,6 @@ name = "aroh-app"
 version = "0.1.0"
 dependencies = [
  "aroh-domain",
- "aroh-reminders",
  "aroh-store",
  "chrono",
  "chrono-tz",
@@ -283,6 +283,7 @@ version = "0.1.0"
 dependencies = [
  "aroh-domain",
  "aroh-store",
+ "futures-util",
  "keyring",
  "reqwest 0.12.28",
  "rusqlite",
@@ -290,6 +291,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-tungstenite",
  "uuid",
 ]
 

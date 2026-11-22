@@ -6,7 +6,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import Panel from '../Panel.svelte';
-	import { yOf, type Scale } from '$lib/ui/chart';
+	import { axisWidth, yOf, type Scale } from '$lib/ui/chart';
 	import { formatNumber } from '$lib/ui/format';
 
 	/**
@@ -17,13 +17,13 @@
 	let { label, unit, target, scale, summary, aside, plot }: { label: string; unit: string; target?: number; scale: Scale | null; summary: string; aside?: Snippet; plot: Snippet<[Plot]> } = $props();
 
 	const HEIGHT = 160;
-	const PAD = { top: 8, right: 8, bottom: 22, left: 34 };
+	const PAD = { top: 8, right: 8, bottom: 22 };
 	let width = $state(320);
 	const area = $derived<Plot | null>(
 		scale
 			? {
-					left: PAD.left,
-					right: Math.max(PAD.left, width - PAD.right),
+					left: axisWidth(scale),
+					right: Math.max(axisWidth(scale), width - PAD.right),
 					top: PAD.top,
 					bottom: HEIGHT - PAD.bottom,
 					height: HEIGHT,

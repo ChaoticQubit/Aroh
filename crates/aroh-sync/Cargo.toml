@@ -14,6 +14,9 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
+tokio = { workspace = true, features = ["time"] }
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
 
 [dev-dependencies]
 aroh-domain = { workspace = true, features = ["samples"] }

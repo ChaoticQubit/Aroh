@@ -1,19 +1,21 @@
 import type { ChatMessage } from '$lib/ui/contract';
 import * as client from './client';
-import { ACTIVE, chatFromRun, engine, NEEDS_ENGINE, type RunEvent, type RunView } from './engine';
+import { ACTIVE, chatFromRun, closeOldestQuestion, engine, NEEDS_ENGINE, type RunEvent, type RunView } from './engine';
+import { connectWakeups, wakeups } from './realtime';
 
-const POLL_MS = 1500;
 const POLL_MAX = 400;
 
 /**
- * Polls a run every 1.5 s with `after_seq` while it is queued, running or checkpointed, then
- * syncs so rows the engine wrote reach the device. `onview` gets each view with every event
- * after `afterSeq` read so far. Resolves to the last view, or null when the engine was not read.
+ * Reads a run with `after_seq` while it is queued, running or checkpointed, waking on its
+ * Realtime events (1.5 s polling when the socket is down), then syncs so rows the engine wrote
+ * reach the device. `onview` gets each view with every event after `afterSeq` read so far.
+ * Resolves to the last view, or null when the engine was not read.
  */
 export async function follow(runId: string, onview: (v: RunView) => void = () => {}, afterSeq = -1): Promise<RunView | null> {
 	let last: RunView | null = null;
 	const events: RunEvent[] = [];
 	let seq = afterSeq;
+	await connectWakeups();
 	for (let i = 0; i < POLL_MAX; i++) {
 		const r = await engine.run(runId, seq < 0 ? undefined : seq);
 		if (!r.ok) break;
@@ -22,7 +24,7 @@ export async function follow(runId: string, onview: (v: RunView) => void = () =>
 		last = { ...r.value, events: [...events] };
 		onview(last);
 		if (!ACTIVE.includes(last.status.status)) break;
-		await new Promise((done) => setTimeout(done, POLL_MS));
+		await wakeups.wait(runId);
 	}
 	await client.sync().catch(() => null);
 	return last;
@@ -98,9 +100,10 @@ export class GoalChat {
 		}
 	}
 
-	/** Sends owner text: starts the goal, answers the waiting node or starts a replan. */
+	/** Sends owner text: starts the goal, answers the waiting node or starts a replan. The text closes the oldest open question card. */
 	async send(text: string) {
 		this.freeze();
+		this.log = closeOldestQuestion(this.log);
 		this.log.push({ type: 'message', from: 'owner', name: 'You', text });
 		if (!this.goalId) {
 			const started = await engine.startGoal(text);
@@ -112,6 +115,14 @@ export class GoalChat {
 		if (!sent.ok) return this.say(sent.message);
 		this.held = sent.value.held;
 		if (sent.value.run_id) await this.watch(sent.value.run_id);
+	}
+
+	/** Hands a PersonaChat event (send, approve or change) to `send` or `decide`. */
+	handle(event: unknown) {
+		const e = event as { type: string; text?: string };
+		if (e.type === 'send' && e.text) void this.send(e.text);
+		if (e.type === 'approve') void this.decide(true);
+		if (e.type === 'change') void this.decide(false);
 	}
 
 	/** Approves the plan or proposal the run waits on, or with `yes` false asks what to change. */

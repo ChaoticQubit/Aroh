@@ -3,7 +3,7 @@
 	import type { ChatMessage, OnChange } from '$lib/ui/contract';
 
 	/**
-	 * New goal: the persona chat thread. `onchange` gets the chat's send, approve and change events;
+	 * Persona chat screen, for a new goal or one goal's chat. `onchange` gets the chat's send, approve and change events;
 	 * `echo` false means `messages` already holds the owner's sent text.
 	 */
 	let { messages, onchange, echo = true }: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean } = $props();

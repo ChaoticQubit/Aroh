@@ -57,7 +57,7 @@
 	<div class="relative grid" style="grid-template-columns: 52px repeat({days.length}, minmax(0, 1fr)); height: {height}px">
 		<div class="relative">
 			{#each hours.slice(0, -1) as h (h)}
-				<span class="absolute right-2 -translate-y-1/2 text-xs text-muted tabular-nums" style="top: {(h - startHour) * HOUR}px">{h === startHour ? '' : `${String(h).padStart(2, '0')}:00`}</span>
+				<span class="absolute right-2 text-xs text-muted tabular-nums {h === startHour ? 'translate-y-0.5' : '-translate-y-1/2'}" style="top: {(h - startHour) * HOUR}px">{`${String(h).padStart(2, '0')}:00`}</span>
 			{/each}
 		</div>
 		{#each columns as c (c.date)}

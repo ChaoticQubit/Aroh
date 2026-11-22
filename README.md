@@ -57,6 +57,15 @@ Do not run plain `tauri ios dev`: it tries to Homebrew-install `ios-deploy`. `ta
 
 Port 1420 is shared, so run one simulator check at a time.
 
+## iOS release build
+
+`tauri ios build` fails its SDK check on this Mac, so `apps/aroh/ios-release.sh` builds the release app by hand. It runs `pnpm build`, builds the Rust library in release with the `custom-protocol` feature (the UI is embedded, no dev server), copies it to `gen/apple/Externals/arm64/release/libapp.a` and runs `xcodebuild` with a no-op `pnpm` shim, since the Xcode "Build Rust Code" phase would call the Tauri CLI.
+
+- `sh apps/aroh/ios-release.sh` archives for devices with signing off: `target/ios-release/Aroh.xcarchive`. Signing and export stay with the owner: open the archive in Xcode Organizer, or run `xcodebuild -exportArchive` with your team and an export options plist.
+- `sh apps/aroh/ios-release.sh simulator` builds the release app for the simulator, ad-hoc signed: `target/ios-release/dd/Build/Products/release-iphonesimulator/Aroh.app`. Install it with `xcrun simctl install`.
+
+`AROH_IOS_OUT` moves the output folder. Run `git checkout -- apps/aroh/src-tauri/gen/apple` afterwards if Xcode touched the project.
+
 ## Android
 
 Android is not set up on this Mac yet. It needs the Android SDK (platform, build-tools, platform-tools), the NDK, JDK 17 or newer, the four Rust Android targets, and `ANDROID_HOME`, `NDK_HOME` and `JAVA_HOME` set. Then run `pnpm tauri android init` and `pnpm tauri android build --debug`.
