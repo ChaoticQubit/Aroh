@@ -59,6 +59,7 @@ fn on_start_or_resume(app: &tauri::AppHandle) {
     if let Err(e) = notify::sync(app) {
         eprintln!("aroh: reminders not scheduled: {e}");
     }
+    commands::engine::sync_if_signed_in(app);
 }
 
 /// Debug builds only: three seconds after start, evaluates the JavaScript file at
@@ -106,6 +107,14 @@ pub fn run() {
             commands::app::app_set_setting,
             commands::app::app_notification_permission,
             commands::app::app_dev_seed,
+            commands::app::app_dev_mark,
+            commands::engine::app_sign_in,
+            commands::engine::app_sign_out,
+            commands::engine::app_account,
+            commands::engine::app_sync,
+            commands::engine::app_engine,
+            commands::engine::app_save_key,
+            commands::engine::app_logs_sent,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

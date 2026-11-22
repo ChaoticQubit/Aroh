@@ -25,7 +25,7 @@ export type InboxItem = { id: string; spec: ComponentSpec };
 export type RunView = { persona: string; title: string; step: string; progress: number };
 
 /** One model provider of the Settings dropdown. */
-export type ProviderView = { id: string; name: string; protocol: string; models: string[]; keySet: boolean; selfHosted: boolean };
+export type ProviderView = { id: string; name: string; protocol: string; models: string[]; keySet: boolean; last4: string | null; selfHosted: boolean };
 
 /** One configured web search provider, in fallback order. */
 export type SearchView = { name: string; detail: string; keySet: boolean };
@@ -41,7 +41,11 @@ export type SettingsView = {
 	budgetGoal: number | null;
 	calendars: boolean;
 	health: boolean;
+	account: AccountView;
 };
+
+/** The Account card: Supabase project, and the signed-in email or null. */
+export type AccountView = { supabaseUrl: string; anonKey: string; email: string | null };
 
 /** A goal row of the Goals list. */
 export type GoalRow = { id: string; title: string; category: string; slot: CategorySlot; deadline: string | null; autonomy: AutonomyLabel };

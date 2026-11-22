@@ -1,94 +1,84 @@
-use aroh_sync::auth::password_session;
-use aroh_sync::config::{validate_url, Config};
-use aroh_sync::remote::sync_all;
-use aroh_sync::remote::Moved;
-use rusqlite::{Connection, OptionalExtension};
+use aroh_domain::hlc::Hlc;
+use aroh_domain::rows::{samples, Goal};
+use aroh_store::{db, repo, sync::sync_all};
+use aroh_sync::auth::sign_up_session;
+use aroh_sync::rest::PgRest;
+use aroh_sync::{Config, Session};
+use rusqlite::Connection;
 
-fn env(name: &str) -> String {
-    std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"))
+fn config() -> Config {
+    let url = std::env::var("AROH_E2E_SUPABASE_URL").expect("AROH_E2E_SUPABASE_URL is set; run e2e/up.sh");
+    let key = std::env::var("AROH_E2E_ANON_KEY").expect("AROH_E2E_ANON_KEY is set");
+    Config::new(&url, &key).unwrap()
 }
 
-async fn sync(conn: &mut Connection, config: &Config, token: &str) -> Moved {
-    sync_all(conn, config, token, &mut |_| {}).await.unwrap()
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64
 }
 
-fn now_millis() -> u64 {
-    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
-    u64::try_from(since.as_millis()).unwrap()
+async fn account(config: &Config) -> Session {
+    let email = format!("live-{}@aroh.test", aroh_domain::new_id());
+    sign_up_session(config, &email, "live-password-1").await.unwrap()
 }
 
-fn hlc(millis: u64, node: u64) -> String {
-    aroh_core::hlc::Hlc::with_wall_clock(format!("{node:016x}"), millis).tick()
+struct Device {
+    conn: Connection,
+    clock: Hlc,
 }
 
-fn device() -> Connection {
-    aroh_core::db::open_in_memory().unwrap()
-}
-
-fn goal(conn: &Connection, id: &str) -> Option<(String, i64, String)> {
-    conn.query_row("SELECT title, deleted, updated_at FROM goals WHERE id = ?1", [id], |r| {
-        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-    })
-    .optional()
-    .unwrap()
-}
-
-fn action_title(conn: &Connection, id: &str) -> Option<String> {
-    conn.query_row("SELECT title FROM actions WHERE id = ?1", [id], |r| r.get(0))
-        .optional()
-        .unwrap()
-}
-
-/// Two devices signed in as one Supabase user converge through the live
-/// project: insert, newer edit, tombstone, and an older edit that must not
-/// resurrect the tombstone. Run with `live.sh`, never in the default suite.
-#[tokio::test]
-#[ignore = "needs a live Supabase project; run crates/aroh-sync/live.sh"]
-async fn two_devices_converge_through_supabase() {
-    let config = Config { url: validate_url(&env("AROH_SUPABASE_URL")).unwrap(), anon_key: env("AROH_SUPABASE_ANON_KEY") };
-    let session = password_session(&config, &env("AROH_TEST_EMAIL"), &env("AROH_TEST_PASSWORD")).await.unwrap();
-    let token = session.access_token.as_str();
-    let (mut a, mut b) = (device(), device());
-    let (node_a, node_b) = (0xa, 0xb);
-    let run = now_millis();
-    let goal_id = format!("live-goal-{run}");
-    let action_id = format!("live-action-{run}");
-    let t1 = hlc(run, node_a);
-
-    a.execute(
-        "INSERT INTO goals (id, title, kind, target_date, status, created_at, updated_at, deleted) VALUES (?1, 'Live goal', 'custom', '2026-12-31', 'active', '2026-11-20T00:00:00Z', ?2, 0)",
-        [&goal_id, &t1],
-    )
-    .unwrap();
-    a.execute(
-        "INSERT INTO actions (id, goal_id, title, start_at, end_at, status, est_minutes, seq, updated_at, deleted) VALUES (?1, ?2, 'Read chapter 1', '2026-11-21T09:00:00Z', '2026-11-21T09:30:00Z', 'planned', 30, 1, ?3, 0)",
-        [&action_id, &goal_id, &t1],
-    )
-    .unwrap();
-    assert!(sync(&mut a, &config, token).await.pushed >= 2);
-    sync(&mut b, &config, token).await;
-    assert_eq!(goal(&b, &goal_id).map(|g| g.0).as_deref(), Some("Live goal"));
-    assert_eq!(action_title(&b, &action_id).as_deref(), Some("Read chapter 1"));
-
-    let t2 = hlc(run + 1, node_b);
-    b.execute("UPDATE actions SET title = 'Read chapter 1 and 2', updated_at = ?2 WHERE id = ?1", [&action_id, &t2]).unwrap();
-    sync(&mut b, &config, token).await;
-    sync(&mut a, &config, token).await;
-    assert_eq!(action_title(&a, &action_id).as_deref(), Some("Read chapter 1 and 2"));
-
-    let t3 = hlc(run + 3, node_a);
-    a.execute("UPDATE goals SET deleted = 1, updated_at = ?2 WHERE id = ?1", [&goal_id, &t3]).unwrap();
-    sync(&mut a, &config, token).await;
-    sync(&mut b, &config, token).await;
-    assert_eq!(goal(&b, &goal_id).map(|g| g.1), Some(1));
-
-    let stale = hlc(run + 2, node_b);
-    b.execute("UPDATE goals SET deleted = 0, title = 'resurrected', updated_at = ?2 WHERE id = ?1", [&goal_id, &stale]).unwrap();
-    sync(&mut b, &config, token).await;
-    sync(&mut a, &config, token).await;
-    let mut fresh = device();
-    sync(&mut fresh, &config, token).await;
-    for conn in [&a, &fresh] {
-        assert_eq!(goal(conn, &goal_id), Some(("Live goal".to_string(), 1, t3.clone())));
+impl Device {
+    fn new(node: &str) -> Device {
+        Device { conn: db::open_in_memory().unwrap(), clock: Hlc::with_wall_clock(node, now_ms()) }
     }
+
+    async fn sync(&mut self, config: &Config, session: &Session) -> aroh_store::sync::Moved {
+        let mut remote = PgRest::new(config.clone(), session.access_token.clone());
+        sync_all(&mut self.conn, &mut remote, &session.user_id, &mut self.clock).await.unwrap()
+    }
+
+    fn goal(&self, id: &str) -> Option<(String, bool)> {
+        self.conn.query_row("SELECT title, deleted FROM goals WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).ok()
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs the e2e stack: e2e/up.sh"]
+async fn two_devices_converge_through_postgrest() {
+    let config = config();
+    let me = account(&config).await;
+    let other = account(&config).await;
+    let mut a = Device::new("00000000000000aa");
+    let mut b = Device::new("00000000000000bb");
+
+    let mut goal = Goal { user_id: me.user_id.clone(), category_id: None, ..samples::goal() };
+    goal.id = aroh_domain::new_id();
+    repo::put(&a.conn, &mut a.clock, &mut goal).unwrap();
+    assert_eq!(a.sync(&config, &me).await.pushed, 1);
+    assert_eq!(b.sync(&config, &me).await.pulled, 1);
+    assert_eq!(b.goal(&goal.id), Some((goal.title.clone(), false)));
+
+    let mut on_b = repo::get::<Goal>(&b.conn, &goal.id).unwrap();
+    on_b.title = "Edited on B".into();
+    repo::put(&b.conn, &mut b.clock, &mut on_b).unwrap();
+    let mut on_a = repo::get::<Goal>(&a.conn, &goal.id).unwrap();
+    on_a.title = "Edited on A, later".into();
+    a.clock.set_wall_clock(now_ms() + 5_000);
+    repo::put(&a.conn, &mut a.clock, &mut on_a).unwrap();
+    for _ in 0..2 {
+        b.sync(&config, &me).await;
+        a.sync(&config, &me).await;
+    }
+    assert_eq!(a.goal(&goal.id), b.goal(&goal.id));
+    assert_eq!(a.goal(&goal.id).unwrap().0, "Edited on A, later", "the later stamp wins");
+
+    b.clock.set_wall_clock(now_ms() + 10_000);
+    repo::delete::<Goal>(&b.conn, &mut b.clock, &goal.id).unwrap();
+    b.sync(&config, &me).await;
+    a.sync(&config, &me).await;
+    assert_eq!(a.goal(&goal.id).unwrap().1, true, "the tombstone reaches A");
+
+    let mut stranger = Device::new("00000000000000cc");
+    let moved = stranger.sync(&config, &other).await;
+    assert_eq!(moved.pulled, 0, "row-level security hides the first account");
+    assert_eq!(stranger.goal(&goal.id), None);
 }

@@ -1,19 +1,22 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import NewGoalScreen from '$lib/ui/screens/NewGoalScreen.svelte';
-	import type { ChatMessage } from '$lib/ui/contract';
-	import { engine, NEEDS_ENGINE } from '$lib/app/engine';
+	import { GoalChat } from '$lib/app/chat.svelte';
 
-	const greeting: ChatMessage = { type: 'message', from: 'persona', name: 'Aroh', text: 'Tell me the goal you want to reach and by when.' };
-	const offline: ChatMessage = { type: 'message', from: 'persona', name: 'Aroh', text: NEEDS_ENGINE };
-	let messages = $state<ChatMessage[]>(engine.connected ? [greeting] : [greeting, offline]);
+	const goalId = $derived(page.url.searchParams.get('goal'));
+	const chat = $derived(new GoalChat(goalId, goalId ? 'What changed? Tell me and I will look at the plan.' : 'Tell me the goal you want to reach and by when.'));
 
-	/** Hands a sent message to the engine; its reply cards join the thread. */
-	async function onchange(event: unknown) {
+	$effect(() => void chat.resume());
+
+	/** Hands the chat's send, approve and change events to the goal chat. */
+	function onchange(event: unknown) {
 		const e = event as { type: string; text?: string };
-		if (e.type !== 'send' || !e.text) return;
-		const result = await engine.startGoal(e.text);
-		if (result.ok) messages = [...messages, ...result.value];
+		if (e.type === 'send' && e.text) void chat.send(e.text);
+		if (e.type === 'approve') void chat.decide(true);
+		if (e.type === 'change') void chat.decide(false);
 	}
 </script>
 
-<NewGoalScreen {messages} {onchange} />
+{#key chat}
+	<NewGoalScreen messages={chat.messages} {onchange} echo={false} />
+{/key}

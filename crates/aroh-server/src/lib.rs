@@ -6,6 +6,8 @@ pub mod db;
 pub mod engine;
 pub mod error;
 pub mod evals;
+#[cfg(feature = "fake-transports")]
+pub mod fake;
 pub mod io;
 pub mod ledger;
 pub mod queue;

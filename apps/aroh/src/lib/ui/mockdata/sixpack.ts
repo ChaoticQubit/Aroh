@@ -242,7 +242,7 @@ export const sixpackView: ViewSpec = {
 };
 
 /** Model providers the owner can pick in Settings, with sample key flags. */
-export const providerCatalog: ProviderView[] = catalog.map((p) => ({ ...p, keySet: p.id === 'anthropic' || p.id === 'ollama' }));
+export const providerCatalog: ProviderView[] = catalog.map((p) => ({ ...p, keySet: p.id === 'anthropic' || p.id === 'ollama', last4: p.id === 'anthropic' ? '7Q2x' : null }));
 
 /** Web search providers configured in Settings, in fallback order. */
 export const searchProviders: SearchView[] = [
@@ -260,7 +260,8 @@ export const sixpackSettings: SettingsView = {
 	budgetAll: 20,
 	budgetGoal: 8,
 	calendars: true,
-	health: false
+	health: false,
+	account: { supabaseUrl: 'https://aroh.supabase.co', anonKey: 'eyJhbGciOiJIUzI1NiJ9.sample', email: 'sam@example.com' }
 };
 
 /** The Goal screen's header facts for the sample goal. */

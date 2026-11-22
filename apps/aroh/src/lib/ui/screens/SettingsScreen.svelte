@@ -10,22 +10,26 @@
 	import type { SettingsView } from './types';
 
 	/**
-	 * Settings: model provider, model and key (the key goes to the server, never stored on the device),
-	 * search providers, server URL, monthly budgets, and calendar and Apple Health access.
-	 * `ontest` sends the typed key to the engine and resolves to the status line; the rest report edits.
+	 * Settings: account sign-in, model provider, model and key (the key goes to the server, never
+	 * stored on the device), search providers, server URL, monthly budgets, and calendar and Apple
+	 * Health access. `ontest` and `onsignin` resolve to the status line; the rest report edits.
 	 */
 	let {
 		settings,
 		onprovider,
 		ontest,
 		onsetting,
-		onbudget
+		onbudget,
+		onsignin,
+		onsignout
 	}: {
 		settings: SettingsView;
 		onprovider?: (providerId: string, model: string) => void;
 		ontest?: (providerId: string, key: string) => Promise<string>;
-		onsetting?: (key: 'server_url' | 'calendars' | 'health', value: string) => void;
+		onsetting?: (key: 'server_url' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key', value: string) => void;
 		onbudget?: (scope: 'all' | 'goal', usd: number | null) => void;
+		onsignin?: (email: string, password: string, create: boolean) => Promise<string>;
+		onsignout?: () => void;
 	} = $props();
 
 	const id = $props.id();
@@ -37,7 +41,18 @@
 	let status = $state<string | null>(null);
 	let calendars = $derived(settings.calendars);
 	let health = $derived(settings.health);
+	let email = $state('');
+	let password = $state('');
+	let accountStatus = $state<string | null>(null);
 	const input = 'h-11 text-lg';
+
+	/** Signs in or creates the account through `onsignin`; the password is cleared either way. */
+	async function signIn(create: boolean) {
+		if (!onsignin) return;
+		accountStatus = create ? 'Creating the account.' : 'Signing in.';
+		accountStatus = await onsignin(email.trim(), password, create);
+		password = '';
+	}
 
 	/** Reports a picked provider with its first model. */
 	function pickProvider(next: string) {
@@ -53,6 +68,7 @@
 			return;
 		}
 		status = await ontest(provider.id, key);
+		key = '';
 	}
 
 	/** Parses a dollar input: empty is null, anything else a non-negative number or null. */
@@ -63,6 +79,39 @@
 </script>
 
 <div class="flex w-full max-w-2xl flex-col gap-6 p-4 @3xl:p-6">
+	<section class="flex flex-col gap-3" aria-labelledby="{id}-account">
+		<h2 id="{id}-account" class="text-sm font-semibold text-fg">Account</h2>
+		<Card.Root size="sm" class="gap-4 px-4">
+			<Field label="Project URL" id="{id}-sburl">
+				<Input id="{id}-sburl" type="url" inputmode="url" placeholder="https://your-project.supabase.co" value={settings.account.supabaseUrl} onchange={(e) => onsetting?.('supabase_url', e.currentTarget.value.trim())} class="{input} text-sm" />
+			</Field>
+			<Field label="Anon key" id="{id}-anon">
+				<Input id="{id}-anon" autocomplete="off" placeholder="Public anon key" value={settings.account.anonKey} onchange={(e) => onsetting?.('supabase_anon_key', e.currentTarget.value.trim())} class="{input} text-sm" />
+			</Field>
+			{#if settings.account.email}
+				<div class="flex flex-wrap items-center gap-3">
+					<StatusChip tone="done" label="Signed in" />
+					<p class="flex-1 text-sm text-fg">{settings.account.email}</p>
+					<Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => onsignout?.()}>Sign out</Button>
+				</div>
+			{:else}
+				<div class="grid gap-4 @md:grid-cols-2">
+					<Field label="Email" id="{id}-email">
+						<Input id="{id}-email" type="email" inputmode="email" autocomplete="username" class="{input} text-sm" bind:value={email} />
+					</Field>
+					<Field label="Password" id="{id}-password">
+						<Input id="{id}-password" type="password" autocomplete="current-password" class="{input} text-sm" bind:value={password} />
+					</Field>
+				</div>
+				<div class="flex flex-wrap items-center gap-3">
+					<Button size="touch" class="@3xl:h-8" onclick={() => signIn(false)}>Sign in</Button>
+					<Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => signIn(true)}>Create account</Button>
+				</div>
+			{/if}
+			{#if accountStatus}<p class="text-sm text-muted" role="status">{accountStatus}</p>{/if}
+		</Card.Root>
+	</section>
+
 	<section class="flex flex-col gap-3" aria-labelledby="{id}-model">
 		<h2 id="{id}-model" class="text-sm font-semibold text-fg">Model provider</h2>
 		<Card.Root size="sm" class="gap-4 px-4">
@@ -82,7 +131,7 @@
 					</Select.Content>
 				</Select.Root>
 			</Field>
-			<Field label="API key" id="{id}-key" detail={provider.keySet ? 'Key saved' : 'No key yet'}>
+			<Field label="API key" id="{id}-key" detail={provider.last4 ? `Key saved, ends ${provider.last4}` : provider.keySet ? 'Key saved' : 'No key yet'}>
 				<Input id="{id}-key" type="password" autocomplete="off" placeholder={provider.keySet ? 'Saved. Enter a new key to replace it' : 'Paste your key'} class={input} bind:value={key} aria-describedby="{id}-keyhelp" />
 				<p id="{id}-keyhelp" class="text-xs text-muted">Saved on the server, never on this device.</p>
 			</Field>

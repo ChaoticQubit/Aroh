@@ -1,6 +1,8 @@
 use aroh_app::{local, remind, sample, snapshot, tick, write};
 use aroh_domain::hlc::Hlc;
-use aroh_domain::rows::{Action, ActionSeries, ActionStatus, Category, EntrySource, Proposal, ProposalStatus, Tracker, TrackerEntry};
+use aroh_domain::rows::{Action, ActionSeries, ActionStatus, Category, EntrySource, Goal, Proposal, ProposalStatus, ProviderSetting, Tracker, TrackerEntry};
+use aroh_domain::schema::SYNCED;
+use aroh_store::sync::pending;
 use aroh_store::{db, repo};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -206,4 +208,75 @@ fn reminders_cover_actions_and_check_ins() {
     assert_eq!(check_in.fire_at.with_timezone(&ZONE).format("%H:%M").to_string(), "07:00");
     assert!(check_in.fire_at <= now() + Duration::hours(24));
     assert!(remind::all_ids(&conn).unwrap().contains(&check_in.id));
+}
+
+const ACCOUNT: &str = "0190f2a0-0000-7000-8000-0000000000ac";
+
+#[test]
+fn adopt_reowns_rows_and_reseeds() {
+    let (mut conn, mut clock, local_user) = seeded();
+    tick::tick(&conn, &mut clock, &local_user, now()).unwrap();
+    let old_seeds: Vec<String> = aroh_domain::seed::categories(&local_user).into_iter().map(|c| c.id).collect();
+    let goals_before = repo::list::<Goal>(&conn, &[]).unwrap();
+    assert!(goals_before.iter().any(|g| g.category_id.as_ref().is_some_and(|c| old_seeds.contains(c))));
+    let rows_before: i64 = SYNCED.iter().map(|t| conn.query_row(&format!("SELECT count(*) FROM {}", t.name), [], |r| r.get::<_, i64>(0)).unwrap()).sum();
+
+    local::adopt(&mut conn, ACCOUNT).unwrap();
+    assert_eq!(local::user_id(&conn).unwrap(), ACCOUNT);
+    for t in SYNCED.iter() {
+        let left: i64 = conn.query_row(&format!("SELECT count(*) FROM {} WHERE user_id = ?1", t.name), [&local_user], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0, "{} still has local rows", t.name);
+    }
+    let rows_after: i64 = SYNCED.iter().map(|t| conn.query_row(&format!("SELECT count(*) FROM {}", t.name), [], |r| r.get::<_, i64>(0)).unwrap()).sum();
+    assert_eq!(rows_after, rows_before, "nothing is lost; seeded categories are replaced one for one");
+    let new_seeds: Vec<String> = aroh_domain::seed::categories(ACCOUNT).into_iter().map(|c| c.id).collect();
+    let cats: Vec<String> = repo::list::<Category>(&conn, &[]).unwrap().into_iter().map(|c| c.id).collect();
+    assert!(new_seeds.iter().all(|id| cats.contains(id)) && old_seeds.iter().all(|id| !cats.contains(id)));
+    for (before, after) in goals_before.iter().zip(repo::list::<Goal>(&conn, &[]).unwrap()) {
+        let expected = before.category_id.as_ref().map(|c| old_seeds.iter().position(|o| o == c).map_or(c.clone(), |i| new_seeds[i].clone()));
+        assert_eq!(after.category_id, expected);
+    }
+    let goals = aroh_domain::schema::table("goals").unwrap();
+    assert!(!pending(&conn, goals, ACCOUNT, clock.node(), "", 500).unwrap().is_empty(), "adopted rows push under the account");
+
+    local::adopt(&mut conn, ACCOUNT).unwrap();
+    assert!(local::adopt(&mut conn, "0190f2a0-0000-7000-8000-0000000000bd").is_err(), "another account is refused");
+    assert!(local::adopt(&mut conn, "not-a-uuid").is_err());
+}
+
+#[test]
+fn remove_sent_keeps_new_logs() {
+    let (conn, _, _) = setup();
+    for text in ["had pasta", "salad", "had pasta"] {
+        local::queue_log(&conn, text, now()).unwrap();
+    }
+    let sent = local::pending_logs(&conn).unwrap()[..2].to_vec();
+    local::queue_log(&conn, "late snack", now()).unwrap();
+    assert_eq!(local::remove_sent(&conn, &sent).unwrap(), 2);
+    let left: Vec<String> = local::pending_logs(&conn).unwrap().into_iter().map(|p| p.text).collect();
+    assert_eq!(left, ["had pasta", "late snack"]);
+}
+
+#[test]
+fn one_provider_row_per_vendor() {
+    let (conn, mut clock, user) = setup();
+    let a = write::save_provider(&conn, &mut clock, &user, "anthropic", "claude-sonnet-5-5").unwrap();
+    let o = write::save_provider(&conn, &mut clock, &user, "openai", "gpt-6.2-sol").unwrap();
+    let again = write::save_provider(&conn, &mut clock, &user, "anthropic", "claude-haiku-5-5").unwrap();
+    assert_eq!(again.id, a.id);
+    assert_ne!(o.id, a.id);
+    let rows = repo::list::<ProviderSetting>(&conn, &[]).unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.iter().filter(|p| p.is_default).map(|p| p.vendor.as_str()).collect::<Vec<_>>(), ["anthropic"]);
+    assert_eq!(rows.iter().find(|p| p.vendor == "anthropic").unwrap().model, "claude-haiku-5-5");
+}
+
+#[test]
+fn supabase_settings_validate() {
+    let (conn, _, _) = setup();
+    local::set_setting(&conn, "supabase_url", "http://127.0.0.1:54321").unwrap();
+    local::set_setting(&conn, "supabase_anon_key", "eyJhbGciOiJIUzI1NiJ9.e30.signature").unwrap();
+    assert!(local::set_setting(&conn, "supabase_url", "http://evil.example.com").is_err());
+    assert!(local::set_setting(&conn, "supabase_anon_key", "short").is_err());
+    assert_eq!(local::settings(&conn).unwrap().len(), 2);
 }

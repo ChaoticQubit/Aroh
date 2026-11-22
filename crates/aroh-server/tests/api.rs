@@ -7,7 +7,8 @@ use aroh_server::db::{self, PgPool};
 use aroh_server::engine::Engine;
 use aroh_server::rows::{put_row, utc, ServerClock};
 use chrono::{DateTime, Utc};
-use common::{body_text, deps, json_reply, offline, pg, sse_text, sse_tool, user, FnTransport, Reply, T0};
+use aroh_server::fake::{body_text, json_reply, sse_text, sse_tool, FnTransport, Reply};
+use common::{deps, offline, pg, user, T0};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -180,7 +181,7 @@ fn plan() -> Value {
         "trackers": [{"name": "Runs", "fields": [
             {"key": "distance_km", "label": "Distance", "kind": "number", "unit": "km"},
             {"key": "felt_good", "label": "Felt good", "kind": "bool", "unit": null}
-        ]}]
+        ], "cadence": null}]
     })
 }
 

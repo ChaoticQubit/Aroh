@@ -22,6 +22,7 @@ rusqlite.workspace = true
 aroh-app.workspace = true
 aroh-domain.workspace = true
 aroh-store.workspace = true
+aroh-sync.workspace = true
 tauri-plugin-notification = "2.7"
 chrono.workspace = true
 chrono-tz.workspace = true

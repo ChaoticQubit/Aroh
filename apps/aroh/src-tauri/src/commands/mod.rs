@@ -1,6 +1,7 @@
 //! Tauri command modules. Add `pub mod <name>;` here and list its commands in `lib.rs`.
 
 pub mod app;
+pub mod engine;
 
 use crate::{AppState, Core};
 

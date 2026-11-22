@@ -5,6 +5,9 @@ version.workspace = true
 license.workspace = true
 publish = false
 
+[features]
+fake-transports = []
+
 [[bin]]
 name = "aroh-server"
 path = "src/main.rs"
@@ -35,3 +38,6 @@ base64 = "0.22"
 jsonwebtoken = "9"
 utoipa = { version = "5", features = ["yaml", "uuid", "chrono"] }
 schemars = { version = "1", features = ["chrono04"] }
+
+[dev-dependencies]
+aroh-server = { path = ".", features = ["fake-transports"] }

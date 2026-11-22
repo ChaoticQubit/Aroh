@@ -83,3 +83,26 @@ async fn tools_refuse_rows_outside_the_run() {
         "items": [{"title": "Run", "start": "tomorrow", "minutes": 30, "rrule": null, "notes": null}]}});
     assert!(tool(&env_a, "write_plan").call(bad, &ctx).await.is_err());
 }
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn write_plan_stores_tracker_cadence() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let plan = json!({"plan": {"summary": "s", "timezone": "Europe/Berlin", "items": [],
+        "trackers": [{"name": "Weight", "fields": [{"key": "weight", "label": "Weight", "kind": "number", "unit": "kg"}],
+                      "cadence": {"freq": "daily", "weekdays": [], "at": "07:30"}},
+                     {"name": "Mood", "fields": [{"key": "ok", "label": "Felt good", "kind": "bool", "unit": null}]}]}});
+    tool(&env, "write_plan").call(plan, &ToolContext::for_call(RunId::new(), 1, 0)).await.unwrap();
+    let rows: Vec<(String, Option<Value>)> = db::query_as("select name, cadence from public.trackers where goal_id = $1 order by name")
+        .bind(env.goal.unwrap())
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows[0], ("Mood".to_string(), None));
+    assert_eq!(rows[1].1, Some(json!({"freq": "daily", "weekdays": [], "at": "07:30"})));
+    let bad = json!({"plan": {"summary": "s", "timezone": "UTC", "items": [],
+        "trackers": [{"name": "W", "fields": [{"key": "w", "label": "W", "kind": "number", "unit": null}], "cadence": {"freq": "daily", "weekdays": [], "at": "7am"}}]}});
+    assert!(tool(&env, "write_plan").call(bad, &ToolContext::for_call(RunId::new(), 2, 0)).await.is_err());
+}

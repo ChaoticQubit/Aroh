@@ -14,6 +14,7 @@ aroh-domain = { path = "crates/aroh-domain" }
 aroh-store = { path = "crates/aroh-store" }
 aroh-reminders = { path = "crates/aroh-reminders" }
 aroh-app = { path = "crates/aroh-app" }
+aroh-sync = { path = "crates/aroh-sync" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 chrono-tz = "0.10"
 rrule = "0.14"

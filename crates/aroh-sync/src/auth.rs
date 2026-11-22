@@ -1,17 +1,20 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::config::{self, Config, SESSION_ACCOUNT};
-use crate::Error;
+use crate::config::{self, Config};
+use crate::{check, http, Error, Result};
 
+const SESSION_ACCOUNT: &str = "supabase-session";
 const REFRESH_MARGIN_SECS: i64 = 60;
 
-/// A GoTrue session as stored in the keychain. Debug output hides tokens.
+/// A GoTrue session as stored in the keychain: tokens, expiry (unix
+/// seconds), the account id (`sub`) and email. Debug output hides tokens.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Session {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at: i64,
+    pub user_id: String,
     pub email: Option<String>,
 }
 
@@ -19,6 +22,7 @@ impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
             .field("expires_at", &self.expires_at)
+            .field("user_id", &self.user_id)
             .field("email", &self.email)
             .finish_non_exhaustive()
     }
@@ -35,32 +39,31 @@ struct TokenResponse {
 
 #[derive(Deserialize)]
 struct User {
+    id: String,
     email: Option<String>,
 }
 
-pub(crate) fn http() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .expect("http client builds")
-}
-
-pub(crate) fn now_secs() -> i64 {
+fn now_secs() -> i64 {
     let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock after 1970");
     i64::try_from(since.as_secs()).expect("time fits i64")
 }
 
-/// Turns a non-2xx response into an error with a short body excerpt.
-pub(crate) async fn check(response: reqwest::Response) -> Result<reqwest::Response, Error> {
-    let status = response.status();
-    if status.is_success() {
-        return Ok(response);
+fn parse(t: TokenResponse) -> Result<Session> {
+    if t.access_token.is_empty() || t.refresh_token.is_empty() {
+        return Err(Error::Auth("empty token in response".into()));
     }
-    let body: String = response.text().await.unwrap_or_default().chars().take(200).collect();
-    Err(Error::Status(status.as_u16(), body))
+    let user = t.user.ok_or_else(|| Error::Auth("no user in response".into()))?;
+    let user_id = uuid::Uuid::parse_str(&user.id).map_err(|_| Error::Auth("account id is not a uuid".into()))?;
+    Ok(Session {
+        access_token: t.access_token,
+        refresh_token: t.refresh_token,
+        expires_at: t.expires_at.unwrap_or_else(|| now_secs() + t.expires_in),
+        user_id: user_id.hyphenated().to_string(),
+        email: user.email,
+    })
 }
 
-async fn token(config: &Config, grant: &str, body: serde_json::Value) -> Result<Session, Error> {
+async fn token(config: &Config, grant: &str, body: serde_json::Value) -> Result<Session> {
     let response = http()
         .post(format!("{}/auth/v1/token?grant_type={grant}", config.url))
         .header("apikey", &config.anon_key)
@@ -70,67 +73,55 @@ async fn token(config: &Config, grant: &str, body: serde_json::Value) -> Result<
     parse(check(response).await?.json().await?)
 }
 
-fn parse(t: TokenResponse) -> Result<Session, Error> {
-    if t.access_token.is_empty() || t.refresh_token.is_empty() {
-        return Err(Error::Auth("empty token in response".into()));
-    }
-    let session = Session {
-        access_token: t.access_token,
-        refresh_token: t.refresh_token,
-        expires_at: t.expires_at.unwrap_or_else(|| now_secs() + t.expires_in),
-        email: t.user.and_then(|u| u.email),
-    };
-    Ok(session)
+fn save(session: &Session) -> Result<()> {
+    config::write(SESSION_ACCOUNT, &serde_json::to_string(session).expect("session serializes"))
 }
 
-/// Signs in with email and password and stores the session.
-pub async fn sign_in_password(email: &str, password: &str) -> Result<Session, Error> {
-    let session = password_session(&config::load()?, email, password).await?;
+/// Signs in with email and password and stores the session in the keychain.
+/// Input: the project config and the owner's credentials (never stored).
+/// Output: the new session.
+pub async fn sign_in_password(config: &Config, email: &str, password: &str) -> Result<Session> {
+    let session = password_session(config, email, password).await?;
     save(&session)?;
     Ok(session)
 }
 
-/// Signs in with email and password against `config` and returns the
-/// session without touching the keychain. Used by tests and tools.
-pub async fn password_session(config: &Config, email: &str, password: &str) -> Result<Session, Error> {
-    token(config, "password", json!({"email": email, "password": password})).await
+/// Signs in with email and password and returns the session without
+/// touching the keychain. Used by `sign_in_password` and the live tests.
+pub async fn password_session(config: &Config, email: &str, password: &str) -> Result<Session> {
+    token(config, "password", json!({"email": email.trim(), "password": password})).await
 }
 
-fn save(session: &Session) -> Result<(), Error> {
-    config::write(SESSION_ACCOUNT, &serde_json::to_string(session).expect("session serializes"))
-}
-
-/// Sends a one-time sign-in code to `email`.
-pub async fn request_otp(email: &str) -> Result<(), Error> {
-    let config = config::load()?;
+/// Creates an account through GoTrue sign-up and returns its session
+/// without touching the keychain. Errors when the project requires email
+/// confirmation (no session comes back) or the email is taken.
+pub async fn sign_up_session(config: &Config, email: &str, password: &str) -> Result<Session> {
     let response = http()
-        .post(format!("{}/auth/v1/otp", config.url))
+        .post(format!("{}/auth/v1/signup", config.url))
         .header("apikey", &config.anon_key)
-        .json(&json!({"email": email, "create_user": true}))
+        .json(&json!({"email": email.trim(), "password": password}))
         .send()
         .await?;
-    check(response).await?;
-    Ok(())
+    let body: serde_json::Value = check(response).await?.json().await?;
+    if body.get("access_token").is_none() {
+        return Err(Error::Auth("confirm the email, then sign in".into()));
+    }
+    parse(serde_json::from_value(body).map_err(|_| Error::Auth("unexpected sign-up response".into()))?)
 }
 
-/// Exchanges the emailed code for a session and stores it.
-pub async fn verify_otp(email: &str, code: &str) -> Result<Session, Error> {
-    let config = config::load()?;
-    let response = http()
-        .post(format!("{}/auth/v1/verify", config.url))
-        .header("apikey", &config.anon_key)
-        .json(&json!({"type": "email", "email": email, "token": code.trim()}))
-        .send()
-        .await?;
-    let session = parse(check(response).await?.json().await?)?;
+/// Creates an account and stores its session in the keychain.
+/// Input: the project config and the new credentials.
+/// Output: the new session.
+pub async fn sign_up(config: &Config, email: &str, password: &str) -> Result<Session> {
+    let session = sign_up_session(config, email, password).await?;
     save(&session)?;
     Ok(session)
 }
 
 /// Revokes the session on the server when reachable and always removes it
 /// from the keychain.
-pub async fn sign_out() -> Result<(), Error> {
-    if let (Ok(config), Some(session)) = (config::load(), stored()?) {
+pub async fn sign_out(config: Option<&Config>) -> Result<()> {
+    if let (Some(config), Some(session)) = (config, stored()?) {
         let _ = http()
             .post(format!("{}/auth/v1/logout", config.url))
             .header("apikey", &config.anon_key)
@@ -141,17 +132,16 @@ pub async fn sign_out() -> Result<(), Error> {
     config::delete(SESSION_ACCOUNT)
 }
 
-/// The stored session, if any, without refreshing it.
-pub fn stored() -> Result<Option<Session>, Error> {
-    match config::read(SESSION_ACCOUNT)? {
-        None => Ok(None),
-        Some(json) => Ok(serde_json::from_str(&json).ok()),
-    }
+/// The stored session, if any, without refreshing it. A corrupt entry
+/// reads as signed out.
+pub fn stored() -> Result<Option<Session>> {
+    Ok(config::read(SESSION_ACCOUNT)?.and_then(|json| serde_json::from_str(&json).ok()))
 }
 
 /// A session whose access token is valid for at least a minute, refreshed
-/// through GoTrue when it is about to expire.
-pub(crate) async fn valid_session(config: &Config) -> Result<Session, Error> {
+/// through GoTrue (and stored again) when it is about to expire.
+/// Errors with `NotSignedIn` when there is no session.
+pub async fn valid_session(config: &Config) -> Result<Session> {
     let session = stored()?.ok_or(Error::NotSignedIn)?;
     if session.expires_at - REFRESH_MARGIN_SECS > now_secs() {
         return Ok(session);
@@ -162,4 +152,30 @@ pub(crate) async fn valid_session(config: &Config) -> Result<Session, Error> {
     }
     save(&fresh)?;
     Ok(fresh)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(id: &str) -> TokenResponse {
+        TokenResponse {
+            access_token: "ACCESS-SECRET".into(),
+            refresh_token: "REFRESH-SECRET".into(),
+            expires_in: 3600,
+            expires_at: None,
+            user: Some(User { id: id.into(), email: Some("me@aroh.test".into()) }),
+        }
+    }
+
+    #[test]
+    fn session_parses_and_hides_tokens() {
+        let s = parse(response("0190F2A0-0000-7000-8000-00000000000A")).unwrap();
+        assert_eq!(s.user_id, "0190f2a0-0000-7000-8000-00000000000a");
+        assert!(s.expires_at > now_secs());
+        let shown = format!("{s:?}");
+        assert!(!shown.contains("ACCESS-SECRET") && !shown.contains("REFRESH-SECRET"));
+        assert!(parse(response("not-a-uuid")).is_err());
+        assert!(parse(TokenResponse { user: None, ..response("0190f2a0-0000-7000-8000-00000000000a") }).is_err());
+    }
 }

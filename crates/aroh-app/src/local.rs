@@ -10,10 +10,11 @@ use std::collections::BTreeMap;
 
 const PREFIX: &str = "local:";
 const USER_ID: &str = "user_id";
+const ACCOUNT: &str = "account";
 const PENDING: &str = "pending_logs";
 
 /// Settings the owner may write, all stored as text.
-pub const SETTINGS: [&str; 4] = ["server_url", "goal_budget_usd", "calendars", "health"];
+pub const SETTINGS: [&str; 6] = ["server_url", "goal_budget_usd", "calendars", "health", "supabase_url", "supabase_anon_key"];
 
 /// Most free-text logs that may wait for the engine at once.
 pub const MAX_PENDING: usize = 100;
@@ -63,7 +64,8 @@ pub fn settings(conn: &Connection) -> Result<BTreeMap<String, String>> {
 
 /// Validates and stores one owner setting; an empty value clears it.
 /// Errors with `Invalid` for an unknown name, a non-https server URL, a negative or
-/// non-numeric budget, or a switch that is not `true` or `false`.
+/// non-numeric budget, a bad Supabase URL or anon key, or a switch that is
+/// not `true` or `false`.
 pub fn set_setting(conn: &Connection, name: &str, value: &str) -> Result<()> {
     if !SETTINGS.contains(&name) {
         return Err(invalid(format!("setting {name}")));
@@ -72,6 +74,8 @@ pub fn set_setting(conn: &Connection, name: &str, value: &str) -> Result<()> {
     if !value.is_empty() {
         match name {
             "server_url" => aroh_domain::rows::check_url("server_url", value)?,
+            "supabase_url" => aroh_domain::rows::check_url("supabase_url", value)?,
+            "supabase_anon_key" => aroh_domain::rows::check_public_key("supabase_anon_key", value)?,
             "goal_budget_usd" => {
                 let usd: f64 = value.parse().map_err(|_| invalid("goal_budget_usd"))?;
                 if !usd.is_finite() || !(0.0..=1_000_000.0).contains(&usd) {
@@ -104,5 +108,57 @@ pub fn queue_log(conn: &Connection, text: &str, at: DateTime<Utc>) -> Result<()>
     logs.push(PendingLog { text: text.to_string(), at });
     set_state(conn, &key(PENDING), &serde_json::to_string(&logs).expect("pending logs serialize"))?;
     assert!(logs.len() <= MAX_PENDING);
+    Ok(())
+}
+
+/// Removes each of `sent` once from the queue (oldest match first) and keeps
+/// every other entry, including logs queued while they were being sent.
+/// Output: how many entries were removed.
+pub fn remove_sent(conn: &Connection, sent: &[PendingLog]) -> Result<usize> {
+    let mut logs = pending_logs(conn)?;
+    let before = logs.len();
+    for done in sent {
+        if let Some(i) = logs.iter().position(|l| l == done) {
+            logs.remove(i);
+        }
+    }
+    set_state(conn, &key(PENDING), &serde_json::to_string(&logs).expect("pending logs serialize"))?;
+    assert!(logs.len() <= before);
+    Ok(before - logs.len())
+}
+
+/// The account this device adopted at sign-in, if any.
+pub fn account(conn: &Connection) -> Result<Option<String>> {
+    Ok(get_state(conn, &key(ACCOUNT))?)
+}
+
+/// Makes `account` (the Supabase user id) the owner of every local row, once
+/// per device: rows move from the local id, goals point at the account's
+/// seeded categories, and the local seeds are replaced. A device already
+/// adopted by another account is refused, so no account sees another's data.
+pub fn adopt(conn: &mut Connection, account: &str) -> Result<()> {
+    aroh_domain::rows::check_uuid("account", account)?;
+    match self::account(conn)? {
+        Some(current) if current == account => return Ok(()),
+        Some(_) => return Err(invalid("this device holds another account's data; sign in with that account")),
+        None => {}
+    }
+    let old = user_id(conn)?;
+    let tx = conn.transaction()?;
+    let old_seeds = aroh_domain::seed::categories(&old);
+    for (from, to) in old_seeds.iter().zip(aroh_domain::seed::categories(account)) {
+        tx.execute("UPDATE goals SET category_id = ?1 WHERE category_id = ?2", [&to.id, &from.id])?;
+        tx.execute("DELETE FROM categories WHERE id = ?1", [&from.id])?;
+    }
+    for table in aroh_domain::schema::SYNCED.iter() {
+        tx.execute(&format!("UPDATE {} SET user_id = ?1 WHERE user_id = ?2", table.name), [account, old.as_str()])?;
+    }
+    for category in aroh_domain::seed::categories(account) {
+        aroh_store::repo::insert_derived(&tx, &category)?;
+    }
+    set_state(&tx, &key(USER_ID), account)?;
+    set_state(&tx, &key(ACCOUNT), account)?;
+    tx.commit()?;
+    assert_eq!(user_id(conn)?, account);
     Ok(())
 }

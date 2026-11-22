@@ -12,29 +12,43 @@
 
 	/**
 	 * Owner and persona thread with inline cards, research progress and a plan awaiting approval,
-	 * above a composer with text, attach and mic. Emits `{ type: 'send', text }`, `{ type: 'approve' }`
-	 * or `{ type: 'change' }`.
+	 * above a composer with text, attach and mic. Emits `{ type: 'send', text }` (typed or a card's
+	 * answer), `{ type: 'approve' }` or `{ type: 'change' }`. With `echo` false the caller adds
+	 * sent messages to `messages` itself, so its replies stay in order after them.
 	 */
-	let { messages, onchange }: { messages: ChatMessage[]; onchange?: OnChange } = $props();
+	let { messages, onchange, echo = true }: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean } = $props();
 
 	const id = $props.id();
 	let sent = $state<ChatMessage[]>([]);
 	let draft = $state('');
 	let approved = $state(false);
 	const thread = $derived([...messages, ...sent]);
+	let list = $state<HTMLOListElement>();
+
+	$effect(() => {
+		if (thread.length && list) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+	});
+
+	/** Sends a card's answer like typed text; an empty answer is ignored. */
+	function answer(value: unknown) {
+		const text = (Array.isArray(value) ? value.join(', ') : value === null || value === undefined ? '' : String(value)).trim();
+		if (!text) return;
+		if (echo) sent.push({ type: 'message', from: 'owner', name: 'You', text });
+		onchange?.({ type: 'send', text });
+	}
 
 	/** Appends the draft as an owner message and reports it. */
 	function send() {
 		const text = draft.trim();
 		if (!text) return;
-		sent.push({ type: 'message', from: 'owner', name: 'You', text });
+		if (echo) sent.push({ type: 'message', from: 'owner', name: 'You', text });
 		draft = '';
 		onchange?.({ type: 'send', text });
 	}
 </script>
 
 <div class="flex h-full min-h-0 flex-col">
-	<ol class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" aria-label="Conversation">
+	<ol bind:this={list} class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" aria-label="Conversation">
 		{#each thread as m, i (i)}
 			<li class="flex flex-col {m.type === 'message' && m.from === 'owner' ? 'items-end' : 'items-stretch'}">
 				{#if m.type === 'message'}
@@ -47,7 +61,7 @@
 						</div>
 					{/if}
 				{:else if m.type === 'card'}
-					<Render spec={m.spec} />
+					<Render spec={m.spec} onchange={(v) => answer(v)} />
 				{:else if m.type === 'progress'}
 					<div class="flex flex-col gap-1.5 border-l-2 border-border py-1 pl-3" role="status" aria-label="Research progress">
 						{#each m.lines as line (line.text)}

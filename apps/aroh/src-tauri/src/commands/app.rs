@@ -10,7 +10,7 @@ use aroh_domain::rows::{Action, ActionStatus, Autonomy, Goal, Proposal, Provider
 use chrono::{DateTime, Duration, Utc};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 const MAX_RANGE_DAYS: i64 = 120;
 const ENTRY_DAYS: i64 = 90;
@@ -158,4 +158,21 @@ pub fn app_dev_seed(app: AppHandle, state: State<'_, AppState>) -> Result<bool, 
     })?;
     after_write(&app);
     Ok(loaded)
+}
+
+/// Debug builds only: appends `aroh-dev: <mark>` to `dev-marks.log` in the app data folder so
+/// a driver script can tell the host which step the screen shows (the e2e screenshots).
+/// At most 80 visible ASCII characters.
+#[tauri::command]
+pub fn app_dev_mark(app: AppHandle, mark: String) -> Result<(), String> {
+    use std::io::Write;
+    if !cfg!(debug_assertions) {
+        return Err("debug builds only".into());
+    }
+    if mark.len() > 80 || !mark.chars().all(|c| c.is_ascii_graphic() || c == ' ') {
+        return Err("bad mark".into());
+    }
+    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("dev-marks.log");
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(|e| e.to_string())?;
+    writeln!(file, "aroh-dev: {mark}").map_err(|e| e.to_string())
 }

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import type { Snapshot } from './client';
-import { engine } from './engine';
 import { formatDay } from '$lib/ui/format';
 import { actionViews, checkInData, dueCheckIns, goalHeader, goalView, inboxView } from './views';
 
@@ -80,11 +79,5 @@ describe('views', () => {
 		for (const z of ['America/Los_Angeles', 'Pacific/Auckland', 'Pacific/Kiritimati', 'Pacific/Pago_Pago']) {
 			expect(formatDay(goalHeader(s, s.goals[0], z).deadline ?? '', z)).toContain('1 Feb');
 		}
-	});
-
-	it('engine calls resolve to needs_engine while no engine is set up', async () => {
-		expect(engine.connected).toBe(false);
-		await expect(engine.startGoal('six pack')).resolves.toMatchObject({ ok: false, reason: 'needs_engine' });
-		await expect(engine.saveKey('anthropic', 'sk-test')).resolves.toMatchObject({ ok: false });
 	});
 });

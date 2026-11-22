@@ -96,13 +96,26 @@ pub struct PlanField {
     pub unit: Option<String>,
 }
 
-/// One tracker the plan creates, with its fields.
-/// Becomes a `trackers` row of the run's goal.
+/// When a planned tracker asks for a check-in: `freq` is `daily` or
+/// `weekly`, `weekdays` are `Mon` to `Sun` (weekly only), `at` is local
+/// `HH:MM`. Stored as the tracker row's `cadence`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct PlanCadence {
+    pub freq: String,
+    #[serde(default)]
+    pub weekdays: Vec<String>,
+    pub at: String,
+}
+
+/// One tracker the plan creates, with its fields and an optional check-in
+/// cadence. Becomes a `trackers` row of the run's goal.
 /// Names are free text.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PlanTracker {
     pub name: String,
     pub fields: Vec<PlanField>,
+    #[serde(default)]
+    pub cadence: Option<PlanCadence>,
 }
 
 /// The planner's output: summary, timezone, items and trackers.
@@ -180,6 +193,11 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, ctx: &ToolContext) -> Result<Val
                 Ok(TrackerField { key: f.key.clone(), label: f.label.clone(), kind, unit: f.unit.clone(), choices: vec![] })
             })
             .collect::<Result<Vec<_>, ToolError>>()?;
+        let cadence = t
+            .cadence
+            .as_ref()
+            .map(|c| serde_json::from_value(json!(c)).map_err(|_| ToolError::InvalidArgs(format!("bad cadence for `{}`", t.name))))
+            .transpose()?;
         let mut tracker = Tracker {
             id: row_id(ctx, &format!("tracker:{i}"))?,
             user_id: user.clone(),
@@ -187,7 +205,7 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, ctx: &ToolContext) -> Result<Val
             plugin_id: None,
             name: t.name.clone(),
             fields,
-            cadence: None,
+            cadence,
             rules: vec![],
             updated_at: String::new(),
             deleted: false,

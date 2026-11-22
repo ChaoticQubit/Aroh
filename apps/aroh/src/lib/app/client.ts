@@ -77,7 +77,7 @@ export type Snapshot = {
 	providers: ProviderSetting[];
 	search: SearchSetting[];
 	budgets: Budget[];
-	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health', string>>;
+	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key', string>>;
 	pending_logs: { text: string; at: string }[];
 };
 
@@ -115,10 +115,28 @@ export const saveProvider = (vendor: string, model: string) => invoke<ProviderSe
 export const saveBudget = (usd: number | null) => invoke<null>('app_save_budget', { usd });
 
 /** Stores one device setting. */
-export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health', value: string) => invoke<null>('app_set_setting', { name, value });
+export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key', value: string) => invoke<null>('app_set_setting', { name, value });
 
 /** Asks for notification permission once and reports whether it is granted. */
 export const notificationPermission = () => invoke<boolean>('app_notification_permission');
 
 /** Debug builds only: loads the six-pack sample into an empty store. */
 export const devSeed = () => invoke<boolean>('app_dev_seed');
+
+/** The stored sign-in state, read from the keychain. */
+export type Account = { signed_in: boolean; email: string | null; user_id: string | null };
+
+/** The stored sign-in state, without a network call. */
+export const account = () => invoke<Account>('app_account');
+
+/** Signs in, or with `create` signs up; the device adopts the account and syncs. */
+export const signIn = (email: string, password: string, create: boolean) => invoke<Account>('app_sign_in', { email, password, create });
+
+/** Signs out; local rows stay. */
+export const signOut = () => invoke<Account>('app_sign_out');
+
+/** Pushes local changes and pulls the account's rows. */
+export const sync = () => invoke<{ pushed: number; pulled: number }>('app_sync');
+
+/** Removes the logs the engine accepted from the local queue. */
+export const logsSent = (sent: { text: string; at: string }[]) => invoke<number>('app_logs_sent', { sent });

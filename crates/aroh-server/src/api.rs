@@ -40,6 +40,7 @@ fn body<T>(json: Result<Json<T>, JsonRejection>, echo: bool) -> Result<T, Server
 /// Omit it to read every event of the run.
 /// Clients pass the last `seq` they saw.
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct EventsQuery {
     pub after_seq: Option<u64>,
 }
@@ -48,6 +49,7 @@ pub struct EventsQuery {
 /// `waiting_human` for the Inbox) and only runs of `goal_id` (a goal's
 /// chat). Omit either to drop that filter.
 #[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct RunsQuery {
     pub state: Option<String>,
     pub goal_id: Option<Uuid>,

@@ -273,19 +273,15 @@ paths:
       operationId: list_runs
       parameters:
       - name: state
-        in: path
-        required: true
+        in: query
+        required: false
         schema:
-          type:
-          - string
-          - 'null'
+          type: string
       - name: goal_id
-        in: path
-        required: true
+        in: query
+        required: false
         schema:
-          type:
-          - string
-          - 'null'
+          type: string
           format: uuid
       responses:
         '200':
@@ -311,12 +307,10 @@ paths:
           type: string
           format: uuid
       - name: after_seq
-        in: path
-        required: true
+        in: query
+        required: false
         schema:
-          type:
-          - integer
-          - 'null'
+          type: integer
           format: int64
           minimum: 0
       responses:

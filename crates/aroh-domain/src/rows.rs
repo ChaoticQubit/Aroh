@@ -482,7 +482,9 @@ synced! {
 const TOML_MAX: usize = 64 * 1024;
 const NOTES_MAX: usize = 4000;
 
-fn check_uuid(field: &'static str, s: &str) -> Result<()> {
+/// Checks that `s` is a lowercase hyphenated uuid, as every row id is.
+/// Errors with `Invalid` naming `field`.
+pub fn check_uuid(field: &'static str, s: &str) -> Result<()> {
     match uuid::Uuid::parse_str(s) {
         Ok(u) if u.hyphenated().to_string() == s => Ok(()),
         _ => Err(invalid(field, "not a lowercase hyphenated uuid")),
@@ -545,6 +547,16 @@ pub fn check_url(field: &'static str, url: &str) -> Result<()> {
     let host = rest.split(['/', ':', '?', '#']).next().unwrap_or("");
     if host.is_empty() || host.contains('@') {
         return Err(invalid(field, "missing host"));
+    }
+    Ok(())
+}
+
+/// Checks a public API key such as a Supabase anon key: 20 to 4096 visible
+/// ASCII characters, no spaces. Errors with `Invalid` naming `field`.
+/// Never used for provider keys, which the app does not keep.
+pub fn check_public_key(field: &'static str, key: &str) -> Result<()> {
+    if !(20..=4096).contains(&key.len()) || !key.bytes().all(|b| b.is_ascii_graphic()) {
+        return Err(invalid(field, "20 to 4096 visible characters"));
     }
     Ok(())
 }

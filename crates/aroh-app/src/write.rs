@@ -257,25 +257,29 @@ pub fn set_autonomy(conn: &Connection, clock: &mut Hlc, goal_id: &str, autonomy:
     Ok(goal)
 }
 
-/// Makes `vendor` and `model` the default provider of `user_id`, updating the current
-/// default row or creating one. The key never passes through here.
+/// Makes `vendor` and `model` the default provider of `user_id`: one row per vendor
+/// (updated or created), the old default loses its flag. The key never passes here.
+/// Errors with the row's validation error before anything else is written.
 pub fn save_provider(conn: &Connection, clock: &mut Hlc, user_id: &str, vendor: &str, model: &str) -> Result<ProviderSetting> {
-    let current = repo::list::<ProviderSetting>(conn, &[("user_id", user_id)])?.into_iter().find(|p| p.is_default);
-    let mut row = current.unwrap_or_else(|| ProviderSetting {
+    let rows = repo::list::<ProviderSetting>(conn, &[("user_id", user_id)])?;
+    let mut row = rows.iter().find(|p| p.vendor == vendor).cloned().unwrap_or_else(|| ProviderSetting {
         id: aroh_domain::new_id(),
         user_id: user_id.to_string(),
-        label: String::new(),
-        vendor: String::new(),
+        label: vendor.to_string(),
+        vendor: vendor.to_string(),
         model: String::new(),
         base_url: None,
         is_default: true,
         updated_at: String::new(),
         deleted: false,
     });
-    row.label = vendor.to_string();
-    row.vendor = vendor.to_string();
     row.model = model.to_string();
+    row.is_default = true;
     repo::put(conn, clock, &mut row)?;
+    for mut other in rows.into_iter().filter(|p| p.is_default && p.id != row.id) {
+        other.is_default = false;
+        repo::put(conn, clock, &mut other)?;
+    }
     Ok(row)
 }
 

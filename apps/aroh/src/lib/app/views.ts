@@ -4,6 +4,7 @@ import { daysBetween, formatDate, formatYmd, minuteOfDay, mondayOf, shiftDay } f
 import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, RunView, SettingsView } from '$lib/ui/screens/types';
 import { catalog } from './catalog';
 import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerField } from './client';
+import type { RunSummary } from './engine';
 
 const SEEDED_SLOTS: Record<string, CategorySlot> = { Learning: 1, 'Health and Fitness': 2, Financial: 3, 'Hobby and Skill': 4, 'Career and Projects': 5, Habit: 6 };
 const UNITS: readonly Unit[] = ['kg', 'lb', 'cm', 'kcal', 'g', 'ml', 'L', 'min', 'reps', 'steps', 'usd', 'count'];
@@ -207,13 +208,47 @@ function changes(p: Proposal): ChangeView[] {
 	});
 }
 
-/** The Inbox groups: open proposals, unconfirmed preferences; insights and runs come from the engine. */
-export function inboxView(s: Snapshot): { approvals: InboxItem[]; suggestions: InboxItem[]; insights: InboxItem[]; runs: RunView[] } {
+const WORKFLOW: Record<string, { title: string; persona: string }> = {
+	'new-goal': { title: 'Planning a new goal', persona: 'Goal planner' },
+	replan: { title: 'Replanning', persona: 'Adaptation analyst' },
+	'log-intake': { title: 'Sorting a log', persona: 'Log intake' }
+};
+
+const RUN_STATE: Record<string, string> = {
+	queued: 'Waiting to start',
+	running: 'Working',
+	checkpointed: 'Working',
+	waiting_human: 'Waiting for you',
+	waiting_budget: 'Paused at a budget',
+	failed: 'Stopped'
+};
+
+/**
+ * Runs not done, newest first, one per goal and workflow, titled by workflow and goal. Progress is
+ * coarse by state: 0 queued, 50 working, 100 stopped at a wait, a pause or a failure.
+ */
+function openRuns(s: Snapshot, runs: RunSummary[]): RunView[] {
+	const seen = new Set<string>();
+	const out: RunView[] = [];
+	for (const r of runs) {
+		const key = `${r.goal_id}:${r.workflow}`;
+		if (r.state === 'done' || seen.has(key)) continue;
+		seen.add(key);
+		const goal = s.goals.find((g) => g.id === r.goal_id);
+		const kind = WORKFLOW[r.workflow] ?? { title: r.workflow, persona: 'Aroh' };
+		const progress = r.state === 'queued' ? 0 : r.state === 'running' || r.state === 'checkpointed' ? 50 : 100;
+		out.push({ persona: kind.persona, title: goal ? `${kind.title}: ${goal.title}` : `${kind.title} (${r.run_id.slice(0, 8)})`, step: RUN_STATE[r.state] ?? r.state, progress });
+	}
+	return out;
+}
+
+/** The Inbox groups: open proposals, unconfirmed preferences, and the engine runs not done. */
+export function inboxView(s: Snapshot, runs: RunSummary[] = []): { approvals: InboxItem[]; suggestions: InboxItem[]; insights: InboxItem[]; runs: RunView[] } {
 	return {
 		approvals: s.proposals.map((p) => ({ id: p.id, spec: { kind: 'proposal_card', persona: personaFor(s, p.goal_id), summary: p.summary, changes: changes(p) } })),
 		suggestions: s.preferences.map((f) => ({ id: f.id, spec: { kind: 'proposal_card', persona: f.source, summary: f.fact, changes: [] } })),
 		insights: [],
-		runs: []
+		runs: openRuns(s, runs)
 	};
 }
 
@@ -222,14 +257,17 @@ export function inboxCount(s: Snapshot): number {
 	return s.proposals.length + s.preferences.length;
 }
 
-/** The Settings values: offline provider list (key state unknown without the engine), search, URL, budgets, access. */
-export function settingsView(s: Snapshot): SettingsView {
+/**
+ * The Settings values: provider list with the last 4 of each vendor's stored key (`last4`, from
+ * `keyStatus`), search, URL, budgets, access and the account (`email` null when signed out).
+ */
+export function settingsView(s: Snapshot, last4: Record<string, string | null> = {}, email: string | null = null): SettingsView {
 	const chosen = s.providers.find((p) => p.is_default);
 	const known = catalog.find((p) => p.id === chosen?.vendor);
 	const all = s.budgets.find((b) => b.scope === 'user_month');
 	const perGoal = Number(s.settings.goal_budget_usd);
 	return {
-		providers: catalog.map((p) => ({ ...p, keySet: false })),
+		providers: catalog.map((p) => ({ ...p, keySet: Boolean(last4[p.id]), last4: last4[p.id] ?? null })),
 		providerId: known?.id ?? catalog[0].id,
 		model: known && chosen ? chosen.model : catalog[0].models[0],
 		search: [...s.search].sort((a, b) => a.priority - b.priority).map((x) => ({ name: x.label, detail: x.base_url ?? 'API key', keySet: false })),
@@ -237,7 +275,8 @@ export function settingsView(s: Snapshot): SettingsView {
 		budgetAll: all ? all.limit_usd_micros / 1_000_000 : null,
 		budgetGoal: s.settings.goal_budget_usd !== undefined && Number.isFinite(perGoal) ? perGoal : null,
 		calendars: s.settings.calendars === 'true',
-		health: s.settings.health === 'true'
+		health: s.settings.health === 'true',
+		account: { supabaseUrl: s.settings.supabase_url ?? '', anonKey: s.settings.supabase_anon_key ?? '', email }
 	};
 }
 

@@ -1,0 +1,99 @@
+services:
+  pg:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - ./initdb.sql:/docker-entrypoint-initdb.d/00-roles.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  auth:
+    image: supabase/gotrue:v2.170.0
+    depends_on:
+      pg:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      PORT: "9999"
+      API_EXTERNAL_URL: http://localhost:54321/auth/v1
+      GOTRUE_SITE_URL: http://localhost
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:auth@pg:5432/postgres?search_path=auth
+      GOTRUE_DB_NAMESPACE: auth
+      GOTRUE_JWT_SECRET: ${AROH_E2E_JWT_SECRET}
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "1000"
+      GOTRUE_API_MAX_REQUEST_DURATION: 60s
+
+  migrate:
+    image: pgvector/pgvector:pg17
+    depends_on:
+      pg:
+        condition: service_healthy
+    volumes:
+      - ../supabase:/aroh/supabase:ro
+      - ./migrate.sh:/aroh/migrate.sh:ro
+    entrypoint: ["sh", "/aroh/migrate.sh"]
+    restart: "no"
+
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PGRST_DB_URI: postgres://authenticator:authenticator@pg:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${AROH_E2E_JWT_SECRET}
+      PGRST_JWT_AUD: authenticated
+      PGRST_DB_MAX_ROWS: "1000"
+
+  gateway:
+    image: nginx:1.27-alpine
+    depends_on:
+      - auth
+      - rest
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:54321:80"
+
+  engine:
+    image: rust:1-slim
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    working_dir: /src
+    command: ["cargo", "run", "--quiet", "-p", "aroh-server", "--features", "fake-transports", "--", "worker"]
+    environment:
+      CARGO_TARGET_DIR: /target
+      DATABASE_URL: postgres://postgres:postgres@pg:5432/postgres
+      AROH_MASTER_KEY: ${AROH_E2E_MASTER_KEY}
+      AROH_JWT_SECRET: ${AROH_E2E_JWT_SECRET}
+      AROH_FAKE_SCRIPT: /aroh/state/script.json
+      AROH_BIND: 0.0.0.0:8080
+    volumes:
+      - ..:/src:ro
+      - aroh-p11-target:/target
+      - aroh-p11-cargo:/usr/local/cargo/registry
+      - ./.local-state:/aroh/state:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  aroh-p11-target:
+    external: true
+  aroh-p11-cargo:
+    external: true
