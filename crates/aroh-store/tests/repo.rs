@@ -1,5 +1,5 @@
 use aroh_domain::hlc::Hlc;
-use aroh_domain::rows::{samples, Action, ActionSeries, ActionStatus, Category, Goal, Record, Tracker};
+use aroh_domain::rows::{samples, Action, ActionSeries, ActionStatus, BusyBlock, CalendarRule, Category, DayKind, Goal, Record, Tracker};
 use aroh_domain::schema::SYNCED;
 use aroh_store::{db, repo, Error};
 use chrono::{TimeZone, Utc};
@@ -136,4 +136,52 @@ fn split_tombstones_planned_future_and_keeps_locked_and_done() {
     let starts: std::collections::BTreeSet<_> = all.iter().map(|a| a.start_at).collect();
     assert_eq!(starts.len(), all.len(), "no instant is booked twice");
     assert!(repo::materialize(&conn, &new.id, from, 14).unwrap().is_empty());
+}
+
+#[test]
+fn day_kinds_round_trip_with_and_without_a_kind() {
+    let conn = db::open_in_memory().unwrap();
+    let mut clock = clock();
+    let samples = samples::all();
+    let mut block: BusyBlock = serde_json::from_value(samples[12].clone()).unwrap();
+    let mut rule: CalendarRule = serde_json::from_value(samples[13].clone()).unwrap();
+    for kind in [Some(DayKind::Away), None] {
+        block.day_kind = kind;
+        rule.day_kind = kind;
+        repo::put(&conn, &mut clock, &mut block).unwrap();
+        repo::put(&conn, &mut clock, &mut rule).unwrap();
+        assert_eq!(repo::get::<BusyBlock>(&conn, &block.id).unwrap(), block);
+        assert_eq!(repo::get::<CalendarRule>(&conn, &rule.id).unwrap(), rule);
+    }
+    let raw: Option<String> = conn.query_row("SELECT day_kind FROM busy_blocks WHERE id = ?1", [&block.id], |r| r.get(0)).unwrap();
+    assert_eq!(raw, None);
+    block.day_kind = Some(DayKind::Reminder);
+    repo::put(&conn, &mut clock, &mut block).unwrap();
+    let raw: String = conn.query_row("SELECT day_kind FROM busy_blocks WHERE id = ?1", [&block.id], |r| r.get(0)).unwrap();
+    assert_eq!(raw, "reminder");
+}
+
+#[test]
+fn migrating_a_first_version_file_adds_day_kinds_and_keeps_rows() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(&format!("{}\nPRAGMA user_version = 1;", db::MIGRATIONS[0])).unwrap();
+    conn.execute(
+        "INSERT INTO busy_blocks VALUES ('0190f2a0-0000-7000-8000-00000000000e', 'u', 'work', 'evt-1', 'Standup', '2026-11-23T09:00:00Z', '2026-11-23T10:00:00Z', 0, 'Work', ?1, 0)",
+        [samples::STAMP],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO calendar_rules VALUES ('0190f2a0-0000-7000-8000-00000000000f', 'u', 'work', NULL, NULL, 'Work', 'keep', ?1, 0)",
+        [samples::STAMP],
+    )
+    .unwrap();
+    db::migrate(&conn).unwrap();
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+    assert_eq!(version, db::SCHEMA_VERSION);
+    let block: BusyBlock = repo::get(&conn, "0190f2a0-0000-7000-8000-00000000000e").unwrap();
+    assert_eq!((block.title.as_str(), block.group_name.as_deref(), block.day_kind), ("Standup", Some("Work"), None));
+    let rule: CalendarRule = repo::get(&conn, "0190f2a0-0000-7000-8000-00000000000f").unwrap();
+    assert_eq!((rule.group_name.as_str(), rule.day_kind), ("Work", None));
+    let indexed: i64 = conn.query_row("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'busy_blocks_start'", [], |r| r.get(0)).unwrap();
+    assert_eq!(indexed, 1);
 }

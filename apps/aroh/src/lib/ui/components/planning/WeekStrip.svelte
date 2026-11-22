@@ -1,10 +1,16 @@
 <script lang="ts">
 	import { getClock } from '$lib/ui/clock';
 	import { formatDate, formatYmd, shiftDay } from '$lib/ui/format';
+	import { allDayOn } from '$lib/ui/screens/edits';
 	import type { OnChange, SpecOf } from '$lib/ui/contract';
+	import type { AllDayView } from '$lib/ui/screens/types';
 
-	/** Seven days from `startDay` with a dot per action; today is tinted. Emits the picked "YYYY-MM-DD". */
-	let { spec, onchange }: { spec: SpecOf<'week_strip'>; onchange?: OnChange } = $props();
+	/**
+	 * Seven days from `startDay` with a dot per action and a small bar per device all-day event in
+	 * `allDay` (filled for a Busy day or Away, outlined for a Reminder, dashed when unchosen); today
+	 * is tinted. Emits the picked "YYYY-MM-DD".
+	 */
+	let { spec, allDay = [], onchange }: { spec: SpecOf<'week_strip'>; allDay?: AllDayView[]; onchange?: OnChange } = $props();
 
 	const { now, zone } = getClock();
 	const today = formatYmd(now, zone);
@@ -15,11 +21,18 @@
 				date,
 				name: formatDate(date, { weekday: 'short' }),
 				num: Number(date.slice(8)),
-				actions: spec.actions.filter((a) => formatYmd(a.start, zone) === date)
+				actions: spec.actions.filter((a) => formatYmd(a.start, zone) === date),
+				events: allDayOn(allDay, date)
 			};
 		})
 	);
 	let picked = $state(today);
+
+	/** Bar classes for one all-day event: filled for Busy day and Away, outlined for Reminder, dashed when unchosen. */
+	function barTone(e: AllDayView): string {
+		if (e.kind === 'busy' || e.kind === 'away') return 'border-muted bg-muted';
+		return e.kind === 'reminder' ? 'border-muted bg-bg' : 'border-dashed border-muted bg-bg';
+	}
 </script>
 
 <div class="flex flex-col gap-2">
@@ -40,6 +53,11 @@
 			>
 				<span class="text-muted">{d.name}</span>
 				<span class="min-w-6 rounded-sm px-1 text-center text-sm leading-6 font-semibold tabular-nums {d.date === today ? 'bg-accent text-accent-fg' : 'text-fg'}">{d.num}</span>
+				{#if d.events.length}
+					<span class="flex w-full flex-col gap-0.5 px-1" aria-label="All day: {d.events.map((e) => e.title).join(', ')}">
+						{#each d.events.slice(0, 2) as e (e.id)}<span class="h-1 w-full rounded-full border {barTone(e)}"></span>{/each}
+					</span>
+				{/if}
 				<span class="flex h-1.5 gap-0.5" aria-label="{d.actions.length} actions">
 					{#each d.actions.slice(0, 4) as a (a.id)}
 						<span class="size-1.5 rounded-full {a.status === 'missed' ? 'border border-status-missed' : ''}" style={a.status === 'missed' ? undefined : `background: var(--cat-${a.category})`}></span>

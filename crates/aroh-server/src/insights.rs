@@ -15,7 +15,7 @@ use uuid::Uuid;
 const INSIGHT_LIMIT: i64 = 30;
 
 /// One Inbox insight: what the engine noticed and did without being
-/// asked. `source` is `actions`, `rule`, `review` or `edits`; `body` is
+/// asked. `source` is `actions`, `rule`, `review`, `edits` or `calendar`; `body` is
 /// the reason plus the run summary; `state` the run's state, if any.
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct Insight {
@@ -34,6 +34,7 @@ fn title(source: &str) -> &'static str {
         "actions" => "Missed or late actions",
         "rule" => "Tracker rule",
         "review" => "Weekly review",
+        "calendar" => "Away days",
         _ => "Repeated edits",
     }
 }

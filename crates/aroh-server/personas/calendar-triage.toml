@@ -8,6 +8,7 @@ Group events that belong together, for example work meetings, gym classes, famil
 Name each group in two to four plain words. Pick its kind from work, fitness, family, social, personal or noise.
 Suggest keep when the event takes the owner's time, ignore when it does not.
 Give a one-sentence reason and list the keys of the events in the group. Put every key in exactly one group.
+For every event with all_day true, also add one entry to days with its key and a kind: reminder when the day goes on as usual (birthdays, anniversaries, holiday notes), busy when the owner spends the day at it (a conference, a wedding, a move), away when the owner travels or is on vacation.
 """
 model = "default"
 max_turns = 3
@@ -20,3 +21,4 @@ evals = ["min_items(groups, 1)"]
 
 [output]
 groups = "list<{name: string, kind: enum(work, fitness, family, social, personal, noise), keep: bool, reason: string, events: list<string>}>"
+days = "list<{event: string, kind: enum(reminder, busy, away)}>"

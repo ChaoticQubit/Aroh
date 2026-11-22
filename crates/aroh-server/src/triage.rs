@@ -2,7 +2,7 @@ use crate::error::ServerError;
 use crate::rows::{get_row, put_row};
 use crate::tools::{local_text, ToolEnv};
 use aroh_domain::calendar::{rules_for, DeviceEvent, RuleSource, MAX_NAME};
-use aroh_domain::rows::{CalendarRule, RuleDecision};
+use aroh_domain::rows::{CalendarRule, DayKind, RuleDecision};
 use chrono::{DateTime, Utc};
 use chrono_tz::Tz;
 use schemars::JsonSchema;
@@ -21,8 +21,8 @@ pub const MAX_EVENTS: usize = 300;
 const OTHER: &str = "Other";
 
 /// One device calendar event to triage: EventKit ids, calendar name, title,
-/// first occurrence (RFC 3339) and the RFC 5545 recurrence when it repeats.
-/// Notes, places and attendees never leave the device.
+/// first occurrence (RFC 3339), the RFC 5545 recurrence when it repeats and
+/// whether it is all-day. Notes, places and attendees never leave the device.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TriageEvent {
@@ -33,6 +33,8 @@ pub struct TriageEvent {
     pub start_at: DateTime<Utc>,
     pub end_at: DateTime<Utc>,
     pub rrule: Option<String>,
+    #[serde(default)]
+    pub all_day: bool,
 }
 
 /// Body of `POST /v1/calendar/triage`: the owner's IANA zone and 1 to 300
@@ -61,7 +63,7 @@ pub fn triage_input(req: &StartTriage, tz: Tz) -> Result<Map<String, Value>, Ser
             title: e.title.clone(),
             start_at: e.start_at,
             end_at: e.end_at,
-            all_day: false,
+            all_day: e.all_day,
             rrule: e.rrule.clone(),
         };
         device.validate().map_err(|e| ServerError::BadRequest(e.to_string()))?;
@@ -80,6 +82,7 @@ pub fn triage_input(req: &StartTriage, tz: Tz) -> Result<Map<String, Value>, Ser
             "start": local_text(e.start_at.with_timezone(&tz).naive_local()),
             "minutes": (e.end_at - e.start_at).num_minutes().clamp(1, 24 * 60),
             "rrule": e.rrule,
+            "all_day": e.all_day,
         }));
         refs.push(json!({"key": key, "event_id": e.event_id, "calendar_id": e.calendar_id, "title": e.title, "recurring": e.rrule.is_some()}));
     }
@@ -101,12 +104,37 @@ pub struct Group {
     pub events: Vec<String>,
 }
 
-/// The groups of a triage, as the `triage` and `sorted` state keys hold them.
-/// After `sort_groups` every event key is in exactly one group.
-/// Names are unique, ignoring case.
+/// The persona's proposed day kind for one all-day event key: `reminder`,
+/// `busy` or `away` (Q47). Shown preselected on the app's choice card and
+/// never applied without the owner's tap.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DayPick {
+    pub event: String,
+    pub kind: String,
+}
+
+/// The groups of a triage, as the `triage` and `sorted` state keys hold them,
+/// plus the day kinds proposed for all-day events. After `sort_groups` every
+/// event key is in exactly one group and each all-day key has at most one pick.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Groups {
     pub groups: Vec<Group>,
+    #[serde(default)]
+    pub days: Vec<DayPick>,
+}
+
+/// Keeps the persona's day picks that name an all-day key of `all_day` with a
+/// known kind, first pick per key, in key order of the picks.
+/// Returns the cleaned picks.
+pub fn sort_days(all_day: &BTreeSet<String>, days: Vec<DayPick>) -> Vec<DayPick> {
+    let mut seen = BTreeSet::new();
+    let out: Vec<DayPick> = days
+        .into_iter()
+        .filter(|d| all_day.contains(&d.event) && serde_json::from_value::<DayKind>(Value::String(d.kind.clone())).is_ok())
+        .filter(|d| seen.insert(d.event.clone()))
+        .collect();
+    assert!(out.len() <= all_day.len(), "at most one pick per all-day event");
+    out
 }
 
 /// Normalizes the persona's groups over the run's event `keys`: unknown and
@@ -138,12 +166,14 @@ pub fn sort_groups(keys: &[String], groups: Vec<Group>) -> Groups {
     }
     let placed: usize = out.iter().map(|g| g.events.len()).sum();
     assert_eq!(placed, keys.len(), "every event is in exactly one group");
-    Groups { groups: out }
+    Groups { groups: out, days: Vec::new() }
 }
 
 #[derive(Deserialize, JsonSchema)]
 struct EventKey {
     key: String,
+    #[serde(default)]
+    all_day: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -199,6 +229,7 @@ async fn write_rules(env: &ToolEnv, args: RulesArgs) -> Result<Value, ToolError>
         for mut rule in rules_for(&user, &g.name, choice, &members) {
             if let Some(old) = get_row::<CalendarRule>(&env.pool, env.user, &rule.id).await.map_err(|e| ToolError::Failed(e.to_string()))? {
                 rule.updated_at = old.updated_at;
+                rule.day_kind = old.day_kind;
             }
             put_row(&env.pool, &env.hlc, env.user, &mut rule).await.map_err(|e| ToolError::Failed(e.to_string()))?;
             rules += 1;
@@ -217,8 +248,11 @@ async fn write_rules(env: &ToolEnv, args: RulesArgs) -> Result<Value, ToolError>
 /// `env.user`; no goal is needed.
 pub fn triage_toolkit(env: ToolEnv) -> Toolkit {
     let sort = typed_tool("sort_groups", "Normalize triage groups so every event is in exactly one group.", |a: SortArgs, _ctx: ToolContext| async move {
+        let all_day: BTreeSet<String> = a.events.iter().filter(|e| e.all_day).map(|e| e.key.clone()).collect();
         let keys: Vec<String> = a.events.into_iter().map(|e| e.key).collect();
-        Ok(ToolOutput::text(serde_json::to_string(&sort_groups(&keys, a.triage.groups)).expect("groups serialize")))
+        let mut sorted = sort_groups(&keys, a.triage.groups);
+        sorted.days = sort_days(&all_day, a.triage.days);
+        Ok(ToolOutput::text(serde_json::to_string(&sorted).expect("groups serialize")))
     });
     let write = typed_tool("write_rules", "Store the owner's keep or ignore decisions as calendar rules.", move |a: RulesArgs, _ctx: ToolContext| {
         let env = env.clone();
@@ -254,6 +288,15 @@ mod tests {
     }
 
     #[test]
+    fn sort_days_keeps_one_known_kind_per_all_day_event() {
+        let all_day: BTreeSet<String> = ["e2", "e3"].iter().map(|k| k.to_string()).collect();
+        let pick = |e: &str, k: &str| DayPick { event: e.into(), kind: k.into() };
+        let days = sort_days(&all_day, vec![pick("e1", "busy"), pick("e2", "away"), pick("e2", "busy"), pick("e3", "holiday"), pick("e9", "reminder")]);
+        assert_eq!(days, vec![pick("e2", "away")]);
+        assert!(sort_days(&BTreeSet::new(), vec![pick("e2", "away")]).is_empty());
+    }
+
+    #[test]
     fn triage_input_sorts_keys_and_rejects_bad_events() {
         let at = |h: u32| format!("2026-11-23T{h:02}:00:00Z").parse::<DateTime<Utc>>().unwrap();
         let ev = |id: &str, title: &str, h: u32| TriageEvent {
@@ -264,10 +307,11 @@ mod tests {
             start_at: at(h),
             end_at: at(h + 1),
             rrule: None,
+            all_day: false,
         };
         let req = StartTriage { timezone: "Europe/Berlin".into(), events: vec![ev("b", "Later", 10), ev("a", "First", 8), ev("a", "First", 9)] };
         let input = triage_input(&req, chrono_tz::Europe::Berlin).unwrap();
-        assert_eq!(input["events"][0], json!({"key": "e1", "calendar": "Work", "title": "First", "start": "2026-11-23T09:00:00", "minutes": 60, "rrule": null}));
+        assert_eq!(input["events"][0], json!({"key": "e1", "calendar": "Work", "title": "First", "start": "2026-11-23T09:00:00", "minutes": 60, "rrule": null, "all_day": false}));
         assert_eq!(input["events"].as_array().unwrap().len(), 2);
         assert_eq!(input["refs"][1]["event_id"], "b");
         let mut bad = req.clone();
@@ -275,6 +319,10 @@ mod tests {
         assert!(triage_input(&bad, chrono_tz::UTC).is_err());
         let empty = StartTriage { timezone: "UTC".into(), events: vec![] };
         assert!(triage_input(&empty, chrono_tz::UTC).is_err());
+        let mut trip = ev("t", "Trip", 0);
+        (trip.all_day, trip.end_at) = (true, at(0) + chrono::Duration::days(3));
+        let input = triage_input(&StartTriage { timezone: "UTC".into(), events: vec![trip] }, chrono_tz::UTC).unwrap();
+        assert_eq!((input["events"][0]["all_day"].clone(), input["events"][0]["minutes"].clone()), (json!(true), json!(1440)));
         let many = StartTriage { timezone: "UTC".into(), events: (0..=MAX_EVENTS).map(|i| ev(&format!("x{i}"), "t", 8)).collect() };
         assert!(triage_input(&many, chrono_tz::UTC).is_err());
     }

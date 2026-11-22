@@ -683,6 +683,7 @@ async fn busy_block(api: &Api, user: Uuid, title: &str, start: &str, minutes: i6
         end_at: start + chrono::Duration::minutes(minutes),
         all_day: false,
         group_name: Some("Work".into()),
+        day_kind: None,
         updated_at: String::new(),
         deleted: false,
     };
@@ -742,7 +743,7 @@ fn triage_models() -> Arc<FnTransport> {
             let groups = json!({"groups": [
                 {"name": "Work meetings", "kind": "work", "keep": true, "reason": "Meetings.", "events": ["e1", "e3"]},
                 {"name": "Noise", "kind": "noise", "keep": false, "reason": "Holidays.", "events": ["e2", "e9"]}
-            ]});
+            ], "days": [{"event": "e5", "kind": "away"}, {"event": "e1", "kind": "busy"}]});
             return sse_text(&groups.to_string());
         }
         json_reply(400, json!({}))
@@ -763,11 +764,15 @@ async fn triage_groups_decides_and_writes_rules() {
     let models = triage_models();
     let api = api(models.clone(), offline()).await;
     let (u, t) = api.signed_up().await;
+    let mut trip = triage_event("trip", "Trip", "2026-11-26T23:00:00Z", Some("FREQ=YEARLY"));
+    trip["end_at"] = json!("2026-11-29T23:00:00Z");
+    trip["all_day"] = json!(true);
     let events = json!([
         triage_event("standup", "Standup", "2026-11-23T08:00:00Z", Some("FREQ=DAILY")),
         triage_event("holiday", "Public holiday", "2026-11-23T09:00:00Z", None),
         triage_event("review", "Design Review", "2026-11-24T13:00:00Z", None),
-        triage_event("dentist", "Dentist", "2026-11-25T15:00:00Z", None)
+        triage_event("dentist", "Dentist", "2026-11-25T15:00:00Z", None),
+        trip.clone()
     ]);
     let body = json!({"timezone": "Europe/Berlin", "events": events});
     let (status, started) = api.call(Method::Post, "/v1/calendar/triage", Some(&t), Some(body.clone())).await;
@@ -782,7 +787,13 @@ async fn triage_groups_decides_and_writes_rules() {
     let groups = view["waiting"][0]["data"]["sorted"]["groups"].as_array().unwrap().clone();
     let names: Vec<&str> = groups.iter().map(|g| g["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["Work meetings", "Noise", "Other"]);
-    assert_eq!(groups[2]["events"], json!(["e4"]));
+    assert_eq!(groups[2]["events"], json!(["e4", "e5"]));
+    let data = &view["waiting"][0]["data"];
+    assert_eq!(data["sorted"]["days"], json!([{"event": "e5", "kind": "away"}]), "only all-day events get a kind");
+    assert_eq!((data["events"][4]["all_day"].clone(), data["events"][4]["minutes"].clone()), (json!(true), json!(1440)));
+    assert_eq!(data["refs"][4]["event_id"], "trip", "the app maps the key back to its event");
+    let mut chosen = aroh_domain::calendar::day_rule(&u.to_string(), "cal-work", "trip", "Trip", "All day", aroh_domain::rows::DayKind::Away);
+    put_row(&api.pool, &api.hlc, u, &mut chosen).await.unwrap();
     assert_eq!(view["waiting"][0]["data"]["events"][0]["start"], "2026-11-23T09:00:00");
     let sent = body_text(&models.sent()[0]);
     assert!(sent.contains("Standup") && !sent.contains("cal-work") && !sent.contains("standup\""), "ids stay on the server");
@@ -793,11 +804,18 @@ async fn triage_groups_decides_and_writes_rules() {
     let s = |v: &str| Some(v.to_string());
     let expected = vec![
         (None, s("public holiday"), "Noise".to_string(), "ignore".to_string()),
+        (s("trip"), None, "Other".to_string(), "keep".to_string()),
         (None, s("dentist"), "Other".to_string(), "keep".to_string()),
         (s("standup"), None, "Work meetings".to_string(), "keep".to_string()),
         (None, s("design review"), "Work meetings".to_string(), "keep".to_string()),
     ];
     assert_eq!(rules(&api, u).await, expected);
+    let kind: Option<String> = db::query_scalar("select day_kind from public.calendar_rules where user_id = $1 and series_key = 'trip'")
+        .bind(u)
+        .fetch_one(&api.pool)
+        .await
+        .unwrap();
+    assert_eq!(kind.as_deref(), Some("away"), "a triage answer keeps the owner's day kind");
 
     let (_, again) = api.call(Method::Post, "/v1/calendar/triage", Some(&t), Some(json!({"timezone": "UTC", "events": [triage_event("standup", "Standup", "2026-11-30T08:00:00Z", Some("FREQ=DAILY"))]}))).await;
     let again = again["run_id"].as_str().unwrap().to_string();
@@ -805,7 +823,7 @@ async fn triage_groups_decides_and_writes_rules() {
     api.answer(&t, &again, "decide", json!([{"group": "Work meetings", "keep": false}])).await;
     api.tick().await;
     let after = rules(&api, u).await;
-    assert_eq!(after.len(), 4, "the same key overwrites");
+    assert_eq!(after.len(), 5, "the same key overwrites");
     assert!(after.contains(&(s("standup"), None, "Work meetings".to_string(), "ignore".to_string())));
     let (_, other) = api.signed_up().await;
     assert_eq!(api.call(Method::Get, &format!("/v1/runs/{run}"), Some(&other), None).await.0, 404);

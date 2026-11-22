@@ -10,13 +10,14 @@ class EventsArgs: Decodable {
   let to: String
 }
 
-/// One test event for `seed`: title, ISO 8601 start and end, and an optional
-/// `FREQ=DAILY` or `FREQ=WEEKLY;BYDAY=..` recurrence.
+/// One test event for `seed`: title, ISO 8601 start and end, an optional
+/// `FREQ=DAILY` or `FREQ=WEEKLY;BYDAY=..` recurrence and an optional all-day flag.
 class SeedEvent: Decodable {
   let title: String
   let start_at: String
   let end_at: String
   let rrule: String?
+  let all_day: Bool?
 }
 
 /// Arguments of `seed`: the test events to write.
@@ -86,6 +87,7 @@ class CalendarPlugin: Plugin {
             event.title = e.title
             event.startDate = start
             event.endDate = end
+            event.isAllDay = e.all_day ?? false
             if let rule = self.recurrence(e.rrule) {
               event.addRecurrenceRule(rule)
             }

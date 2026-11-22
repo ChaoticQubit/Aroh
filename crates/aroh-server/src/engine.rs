@@ -10,9 +10,10 @@ use crate::teams;
 use crate::triage::{triage_input, StartTriage};
 use crate::workflows::{self, CALENDAR_TRIAGE, LOG_INTAKE, NEW_GOAL, REPLAN};
 use crate::db;
+use aroh_domain::calendar::local_days;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{
-    Action, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, Goal, GoalStatus, Preference, ProviderSetting, SearchSetting, Tracker,
+    Action, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, DayKind, Goal, GoalStatus, Preference, ProviderSetting, SearchSetting, Tracker,
 };
 use aroh_domain::time::MISSED_GRACE_MIN;
 use crate::triggers;
@@ -179,6 +180,37 @@ impl From<TickReport> for TickSummary {
     fn from(r: TickReport) -> Self {
         TickSummary { processed: r.processed, lost: r.lost, errors: r.errors }
     }
+}
+
+/// The plan input of the owner's device calendar over `[from, until)` in `tz`: `busy` holds
+/// timed blocks plus one full local day per Busy all-day day, in start order; the second list
+/// holds the local `YYYY-MM-DD` dates of Away days. Reminders and unchosen all-day events
+/// change nothing. Deleted blocks are skipped.
+pub fn day_inputs(blocks: &[BusyBlock], tz: Tz, from: DateTime<Utc>, until: DateTime<Utc>) -> (Vec<Value>, Vec<String>) {
+    let mut busy: Vec<(String, Value)> = Vec::new();
+    let mut away = std::collections::BTreeSet::new();
+    let today = from.with_timezone(&tz).date_naive();
+    let last = until.with_timezone(&tz).date_naive();
+    for b in blocks.iter().filter(|b| !b.deleted && b.end_at > from && b.start_at < until) {
+        if !b.all_day {
+            let start = local_text(b.start_at.with_timezone(&tz).naive_local());
+            busy.push((start.clone(), json!({"title": b.title, "start": start, "minutes": (b.end_at - b.start_at).num_minutes().clamp(1, 24 * 60)})));
+            continue;
+        }
+        let days = local_days(b.start_at, b.end_at, tz).into_iter().filter(|d| *d >= today && *d <= last);
+        match b.day_kind {
+            Some(DayKind::Busy) => {
+                for d in days {
+                    let start = local_text(d.and_hms_opt(0, 0, 0).expect("midnight exists"));
+                    busy.push((start.clone(), json!({"title": b.title, "start": start, "minutes": 24 * 60})));
+                }
+            }
+            Some(DayKind::Away) => away.extend(days.map(|d| d.to_string())),
+            Some(DayKind::Reminder) | None => {}
+        }
+    }
+    busy.sort_by(|a, b| a.0.cmp(&b.0));
+    (busy.into_iter().map(|(_, v)| v).collect(), away.into_iter().collect())
 }
 
 fn parse_tz(name: &str) -> Result<Tz, ServerError> {
@@ -363,24 +395,10 @@ impl Engine {
             .collect())
     }
 
-    async fn busy(&self, user: Uuid, tz: Tz, from: DateTime<Utc>) -> Result<Vec<Value>, ServerError> {
+    async fn busy(&self, user: Uuid, tz: Tz, from: DateTime<Utc>) -> Result<(Vec<Value>, Vec<String>), ServerError> {
         let until = from + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
-        let mut blocks: Vec<BusyBlock> = list_rows::<BusyBlock>(&self.deps.pool, user, &[], false)
-            .await?
-            .into_iter()
-            .filter(|b| !b.all_day && b.end_at > from && b.start_at < until)
-            .collect();
-        blocks.sort_by_key(|b| b.start_at);
-        Ok(blocks
-            .iter()
-            .map(|b| {
-                json!({
-                    "title": b.title,
-                    "start": local_text(b.start_at.with_timezone(&tz).naive_local()),
-                    "minutes": (b.end_at - b.start_at).num_minutes().clamp(1, 24 * 60),
-                })
-            })
-            .collect())
+        let blocks: Vec<BusyBlock> = list_rows::<BusyBlock>(&self.deps.pool, user, &[], false).await?;
+        Ok(day_inputs(&blocks, tz, from, until))
     }
 
     fn goal_input(goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Value {
@@ -429,7 +447,9 @@ impl Engine {
         input.insert("goal".into(), Self::goal_input(&goal, tz, now));
         input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
         input.insert("profile".into(), json!(self.profile(user).await?));
-        input.insert("busy".into(), json!(self.busy(user, tz, now).await?));
+        let (busy, away_days) = self.busy(user, tz, now).await?;
+        input.insert("busy".into(), json!(busy));
+        input.insert("away_days".into(), json!(away_days));
         let slug = goal.category_id.as_deref().and_then(|c| teams::seeded_slug(user, c));
         let team = teams::pick(slug, &about(&goal.title, goal.context.as_deref()));
         let template = aroh_plugins::template(team.template).expect("every team template ships");
@@ -467,7 +487,9 @@ impl Engine {
         input.insert("goal".into(), Self::goal_input(goal, tz, now));
         let from = now - Duration::days(PAST_DAYS);
         input.insert("calendar".into(), json!(self.calendar(user, tz, Some(&goal.id), from).await?));
-        input.insert("busy".into(), json!(self.busy(user, tz, now).await?));
+        let (busy, away_days) = self.busy(user, tz, now).await?;
+        input.insert("busy".into(), json!(busy));
+        input.insert("away_days".into(), json!(away_days));
         input.insert("reason".into(), json!(reason));
         input.insert("autonomy".into(), serde_json::to_value(goal.autonomy).expect("autonomy serializes"));
         input.insert("profile".into(), json!(self.profile(user).await?));
@@ -716,5 +738,55 @@ impl Engine {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn block(title: &str, start: &str, end: &str, all_day: bool, kind: Option<DayKind>) -> BusyBlock {
+        BusyBlock {
+            id: Uuid::now_v7().to_string(),
+            user_id: Uuid::now_v7().to_string(),
+            calendar_id: "home".into(),
+            event_id: format!("evt-{title}"),
+            title: title.into(),
+            start_at: start.parse().unwrap(),
+            end_at: end.parse().unwrap(),
+            all_day,
+            group_name: None,
+            day_kind: kind,
+            updated_at: String::new(),
+            deleted: false,
+        }
+    }
+
+    #[test]
+    fn busy_days_are_full_days_away_days_are_dates_and_reminders_change_nothing() {
+        let berlin = chrono_tz::Europe::Berlin;
+        let from: DateTime<Utc> = "2026-11-26T08:00:00Z".parse().unwrap();
+        let until = from + Duration::days(14);
+        let blocks = vec![
+            block("Conference", "2026-11-26T23:00:00Z", "2026-11-28T23:00:00Z", true, Some(DayKind::Busy)),
+            block("Vacation", "2026-11-29T23:00:00Z", "2026-12-01T23:00:00Z", true, Some(DayKind::Away)),
+            block("Birthday", "2026-11-27T23:00:00Z", "2026-11-28T23:00:00Z", true, Some(DayKind::Reminder)),
+            block("Unsure", "2026-11-27T23:00:00Z", "2026-11-28T23:00:00Z", true, None),
+            block("Standup", "2026-11-27T08:00:00Z", "2026-11-27T08:30:00Z", false, None),
+            block("Old trip", "2026-11-01T23:00:00Z", "2026-11-25T23:00:00Z", true, Some(DayKind::Away)),
+        ];
+        let (busy, away) = day_inputs(&blocks, berlin, from, until);
+        assert_eq!(
+            busy,
+            vec![
+                json!({"title": "Conference", "start": "2026-11-27T00:00:00", "minutes": 1440}),
+                json!({"title": "Standup", "start": "2026-11-27T09:00:00", "minutes": 30}),
+                json!({"title": "Conference", "start": "2026-11-28T00:00:00", "minutes": 1440}),
+            ]
+        );
+        assert_eq!(away, ["2026-11-30", "2026-12-01"]);
+        let mut gone = blocks.clone();
+        gone.iter_mut().for_each(|b| b.deleted = true);
+        assert_eq!(day_inputs(&gone, berlin, from, until), (vec![], vec![]));
     }
 }

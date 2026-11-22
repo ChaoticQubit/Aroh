@@ -1,6 +1,6 @@
 import { catalog } from '$lib/app/catalog';
 import type { ActionView, CategorySlot, ChatMessage, ComponentSpec, Point, Ring, SpecOf, ViewSpec } from '../contract';
-import type { GoalHeader, GoalRow, InboxItem, ProviderView, SearchView, SettingsView } from '../screens/types';
+import type { AllDayView, GoalHeader, GoalRow, InboxItem, ProviderView, SearchView, SettingsView } from '../screens/types';
 
 /** Zone every mockup formats times in. Sample instants are written in this zone. */
 export const mockZone = 'UTC';
@@ -296,3 +296,19 @@ export const sixpackLog: { checkIns: { trackerId: string; spec: ComponentSpec }[
 	waiting: { kind: 'log_list', label: 'Waiting for the engine', entries: [{ at: '2026-11-26T08:05:00Z', text: 'Coffee with oat milk and a banana' }] },
 	recent: { kind: 'log_list', label: 'Recent entries', entries: sixpackEntries.meals }
 };
+
+/**
+ * Device all-day events of the sample fortnight: an Away long-weekend vacation, a Reminder
+ * birthday inside it and a Busy conference day the week after.
+ */
+export const sixpackAllDay: AllDayView[] = [
+	{ id: 'e-vacation', title: 'Vacation', start: '2026-11-27', end: '2026-11-29', kind: 'away' },
+	{ id: 'e-birthday', title: "Mom's birthday", start: '2026-11-28', end: '2026-11-28', kind: 'reminder' },
+	{ id: 'e-conference', title: 'Conference', start: '2026-12-02', end: '2026-12-02', kind: 'busy' }
+];
+
+/** The same events before the owner has confirmed the vacation, with the triage persona's proposal. */
+export const sixpackAllDayNew: AllDayView[] = sixpackAllDay.map((e) => (e.id === 'e-vacation' ? { ...e, kind: null, suggested: 'away' } : e));
+
+/** The sample actions with nothing left on the Busy conference day, as after its actions moved away. */
+export const plannedActions: ActionView[] = sixpackActions.filter((a) => a.start.slice(0, 10) !== '2026-12-02');

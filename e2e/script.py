@@ -95,7 +95,7 @@ def calendar_rules(now):
         {"name": "Gym classes", "kind": "fitness", "keep": True, "reason": "Booked class.", "events": ["e2"]},
         {"name": "Appointments", "kind": "personal", "keep": True, "reason": "One-off appointment.", "events": ["e3"]},
         {"name": "Holidays", "kind": "noise", "keep": False, "reason": "No time taken.", "events": ["e4"]},
-    ]}
+    ], "days": []}
     moved = dict(script(now, 30)["rules"][3]["reply"])
     plan = json.loads(moved["text"])
     plan["items"][0]["start"] = (workout + datetime.timedelta(minutes=30)).strftime(FMT)
@@ -104,6 +104,49 @@ def calendar_rules(now):
         {"when": ["You are Calendar triage"], "reply": {"text": json.dumps(groups)}},
         {"when": ["You are Goal planner", "overlaps busy"], "reply": {"text": json.dumps(plan)}},
     ]
+
+
+def pod18_plan(now):
+    """Plan items of the pod 18 flow, local: a one-off core workout tomorrow at 18:00, a weekly
+    plank on tomorrow's weekday at 06:00 and a one-off stretch in three days at 19:00, so the
+    Busy day has two actions to move and the Away days one to adapt. Input: aware local now."""
+    day = (now + datetime.timedelta(days=1)).replace(second=0, microsecond=0)
+    weekday = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"][day.weekday()]
+    return [
+        {"title": "Core workout", "start": day.replace(hour=18, minute=0).strftime(FMT), "minutes": 30, "rrule": None, "notes": "Crunches, leg raises, side planks"},
+        {"title": "Morning plank", "start": day.replace(hour=6, minute=0).strftime(FMT), "minutes": 15, "rrule": "FREQ=WEEKLY;BYDAY=" + weekday, "notes": None},
+        {"title": "Evening stretch", "start": (day + datetime.timedelta(days=2)).replace(hour=19, minute=0).strftime(FMT), "minutes": 20, "rrule": None, "notes": None},
+    ]
+
+
+def pod18_seed(now):
+    """Device events of the pod 18 flow, ISO 8601 UTC, in triage key order e1 to e4: a daily
+    standup from today at 08:00, then all-day events from local midnight to midnight: a
+    Conference tomorrow, Mom's birthday the day after and a two-day Vacation after that."""
+    day = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    utc = lambda t: t.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    whole = lambda first, days: (utc(day + datetime.timedelta(days=first)), utc(day + datetime.timedelta(days=first + days)))
+    standup = (day - datetime.timedelta(days=1)).replace(hour=8)
+    rows = [("Team standup", (utc(standup), utc(standup + datetime.timedelta(minutes=30))), "FREQ=DAILY", False),
+            ("Conference", whole(0, 1), None, True), ("Mom's birthday", whole(1, 1), None, True), ("Vacation", whole(2, 2), None, True)]
+    return [{"title": t, "start_at": s, "end_at": e, "rrule": r, "all_day": a} for t, (s, e), r, a in rows]
+
+
+def pod18(data, plan, now):
+    """Turns the six-pack script into the pod 18 one: the pod 18 plan, triage groups and day
+    kinds for the seeded events, and an analyst reply for the Away trigger matched before the
+    missed-action one. Input: script dict, plan dict, aware local now. Output: none, edits data."""
+    plan["items"] = pod18_plan(now)
+    data["rules"][3]["reply"]["text"] = json.dumps(plan)
+    triage = {"groups": [
+        {"name": "Work meetings", "kind": "work", "keep": True, "reason": "Daily work meeting.", "events": ["e1"]},
+        {"name": "All-day events", "kind": "noise", "keep": False, "reason": "Day kinds are set on the calendar.", "events": ["e2", "e3", "e4"]},
+    ], "days": [{"event": "e2", "kind": "busy"}, {"event": "e3", "kind": "reminder"}, {"event": "e4", "kind": "away"}]}
+    trip = (now + datetime.timedelta(days=3)).replace(hour=8, minute=0, second=0, microsecond=0)
+    away = {"summary": "On the trip: a short hotel-room stretch, no equipment needed.", "size": "big",
+            "changes": [{"op": "create", "action_id": None, "title": "Hotel-room stretch", "start": trip.strftime(FMT), "minutes": 20}]}
+    data["rules"] = [{"when": ["You are Calendar triage"], "reply": {"text": json.dumps(triage)}},
+                     {"when": ["You are Adaptation analyst", "Away (Vacation)"], "reply": {"text": json.dumps(away)}}] + data["rules"]
 
 
 def music_times(now):
@@ -188,6 +231,11 @@ def main():
     if flow == "pod15.js":
         pod15(data, plan, now)
         assert len(data["rules"]) == 8
+    if flow == "pod18.js":
+        pod18(data, plan, now)
+        assert len(data["rules"]) == 9
+        with open(os.path.join(os.path.dirname(path), "seed.json"), "w", encoding="utf8") as f:
+            json.dump(pod18_seed(now), f)
     if music:
         data["rules"] = data["rules"][:1] + music_rules(now) + data["rules"][1:]
         assert len(data["rules"]) == 11

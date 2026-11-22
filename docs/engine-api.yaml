@@ -947,7 +947,7 @@ components:
       type: object
       description: |-
         One Inbox insight: what the engine noticed and did without being
-        asked. `source` is `actions`, `rule`, `review` or `edits`; `body` is
+        asked. `source` is `actions`, `rule`, `review`, `edits` or `calendar`; `body` is
         the reason plus the run summary; `state` the run's state, if any.
       required:
       - id
@@ -1481,8 +1481,8 @@ components:
       type: object
       description: |-
         One device calendar event to triage: EventKit ids, calendar name, title,
-        first occurrence (RFC 3339) and the RFC 5545 recurrence when it repeats.
-        Notes, places and attendees never leave the device.
+        first occurrence (RFC 3339), the RFC 5545 recurrence when it repeats and
+        whether it is all-day. Notes, places and attendees never leave the device.
       required:
       - event_id
       - calendar_id
@@ -1491,6 +1491,8 @@ components:
       - start_at
       - end_at
       properties:
+        all_day:
+          type: boolean
         calendar:
           type: string
         calendar_id:

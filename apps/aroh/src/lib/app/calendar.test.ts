@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { busyViews, connect, decisionsFrom, IGNORE, KEEP, triageCards, triageOf, type CalendarDeps } from './calendar';
+import { allDayViews, busyViews, connect, decisionsFrom, IGNORE, KEEP, triageCards, triageKinds, triageOf, type CalendarDeps } from './calendar';
 import type { CalendarImport, DeviceEvent, Snapshot } from './client';
 import type { RunSummary, Waiting } from './engine';
 
@@ -12,8 +12,13 @@ const waiting: Waiting = {
 			groups: [
 				{ name: 'Work meetings', kind: 'work', keep: true, reason: 'Meetings.', events: ['e1', 'e2', 'e3', 'e4'] },
 				{ name: 'Noise', kind: 'noise', keep: false, reason: 'Holidays.', events: ['e5'] }
-			]
+			],
+			days: [{ event: 'e5', kind: 'reminder' }]
 		},
+		refs: [
+			{ key: 'e1', event_id: 'standup', calendar_id: 'work', title: 'Standup', recurring: true },
+			{ key: 'e5', event_id: 'thanks', calendar_id: 'hol', title: 'Thanksgiving', recurring: false }
+		],
 		events: [
 			{ key: 'e1', calendar: 'Work', title: 'Standup', start: '2026-11-23T09:00:00', minutes: 30, rrule: 'FREQ=DAILY' },
 			{ key: 'e2', calendar: 'Work', title: 'Review', start: '2026-11-23T13:00:00', minutes: 60, rrule: null },
@@ -26,6 +31,10 @@ const waiting: Waiting = {
 
 function event(id: string, extra: Partial<DeviceEvent> = {}): DeviceEvent {
 	return { calendar_id: 'work', calendar: 'Work', event_id: id, title: id, start_at: '2026-11-23T08:00:00Z', end_at: '2026-11-23T08:30:00Z', all_day: false, rrule: null, ...extra };
+}
+
+function block(id: string, title: string, start_at: string, end_at: string, all_day: boolean, day_kind: string | null = null, event_id = id) {
+	return { id, calendar_id: 'work', event_id, title, start_at, end_at, all_day, group_name: null, day_kind };
 }
 
 function deps(unmatched: DeviceEvent[], runs: RunSummary[] = []): CalendarDeps & { calls: string[] } {
@@ -76,11 +85,12 @@ describe('calendar triage', () => {
 		expect(await connect(none, 0)).toEqual({ kept: 1, sent: 0, run: null });
 		expect(none.calls).toEqual(['read', 'import']);
 
-		const fresh = deps([event('a', { rrule: 'FREQ=DAILY' }), event('t', { all_day: true })]);
-		expect(await connect(fresh, 0)).toEqual({ kept: 1, sent: 1, run: 'r1' });
+		const fresh = deps([event('a', { rrule: 'FREQ=DAILY' }), event('t', { all_day: true, start_at: '2026-11-23T23:00:00Z', end_at: '2026-11-24T23:00:00Z' })]);
+		expect(await connect(fresh, 0)).toEqual({ kept: 1, sent: 2, run: 'r1' });
 		expect(fresh.calls).toEqual(['read', 'import', 'runs', 'triage']);
 		expect(fresh.triage).toHaveBeenCalledWith([
-			{ event_id: 'a', calendar_id: 'work', calendar: 'Work', title: 'a', start_at: '2026-11-23T08:00:00Z', end_at: '2026-11-23T08:30:00Z', rrule: 'FREQ=DAILY' }
+			{ event_id: 'a', calendar_id: 'work', calendar: 'Work', title: 'a', start_at: '2026-11-23T08:00:00Z', end_at: '2026-11-23T08:30:00Z', rrule: 'FREQ=DAILY', all_day: false },
+			{ event_id: 't', calendar_id: 'work', calendar: 'Work', title: 't', start_at: '2026-11-23T23:00:00Z', end_at: '2026-11-24T23:00:00Z', rrule: null, all_day: true }
 		]);
 		const read = fresh.read as ReturnType<typeof vi.fn>;
 		expect(read.mock.calls[0]).toEqual(['1969-12-31T00:00:00.000Z', '1970-01-15T00:00:00.000Z']);
@@ -93,9 +103,33 @@ describe('calendar triage', () => {
 		expect((await connect(done, 0)).run).toBe('r1');
 	});
 
-	it('shows busy blocks as neutral views with their group', () => {
-		const s = { busy: [{ id: 'b1', calendar_id: 'work', event_id: 'e', title: 'Standup', start_at: '2026-11-23T08:00:00Z', end_at: '2026-11-23T08:30:00Z', all_day: false, group_name: null }] } as unknown as Snapshot;
+	it('shows busy blocks as neutral views with their group, all-day ones only as chips', () => {
+		const s = { busy: [block('b1', 'Standup', '2026-11-23T08:00:00Z', '2026-11-23T08:30:00Z', false), block('b2', 'Trip', '2026-11-23T23:00:00Z', '2026-11-24T23:00:00Z', true)] } as unknown as Snapshot;
 		expect(busyViews(s)).toEqual([{ id: 'b1', title: 'Standup', start: '2026-11-23T08:00:00Z', end: '2026-11-23T08:30:00Z', group: 'Busy' }]);
 		expect(busyViews({} as Snapshot)).toEqual([]);
+	});
+
+	it('maps the proposed day kinds of a decide node to event ids', () => {
+		expect(triageKinds(waiting)).toEqual({ thanks: 'reminder' });
+		expect(triageKinds(undefined)).toEqual({});
+		const unknown = { ...waiting, data: { ...waiting.data, sorted: { groups: [], days: [{ event: 'e9', kind: 'busy' }, { event: 'e1', kind: 'holiday' }] } } };
+		expect(triageKinds(unknown)).toEqual({});
+	});
+
+	it('turns all-day blocks into inclusive local days with their kind and suggestion', () => {
+		const s = {
+			busy: [
+				block('one', 'Birthday', '2026-11-27T23:00:00Z', '2026-11-28T23:00:00Z', true, 'reminder', 'bday'),
+				block('three', 'Vacation', '2026-11-26T23:00:00Z', '2026-11-29T23:00:00Z', true, null, 'trip'),
+				block('late', 'Fair', '2026-11-30T23:00:00Z', '2026-12-01T22:59:59Z', true, 'busy', 'fair'),
+				block('timed', 'Standup', '2026-11-23T08:00:00Z', '2026-11-23T08:30:00Z', false)
+			]
+		} as unknown as Snapshot;
+		expect(allDayViews(s, 'Europe/Berlin', { trip: 'away', bday: 'busy' })).toEqual([
+			{ id: 'three', title: 'Vacation', start: '2026-11-27', end: '2026-11-29', kind: null, suggested: 'away' },
+			{ id: 'one', title: 'Birthday', start: '2026-11-28', end: '2026-11-28', kind: 'reminder', suggested: 'busy' },
+			{ id: 'late', title: 'Fair', start: '2026-12-01', end: '2026-12-01', kind: 'busy', suggested: null }
+		]);
+		expect(allDayViews({} as Snapshot, 'UTC')).toEqual([]);
 	});
 });

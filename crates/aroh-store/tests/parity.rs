@@ -3,6 +3,24 @@ use aroh_store::db;
 use std::collections::BTreeMap;
 
 const POSTGRES: &str = include_str!("../../../supabase/migrations/20261121000000_rebuild.sql");
+const LATER: &[&str] = &[include_str!("../../../supabase/migrations/20261124000000_day_kind.sql")];
+
+fn added_columns(tables: &mut BTreeMap<String, Vec<String>>) {
+    for sql in LATER {
+        let mut table: Option<String> = None;
+        for line in sql.lines().map(str::trim) {
+            if let Some(rest) = line.strip_prefix("alter table public.") {
+                table = Some(rest.split_whitespace().next().unwrap_or("").to_string());
+            }
+            if let (Some(t), Some(rest)) = (&table, line.strip_prefix("add column ")) {
+                let column = rest.split_whitespace().next().unwrap_or("").to_string();
+                if let Some(columns) = tables.get_mut(t) {
+                    columns.push(column);
+                }
+            }
+        }
+    }
+}
 
 fn postgres_tables() -> BTreeMap<String, Vec<String>> {
     let mut tables = BTreeMap::new();
@@ -22,6 +40,7 @@ fn postgres_tables() -> BTreeMap<String, Vec<String>> {
             }
         }
     }
+    added_columns(&mut tables);
     tables
 }
 
@@ -42,7 +61,10 @@ fn postgres_columns_match_the_registry_plus_server_seq() {
     for table in SYNCED.iter() {
         let mut expected: Vec<String> = table.names().iter().map(|c| c.to_string()).collect();
         expected.push("server_seq".into());
-        assert_eq!(tables.get(table.name), Some(&expected), "{}", table.name);
+        expected.sort();
+        let mut found = tables.get(table.name).cloned().unwrap_or_default();
+        found.sort();
+        assert_eq!(found, expected, "{}", table.name);
     }
     for server_only in ["jobs", "runs", "run_checkpoints", "run_events", "knowledge_chunks", "memory_logs", "provider_credentials"] {
         assert!(tables[server_only].contains(&"user_id".to_string()), "{server_only}");

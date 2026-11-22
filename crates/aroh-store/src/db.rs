@@ -4,7 +4,10 @@ use crate::{Error, Result};
 use rusqlite::Connection;
 use std::path::Path;
 
-const MIGRATIONS: &[&str] = &[r#"
+/// Every schema migration in order; migration `n` brings `user_version` from `n` to `n + 1`.
+/// Tables are rebuilt rather than altered when a column is added, so column order keeps
+/// matching the row registry.
+pub const MIGRATIONS: &[&str] = &[r#"
 CREATE TABLE categories (
     id TEXT PRIMARY KEY NOT NULL,
     user_id TEXT NOT NULL,
@@ -224,6 +227,40 @@ CREATE TABLE sync_state (
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL
 ) STRICT;
+"#, r#"
+CREATE TABLE busy_blocks_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    calendar_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    all_day INTEGER NOT NULL CHECK (all_day IN (0, 1)),
+    group_name TEXT,
+    day_kind TEXT CHECK (day_kind IN ('reminder', 'busy', 'away')),
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO busy_blocks_next SELECT id, user_id, calendar_id, event_id, title, start_at, end_at, all_day, group_name, NULL, updated_at, deleted FROM busy_blocks;
+DROP TABLE busy_blocks;
+ALTER TABLE busy_blocks_next RENAME TO busy_blocks;
+CREATE INDEX busy_blocks_start ON busy_blocks (start_at);
+CREATE TABLE calendar_rules_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    calendar_id TEXT,
+    series_key TEXT,
+    pattern TEXT,
+    group_name TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    day_kind TEXT CHECK (day_kind IN ('reminder', 'busy', 'away')),
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO calendar_rules_next SELECT id, user_id, calendar_id, series_key, pattern, group_name, decision, NULL, updated_at, deleted FROM calendar_rules;
+DROP TABLE calendar_rules;
+ALTER TABLE calendar_rules_next RENAME TO calendar_rules;
 "#];
 
 /// Schema version after every migration ran.

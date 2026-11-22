@@ -19,8 +19,12 @@
 	import GoalsScreen from '$lib/ui/screens/GoalsScreen.svelte';
 	import LogScreen from '$lib/ui/screens/LogScreen.svelte';
 	import { setClock } from '$lib/ui/clock';
+	import ClockFrame from './ClockFrame.svelte';
 	import { gallery } from '$lib/ui/mockdata/gallery';
 	import {
+		plannedActions,
+		sixpackAllDay,
+		sixpackAllDayNew,
 		categories,
 		mockNow,
 		mockZone,
@@ -38,7 +42,7 @@
 
 	setClock({ now: mockNow, zone: mockZone });
 
-	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop';
+	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing';
 	const VIEWS: { value: View; label: string }[] = [
 		{ value: 'tokens', label: 'Tokens' },
 		{ value: 'inputs', label: 'Inputs' },
@@ -46,11 +50,28 @@
 		{ value: 'planning', label: 'Planning' },
 		{ value: 'agent', label: 'Agent' },
 		{ value: 'screens-phone', label: 'Screens (phone)' },
-		{ value: 'screens-desktop', label: 'Screens (desktop)' }
+		{ value: 'screens-desktop', label: 'Screens (desktop)' },
+		{ value: 'editing', label: 'Calendar editing' }
+	];
+	const keep = () => {};
+	const EDIT = { onedit: keep, ondelete: keep, onchoose: keep, inline: true };
+	const PIANO = 'a-2026-11-26-2000-4';
+	const CORE = 'a-2026-12-03-0700-2';
+	const EDITING: { name: string; title: string; tab: TabId; now: string; screen: Component<any>; props: Record<string, unknown> }[] = [
+		{ name: 'Today, new all-day event', title: 'Today', tab: 'today', now: mockNow, screen: TodayScreen, props: { actions: sixpackActions, allDay: sixpackAllDayNew, ...EDIT } },
+		{ name: 'Today, Away with a Reminder', title: 'Today', tab: 'today', now: '2026-11-28T08:15:00Z', screen: TodayScreen, props: { actions: plannedActions, allDay: sixpackAllDay, ...EDIT } },
+		{ name: 'Calendar day, which kind?', title: 'Calendar', tab: 'calendar', now: mockNow, screen: CalendarScreen, props: { actions: sixpackActions, categories, allDay: sixpackAllDayNew, initialView: 'day', day: '2026-11-27', ...EDIT } },
+		{ name: 'Calendar day, all-day row', title: 'Calendar', tab: 'calendar', now: mockNow, screen: CalendarScreen, props: { actions: plannedActions, categories, allDay: sixpackAllDay, initialView: 'day', day: '2026-11-28', ...EDIT } },
+		{ name: 'Calendar day, a Busy day', title: 'Calendar', tab: 'calendar', now: mockNow, screen: CalendarScreen, props: { actions: plannedActions, categories, allDay: sixpackAllDay, initialView: 'day', day: '2026-12-02', ...EDIT } },
+		{ name: 'Calendar month, all-day bars', title: 'Calendar', tab: 'calendar', now: mockNow, screen: CalendarScreen, props: { actions: plannedActions, categories, allDay: sixpackAllDay, initialView: 'month', ...EDIT } },
+		{ name: 'Edit sheet from Today', title: 'Today', tab: 'today', now: mockNow, screen: TodayScreen, props: { actions: plannedActions, allDay: sixpackAllDay, editing: PIANO, ...EDIT } },
+		{ name: 'Delete confirm', title: 'Today', tab: 'today', now: mockNow, screen: TodayScreen, props: { actions: plannedActions, allDay: sixpackAllDay, editing: PIANO, confirming: true, ...EDIT } },
+		{ name: 'Edit sheet from Calendar', title: 'Calendar', tab: 'calendar', now: mockNow, screen: CalendarScreen, props: { actions: plannedActions, categories, allDay: sixpackAllDay, initialView: 'day', day: '2026-12-03', editing: CORE, ...EDIT } },
+		{ name: 'Drag to move, edge to resize', title: 'Calendar', tab: 'calendar', now: mockNow, screen: CalendarScreen, props: { actions: plannedActions.map((a) => (a.id === CORE ? { ...a, end: '2026-12-03T08:00:00Z' } : a)), categories, allDay: sixpackAllDay, initialView: 'day', day: '2026-12-03', selected: CORE, ...EDIT } }
 	];
 	const SCREENS: { name: string; title: string; tab: TabId | 'settings'; screen: Component<any>; props: Record<string, unknown> }[] = [
-		{ name: 'Today', title: 'Today', tab: 'today', screen: TodayScreen, props: { actions: sixpackActions, checkIn: weightCheckIn, insight: sixpackInbox.insights[0] } },
-		{ name: 'Calendar', title: 'Calendar', tab: 'calendar', screen: CalendarScreen, props: { actions: sixpackActions, categories } },
+		{ name: 'Today', title: 'Today', tab: 'today', screen: TodayScreen, props: { actions: plannedActions, checkIn: weightCheckIn, insight: sixpackInbox.insights[0], allDay: sixpackAllDay } },
+		{ name: 'Calendar', title: 'Calendar', tab: 'calendar', screen: CalendarScreen, props: { actions: plannedActions, categories, allDay: sixpackAllDay } },
 		{ name: 'Goals', title: 'Goals', tab: 'goals', screen: GoalsScreen, props: { goals: sixpackGoals, categories } },
 		{ name: 'Goal', title: 'Goals', tab: 'goals', screen: GoalScreen, props: { goal: sixpackHeader, view: sixpackView, versions: [{ value: 'derived', label: 'Derived' }, { value: 'p2', label: 'v2' }, { value: 'p1', label: 'v1' }], version: 'p2' } },
 		{ name: 'New goal', title: 'New goal', tab: 'goals', screen: NewGoalScreen, props: { messages: sixpackChat } },
@@ -168,8 +189,21 @@
 			<ul class="flex gap-6 overflow-x-auto pb-4">
 				{#each SCREENS as s (s.name)}
 					<li class="flex shrink-0 flex-col items-center gap-2">
-						<div class="box-content h-[844px] w-[390px] overflow-hidden rounded-md border border-border bg-bg">
+						<div class="box-content h-[844px] w-[390px] [transform:translateZ(0)] overflow-hidden rounded-md border border-border bg-bg">
 							<PhoneShell title={s.title} tab={s.tab} {inboxCount}><s.screen {...s.props} /></PhoneShell>
+						</div>
+						<p class="text-sm font-medium">{s.name}</p>
+					</li>
+				{/each}
+			</ul>
+		{:else if view === 'editing'}
+			<ul class="flex gap-6 overflow-x-auto pb-4">
+				{#each EDITING as s (s.name)}
+					<li class="flex shrink-0 flex-col items-center gap-2">
+						<div class="box-content h-[844px] w-[390px] [transform:translateZ(0)] overflow-hidden rounded-md border border-border bg-bg">
+							<ClockFrame now={s.now} zone={mockZone}>
+								<PhoneShell title={s.title} tab={s.tab} {inboxCount}><s.screen {...s.props} /></PhoneShell>
+							</ClockFrame>
 						</div>
 						<p class="text-sm font-medium">{s.name}</p>
 					</li>
@@ -181,7 +215,7 @@
 					<li class="flex flex-col gap-2">
 						<p class="text-sm font-medium">{s.name}</p>
 						<div class="overflow-x-auto pb-2">
-							<div class="box-content h-[800px] w-[1280px] overflow-hidden rounded-md border border-border bg-bg">
+							<div class="box-content h-[800px] w-[1280px] [transform:translateZ(0)] overflow-hidden rounded-md border border-border bg-bg">
 								<DesktopShell title={s.title} tab={s.tab} {inboxCount} {categories}><s.screen {...s.props} /></DesktopShell>
 							</div>
 						</div>

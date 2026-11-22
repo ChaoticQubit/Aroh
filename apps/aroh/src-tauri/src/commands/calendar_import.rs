@@ -2,10 +2,13 @@
 //! boundary, matched against the synced rules under the core lock, and the unmatched ones
 //! go back to the UI for triage. Nothing is written to the device calendar.
 
+use super::app::after_write;
 use super::with_core;
 use crate::{notify, AppState};
 use aroh_app::calendar::Import;
+use aroh_app::write::DaySet;
 use aroh_domain::calendar::DeviceEvent;
+use aroh_domain::rows::DayKind;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use chrono::{Duration, Utc};
 use tauri::{AppHandle, State};
@@ -30,4 +33,15 @@ pub fn app_calendar_import(app: AppHandle, state: State<'_, AppState>, events: V
         }
     }
     Ok(report)
+}
+
+/// Confirms the kind of the all-day event behind busy block `id`: `reminder`, `busy` or
+/// `away`. Writes the event's rule and block kinds; a Busy day moves that day's planned
+/// actions to the next free day. Reschedules reminders and reloads the screens.
+#[tauri::command]
+pub fn app_set_day_kind(app: AppHandle, state: State<'_, AppState>, id: String, kind: String) -> Result<DaySet, String> {
+    let kind: DayKind = serde_json::from_value(serde_json::Value::String(kind)).map_err(|_| "invalid kind".to_string())?;
+    let set = with_core(&state, |c| aroh_app::write::set_day_kind(&c.conn, &mut c.clock, &c.user_id, &id, kind, crate::zone()))?;
+    after_write(&app);
+    Ok(set)
 }

@@ -47,7 +47,7 @@ export type RunView = { run_id: string; goal_id: string | null; workflow: string
 export type Insight = { id: string; goal_id: string | null; run_id: string | null; source: string; title: string; body: string; state: string | null; created_at: string };
 
 /** One device event as `POST /v1/calendar/triage` takes it: ids, calendar, title, times, recurrence. */
-export type TriageEvent = { event_id: string; calendar_id: string; calendar: string; title: string; start_at: string; end_at: string; rrule: string | null };
+export type TriageEvent = { event_id: string; calendar_id: string; calendar: string; title: string; start_at: string; end_at: string; rrule: string | null; all_day: boolean };
 
 /** A free-text log waiting in the device queue. */
 export type PendingLog = { text: string; at: string };

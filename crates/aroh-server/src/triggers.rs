@@ -4,7 +4,9 @@ use crate::learning::{self, EditEvent};
 use crate::rows::{get_row, list_rows, utc};
 use crate::db;
 use aroh_domain::hlc;
-use aroh_domain::rows::{CadenceFreq, Goal, GoalStatus, RuleOp, Tracker, TrackerEntry, TrackerField};
+use aroh_domain::calendar::local_days;
+use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
+use aroh_domain::rows::{Autonomy, CadenceFreq, Goal, GoalStatus, RuleOp, Tracker, TrackerEntry, TrackerField};
 use aroh_domain::time::MISSED_GRACE_MIN;
 use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -29,19 +31,20 @@ pub const MISSED_LOOKBACK_HOURS: i64 = 48;
 const BUSY_STATES: &str = "('queued', 'running', 'checkpointed', 'waiting_human', 'waiting_budget')";
 
 /// What started an adaptation: action events, a tracker rule, the weekly
-/// review or repeated owner edits. Stored as `adaptations.source` and
-/// shown as the insight's kind.
+/// review, repeated owner edits or an Away all-day event. Stored as
+/// `adaptations.source` and shown as the insight's kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
     Actions,
     Rule,
     Review,
     Edits,
+    Calendar,
 }
 
 impl Source {
     /// The `adaptations.source` text of this source.
-    /// One of `actions`, `rule`, `review`, `edits`.
+    /// One of `actions`, `rule`, `review`, `edits`, `calendar`.
     /// Returns a static string.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -49,6 +52,7 @@ impl Source {
             Source::Rule => "rule",
             Source::Review => "review",
             Source::Edits => "edits",
+            Source::Calendar => "calendar",
         }
     }
 }
@@ -174,6 +178,25 @@ pub fn rule_window(tracker_id: &str, index: usize, window_days: u32, now: DateTi
 /// Returns `review:<YYYY-MM-DD>`.
 pub fn review_window(date: NaiveDate) -> String {
     format!("review:{date}")
+}
+
+/// Window key of an Away adaptation over local dates `first` to `last`:
+/// one per goal and trip, so a later scan claims nothing new.
+/// Returns `away:<first>:<last>`.
+pub fn away_window(first: NaiveDate, last: NaiveDate) -> String {
+    assert!(first <= last, "a trip has at least one day");
+    format!("away:{first}:{last}")
+}
+
+/// The replan reason of an Away event titled `title` over `days` (local,
+/// in order): names the dates and asks to adapt by the goal's category.
+/// Returns one paragraph for the adaptation analyst.
+pub fn away_reason(title: &str, days: &[NaiveDate]) -> String {
+    let (first, last) = (days.first().expect("a trip has days"), days.last().expect("a trip has days"));
+    let when = if first == last { first.format("%a %-d %b").to_string() } else { format!("{} to {}", first.format("%a %-d %b"), last.format("%a %-d %b")) };
+    format!(
+        "Away ({title}): {when}. Adapt this goal's actions on those days to its category, for example a no-equipment workout instead of the gym, practice that needs an instrument paused and moved to after the trip, habits continue."
+    )
 }
 
 /// The first weekly review slot after `after`: weekday `weekday`
@@ -381,6 +404,7 @@ impl Engine {
         started += self.scan_rules(&pool, now).await?;
         started += self.scan_reviews(&pool, now).await?;
         started += self.scan_edits(&pool, now).await?;
+        started += self.scan_away(&pool, now).await?;
         Ok(started)
     }
 
@@ -391,9 +415,58 @@ impl Engine {
             return Ok(false);
         };
         let tz = goal_zone(pool, user, goal_id).await?;
-        let result = self.replan(user, goal, reason, tz).await;
+        let asked = Goal { autonomy: if source == Source::Calendar { Autonomy::Ask } else { goal.autonomy }, ..goal.clone() };
+        let result = self.replan(user, &asked, reason, tz).await;
         settle(pool, adaptation, &result).await?;
         Ok(result.is_ok())
+    }
+
+    async fn scan_away(&self, pool: &db::PgPool, now: DateTime<Utc>) -> Result<usize, ServerError> {
+        let until = now + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
+        let trips: Vec<(Uuid, String, DateTime<Utc>, DateTime<Utc>)> = db::query_as(
+            "select user_id, title, start_at, end_at from public.busy_blocks
+             where not deleted and all_day and day_kind = 'away' and end_at > $1 and start_at < $2 order by user_id, start_at, id",
+        )
+        .bind(now)
+        .bind(until)
+        .fetch_all(pool)
+        .await?;
+        let mut started = 0;
+        for (user, title, start, end) in trips {
+            let goals: Vec<Uuid> = db::query_scalar(
+                "select id from public.goals where user_id = $1 and not deleted and status = 'active' order by id",
+            )
+            .bind(user)
+            .fetch_all(pool)
+            .await?;
+            for goal_id in goals {
+                let tz = goal_zone(pool, user, goal_id).await?;
+                let today = now.with_timezone(&tz).date_naive();
+                let days: Vec<NaiveDate> = local_days(start, end, tz).into_iter().filter(|d| *d >= today).collect();
+                let Some((first, last)) = days.first().zip(days.last()) else { continue };
+                let (from, to) = (local_instant(*first, NaiveTime::MIN, tz), local_instant(*last + Duration::days(1), NaiveTime::MIN, tz));
+                let (Some(from), Some(to)) = (from, to) else { continue };
+                let planned: i64 = db::query_scalar(
+                    "select count(*) from public.actions where user_id = $1 and goal_id = $2 and not deleted and status = 'planned'
+                     and start_at >= $3 and start_at < $4",
+                )
+                .bind(user)
+                .bind(goal_id)
+                .bind(from.max(now))
+                .bind(to)
+                .fetch_one(pool)
+                .await?;
+                if planned == 0 || busy(pool, user, goal_id).await? {
+                    continue;
+                }
+                let Some(goal) = active_goal(pool, user, goal_id).await? else { continue };
+                let reason = away_reason(&title, &days);
+                if self.trigger_replan(user, &goal, Source::Calendar, &away_window(*first, *last), &reason, now).await? {
+                    started += 1;
+                }
+            }
+        }
+        Ok(started)
     }
 
     async fn scan_events(&self, pool: &db::PgPool, now: DateTime<Utc>) -> Result<usize, ServerError> {
@@ -790,6 +863,17 @@ mod tests {
     fn status(kind: &str, end: &str, done: Option<&str>) -> StatusEvent {
         let end_at = at(end);
         StatusEvent { id: 1, kind: kind.into(), title: "Easy run".into(), start_at: end_at - Duration::minutes(30), end_at, done_at: done.map(at) }
+    }
+
+    #[test]
+    fn away_window_and_reason_name_the_dates() {
+        let d = |day: u32| NaiveDate::from_ymd_opt(2026, 11, day).unwrap();
+        assert_eq!(away_window(d(27), d(29)), "away:2026-11-27:2026-11-29");
+        let reason = away_reason("Vacation", &[d(27), d(28), d(29)]);
+        assert!(reason.starts_with("Away (Vacation): Fri 27 Nov to Sun 29 Nov. Adapt"), "{reason}");
+        assert!(reason.contains("no-equipment workout") && reason.contains("habits continue"));
+        assert!(away_reason("Trip", &[d(28)]).starts_with("Away (Trip): Sat 28 Nov. "));
+        assert_eq!(Source::Calendar.as_str(), "calendar");
     }
 
     #[test]

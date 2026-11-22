@@ -1,4 +1,5 @@
-import type { BusyView, InboxItem } from '$lib/ui/screens/types';
+import type { AllDayView, BusyView, DayKind, InboxItem } from '$lib/ui/screens/types';
+import { formatYmd } from '$lib/ui/format';
 import * as client from './client';
 import { follow } from './chat.svelte';
 import { engine, type EngineResult, type RunSummary, type TriageEvent, type Waiting } from './engine';
@@ -30,11 +31,30 @@ export type CalendarDeps = {
 	triage: (events: TriageEvent[]) => Promise<EngineResult<{ goal_id: null; run_id: string }>>;
 };
 
+const KINDS: readonly DayKind[] = ['reminder', 'busy', 'away'];
+
 /** The groups and events of a waiting calendar-triage `decide` node, or null for any other node. */
 export function triageOf(w: Waiting | undefined): { groups: TriageGroup[]; events: TriageShown[] } | null {
 	if (w?.node !== 'decide') return null;
 	const sorted = w.data.sorted as { groups?: TriageGroup[] } | undefined;
 	return { groups: sorted?.groups ?? [], events: (w.data.events as TriageShown[] | undefined) ?? [] };
+}
+
+/**
+ * The day kinds the triage persona proposed for all-day events, keyed by device event id through
+ * the run's `refs`. Unknown keys and kinds are dropped; any node but `decide` gives none.
+ */
+export function triageKinds(w: Waiting | undefined): Record<string, DayKind> {
+	if (w?.node !== 'decide') return {};
+	const days = ((w.data.sorted as { days?: { event: string; kind: string }[] } | undefined)?.days ?? []);
+	const refs = (w.data.refs as { key: string; event_id: string }[] | undefined) ?? [];
+	const out: Record<string, DayKind> = {};
+	for (const d of days) {
+		const ref = refs.find((r) => r.key === d.event);
+		const kind = KINDS.find((k) => k === d.kind);
+		if (ref && kind) out[ref.event_id] = kind;
+	}
+	return out;
 }
 
 /** Joins titles as "A", "A and B" or "A, B and C". */
@@ -78,18 +98,18 @@ export function decisionsFrom(w: Waiting | undefined, answers: Record<string, un
 
 /**
  * Reads the device calendars for the last day and the next 14, imports them (kept events become
- * busy blocks), and sends the unmatched timed events to triage unless a triage run is still open.
- * Returns busy blocks kept, events sent and the open or new triage run.
+ * busy blocks), and sends the unmatched events, all-day ones flagged, to triage unless a triage
+ * run is still open. Returns busy blocks kept, events sent and the open or new triage run.
  */
 export async function connect(deps: CalendarDeps, now = Date.now()): Promise<{ kept: number; sent: number; run: string | null }> {
 	const events = await deps.read(new Date(now - PAST_DAYS * DAY_MS).toISOString(), new Date(now + AHEAD_DAYS * DAY_MS).toISOString());
 	const report = await deps.importEvents(events);
-	const unmatched = report.unmatched.filter((e) => !e.all_day).slice(0, MAX_TRIAGE);
+	const unmatched = report.unmatched.slice(0, MAX_TRIAGE);
 	if (!unmatched.length) return { kept: report.kept, sent: 0, run: null };
 	const runs = await deps.runs();
 	const open = runs.ok ? runs.value.find((r) => r.workflow === WORKFLOW && !DONE.includes(r.state)) : undefined;
 	if (open) return { kept: report.kept, sent: 0, run: open.run_id };
-	const started = await deps.triage(unmatched.map(({ event_id, calendar_id, calendar, title, start_at, end_at, rrule }) => ({ event_id, calendar_id, calendar, title, start_at, end_at, rrule })));
+	const started = await deps.triage(unmatched.map(({ event_id, calendar_id, calendar, title, start_at, end_at, rrule, all_day }) => ({ event_id, calendar_id, calendar, title, start_at, end_at, rrule, all_day })));
 	return { kept: report.kept, sent: started.ok ? unmatched.length : 0, run: started.ok ? started.value.run_id : null };
 }
 
@@ -120,7 +140,47 @@ export async function finishTriage(runId: string): Promise<void> {
 	await client.sync().catch(() => null);
 }
 
-/** The snapshot's busy blocks as neutral Calendar views, named by their triage group. */
+/** The snapshot's timed busy blocks as neutral Calendar views, named by their triage group. */
 export function busyViews(s: client.Snapshot): BusyView[] {
-	return (s.busy ?? []).map((b) => ({ id: b.id, title: b.title, start: b.start_at, end: b.end_at, group: b.group_name ?? 'Busy' }));
+	return (s.busy ?? []).filter((b) => !b.all_day).map((b) => ({ id: b.id, title: b.title, start: b.start_at, end: b.end_at, group: b.group_name ?? 'Busy' }));
+}
+
+/**
+ * The snapshot's all-day blocks as chips: first and last local day in `zone`, inclusive (EventKit
+ * ends a day at the next midnight or at 23:59:59), the confirmed kind and the triage suggestion
+ * from `suggested`, keyed by event id. Sorted by first day, then title.
+ */
+export function allDayViews(s: client.Snapshot, zone: string, suggested: Record<string, DayKind> = {}): AllDayView[] {
+	return (s.busy ?? [])
+		.filter((b) => b.all_day)
+		.map((b) => {
+			const start = formatYmd(b.start_at, zone);
+			const last = formatYmd(new Date(Date.parse(b.end_at) - 1000).toISOString(), zone);
+			return { id: b.id, title: b.title, start, end: last < start ? start : last, kind: b.day_kind, suggested: suggested[b.event_id] ?? null };
+		})
+		.sort((a, b) => a.start.localeCompare(b.start) || a.title.localeCompare(b.title));
+}
+
+/** Saves the owner's kind for an all-day event, then syncs so the engine plans around it. */
+export async function confirmDay(id: string, kind: DayKind): Promise<client.DaySet> {
+	const set = await client.setDayKind(id, kind);
+	await client.sync().catch(() => null);
+	return set;
+}
+
+/**
+ * The calendar-triage run waiting at `decide`, if any: its id and waiting node. Reads the run list
+ * unless `known` is given. Offline gives null.
+ */
+export async function openTriage(known?: RunSummary[]): Promise<{ runId: string; waiting: Waiting } | null> {
+	let runs = known;
+	if (!runs) {
+		const read = await engine.runs();
+		runs = read.ok ? read.value : [];
+	}
+	const open = runs.find((r) => r.workflow === WORKFLOW && r.state === 'waiting_human');
+	if (!open) return null;
+	const view = await engine.run(open.run_id);
+	const waiting = view.ok ? view.value.waiting.find((w) => w.node === 'decide') : undefined;
+	return waiting ? { runId: open.run_id, waiting } : null;
 }

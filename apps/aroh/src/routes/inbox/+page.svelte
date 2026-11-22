@@ -5,7 +5,7 @@
 	import * as client from '$lib/app/client';
 	import { follow } from '$lib/app/chat.svelte';
 	import { engine, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
-	import { decisionsFrom, finishTriage, triageCards } from '$lib/app/calendar';
+	import { decisionsFrom, finishTriage, openTriage, triageCards } from '$lib/app/calendar';
 	import { inboxView } from '$lib/app/views';
 
 	const s = $derived(data.snapshot);
@@ -24,10 +24,7 @@
 
 	/** Reads the calendar-triage run waiting at `decide`, if any, for the Calendar groups cards. */
 	async function loadTriage() {
-		const open = runs.find((r) => r.workflow === 'calendar-triage' && r.state === 'waiting_human');
-		const view = open ? await engine.run(open.run_id) : null;
-		const waiting = view?.ok ? view.value.waiting.find((w) => w.node === 'decide') : undefined;
-		triage = open && waiting ? { runId: open.run_id, waiting } : null;
+		triage = await openTriage(runs);
 		answers = {};
 	}
 

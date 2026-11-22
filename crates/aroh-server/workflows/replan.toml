@@ -7,6 +7,7 @@ goal = "{id: string, title: string, context: string?, deadline: string?, timezon
 calendar = "list<{id: string, title: string, start: string, minutes: int, status: string, locked: bool}>"
 reason = "string"
 busy = "list<{title: string, start: string, minutes: int}>"
+away_days = "list<string>"
 autonomy = "enum(ask, balanced, auto)"
 profile = "list<string>"
 proposal = "{summary: string, size: enum(small, big), changes: list<{op: enum(move, resize, create, delete), action_id: string?, title: string, start: string?, minutes: int?}>}"
@@ -19,7 +20,7 @@ id = "adapt"
 kind = "agent"
 persona = "adaptation-analyst"
 prompt = "Propose the smallest plan change that answers the reason."
-reads = ["goal", "calendar", "busy", "reason", "profile"]
+reads = ["goal", "calendar", "busy", "away_days", "reason", "profile"]
 writes = "proposal"
 
 [[nodes]]

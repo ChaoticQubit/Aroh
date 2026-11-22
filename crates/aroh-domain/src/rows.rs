@@ -273,6 +273,17 @@ pub enum RuleDecision {
     Ignore,
 }
 
+/// What a device all-day event does to its days (Q47): `Reminder` keeps the plan,
+/// `Busy` blocks the day and moves its actions to other days, `Away` has the
+/// replanner adapt each goal by category. Proposed by triage, confirmed by the owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DayKind {
+    Reminder,
+    Busy,
+    Away,
+}
+
 /// Level a spend limit applies to (Q32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -440,6 +451,7 @@ synced! {
         end_at: DateTime<Utc> => Time,
         all_day: bool => Bool,
         group_name: Option<String> => Text,
+        day_kind: Option<DayKind> => Text,
     }
 }
 
@@ -452,6 +464,7 @@ synced! {
         pattern: Option<String> => Text,
         group_name: String => Text,
         decision: RuleDecision => Text,
+        day_kind: Option<DayKind> => Text,
     }
 }
 
@@ -1014,8 +1027,8 @@ pub mod samples {
             to(action()),
             to(Proposal { id: id(11), user_id: user(), goal_id: goal_id(), run_id: Some(id(12)), summary: "Move Friday workout".into(), diff: serde_json::json!([{"action_id": id(10), "op": "move"}]), size: ProposalSize::Small, status: ProposalStatus::Proposed, undo: None, created_at: at(8), updated_at: stamp(), deleted: false }),
             to(Preference { id: id(13), user_id: user(), fact: "Prefers morning workouts".into(), source: "edit-analysis".into(), noted_at: at(8), confirmed: true, updated_at: stamp(), deleted: false }),
-            to(BusyBlock { id: id(14), user_id: user(), calendar_id: "work".into(), event_id: "evt-1".into(), title: "Standup".into(), start_at: at(9), end_at: at(10), all_day: false, group_name: Some("Work".into()), updated_at: stamp(), deleted: false }),
-            to(CalendarRule { id: id(15), user_id: user(), calendar_id: Some("work".into()), series_key: None, pattern: None, group_name: "Work".into(), decision: RuleDecision::Keep, updated_at: stamp(), deleted: false }),
+            to(BusyBlock { id: id(14), user_id: user(), calendar_id: "work".into(), event_id: "evt-1".into(), title: "Standup".into(), start_at: at(9), end_at: at(10), all_day: true, group_name: Some("Work".into()), day_kind: Some(DayKind::Busy), updated_at: stamp(), deleted: false }),
+            to(CalendarRule { id: id(15), user_id: user(), calendar_id: Some("work".into()), series_key: None, pattern: None, group_name: "Work".into(), decision: RuleDecision::Keep, day_kind: None, updated_at: stamp(), deleted: false }),
             to(ProviderSetting { id: id(16), user_id: user(), label: "Claude".into(), vendor: "anthropic".into(), model: "claude-opus".into(), base_url: None, is_default: true, updated_at: stamp(), deleted: false }),
             to(SearchSetting { id: id(17), user_id: user(), label: "Local SearXNG".into(), provider: "searxng".into(), base_url: Some("http://localhost:8888".into()), priority: 0, enabled: true, updated_at: stamp(), deleted: false }),
             to(Budget { id: id(18), user_id: user(), scope: BudgetScope::GoalMonth, goal_id: Some(goal_id()), limit_usd_micros: 5_000_000, updated_at: stamp(), deleted: false }),
@@ -1198,6 +1211,25 @@ mod tests {
         let mut usage: Usage = serde_json::from_value(samples::all()[17].clone()).unwrap();
         usage.output_tokens = -1;
         assert_eq!(field_err(usage), "usage.output_tokens");
+    }
+
+    #[test]
+    fn day_kinds_round_trip_as_text() {
+        for (kind, text) in [(DayKind::Reminder, "reminder"), (DayKind::Busy, "busy"), (DayKind::Away, "away")] {
+            assert_eq!(serde_json::to_value(kind).unwrap(), text);
+            assert_eq!(serde_json::from_value::<DayKind>(text.into()).unwrap(), kind);
+        }
+        assert!(serde_json::from_value::<DayKind>("holiday".into()).is_err());
+        let mut block = samples::all()[12].clone();
+        assert_eq!(block["day_kind"], "busy");
+        (BUSY_BLOCKS.check)(&block).unwrap();
+        block["day_kind"] = serde_json::Value::Null;
+        (BUSY_BLOCKS.check)(&block).unwrap();
+        block["day_kind"] = "holiday".into();
+        assert!((BUSY_BLOCKS.check)(&block).is_err());
+        let mut rule = samples::all()[13].clone();
+        rule["day_kind"] = "away".into();
+        (CALENDAR_RULES.check)(&rule).unwrap();
     }
 
     #[test]

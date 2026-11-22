@@ -2,7 +2,7 @@ mod common;
 
 use aroh_domain::hlc::Hlc;
 use aroh_domain::rows::{
-    Action, ActionStatus, Autonomy, Cadence, CadenceFreq, EntrySource, FieldKind, Goal, GoalStatus, Preference, RuleOp, Tracker,
+    Action, ActionStatus, Autonomy, Cadence, CadenceFreq, DayKind, EntrySource, FieldKind, Goal, GoalStatus, Preference, RuleOp, Tracker,
     TrackerEntry, TrackerField, TrackerRule,
 };
 use aroh_server::db::{self, PgPool};
@@ -190,6 +190,52 @@ async fn missed_action_produces_a_proposal_without_an_owner_message() {
     assert_eq!(insights[0].body, "Missed: Core workout (Sun 10:00). Move the missed workout to Monday evening. Applied 1 of 1 changes.");
     assert_eq!(insights[0].state.as_deref(), Some("done"));
     assert!(insights::list(&w.pool, user(&w.pool).await, None).await.unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn away_days_start_one_adaptation_per_goal_that_always_asks() {
+    let w = world(json!(null)).await;
+    let goal = w.goal(Autonomy::Auto).await;
+    let quiet = w.goal(Autonomy::Auto).await;
+    let workout = w.action(goal, "2026-11-27T09:00:00Z").await;
+    let _before = w.action(quiet, "2026-11-25T09:00:00Z").await;
+    *w.analyst.lock().unwrap() = move_reply(&workout.id);
+    let mut trip = aroh_domain::rows::BusyBlock {
+        id: Uuid::now_v7().to_string(),
+        user_id: w.user.to_string(),
+        calendar_id: "home".into(),
+        event_id: "trip".into(),
+        title: "Vacation".into(),
+        start_at: "2026-11-26T23:00:00Z".parse().unwrap(),
+        end_at: "2026-11-28T23:00:00Z".parse().unwrap(),
+        all_day: true,
+        group_name: None,
+        day_kind: Some(DayKind::Away),
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&w.pool, &w.hlc, w.user, &mut trip).await.unwrap();
+    w.tick().await;
+    let rows: Vec<(String, String, String, Option<Uuid>)> =
+        db::query_as("select source, window_key, reason, goal_id from public.adaptations where user_id = $1").bind(w.user).fetch_all(&w.pool).await.unwrap();
+    assert_eq!(rows.len(), 1, "only the goal with actions on the away days adapts: {rows:?}");
+    let (source, window, reason, on) = &rows[0];
+    assert_eq!((source.as_str(), window.as_str(), *on), ("calendar", "away:2026-11-27:2026-11-28", Some(goal)));
+    assert!(reason.starts_with("Away (Vacation): Fri 27 Nov to Sat 28 Nov. Adapt"), "{reason}");
+    let status: String = db::query_scalar("select status from public.proposals where user_id = $1").bind(w.user).fetch_one(&w.pool).await.unwrap();
+    assert_eq!(status, "proposed", "an Away change waits in the Inbox even for an Auto goal");
+    let kept: DateTime<Utc> = db::query_scalar("select start_at from public.actions where id::text = $1").bind(&workout.id).fetch_one(&w.pool).await.unwrap();
+    assert_eq!(kept, workout.start_at);
+    let analyst = w.seen.lock().unwrap().iter().find(|b| b.contains("You are Adaptation analyst")).cloned().unwrap();
+    assert!(analyst.contains("2026-11-27") && analyst.contains("away_days"), "the planner sees the away days");
+    let insight = insights::list(&w.pool, w.user, Some(goal)).await.unwrap().remove(0);
+    assert_eq!((insight.source.as_str(), insight.title.as_str()), ("calendar", "Away days"));
+
+    w.later(31_000);
+    w.tick().await;
+    assert_eq!(w.count("select count(*) from public.adaptations where user_id = $1").await, 1, "a second scan claims nothing");
+    assert_eq!(w.count("select count(*) from public.runs where user_id = $1 and workflow = 'replan'").await, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

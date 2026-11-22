@@ -1,7 +1,7 @@
 //! Device calendar triage: the event shape read from EventKit, matching events against
 //! calendar rules, building rules from triage decisions and kept events as busy blocks.
 
-use crate::rows::{BusyBlock, CalendarRule, RuleDecision};
+use crate::rows::{BusyBlock, CalendarRule, DayKind, RuleDecision};
 use crate::{derived_id, invalid, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -127,6 +127,7 @@ pub fn rules_for(user_id: &str, group: &str, decision: RuleDecision, members: &[
             pattern,
             group_name: group.clone(),
             decision,
+            day_kind: None,
             updated_at: String::new(),
             deleted: false,
         });
@@ -134,11 +135,39 @@ pub fn rules_for(user_id: &str, group: &str, decision: RuleDecision, members: &[
     out
 }
 
-/// The busy block a kept `event` becomes under `rule`: id derived from the user, the
-/// calendar, the event and its start, so re-imports collapse; title cut to 500 characters.
+/// Most local days one all-day block spans; longer blocks are cut.
+pub const MAX_ALL_DAY_DAYS: usize = 62;
+
+/// The local dates in `zone` an all-day span `[start, end)` covers, first to last: EventKit
+/// gives midnight to the next midnight for one day, or 23:59:59 of the last day.
+/// At most `MAX_ALL_DAY_DAYS` dates.
+pub fn local_days(start: DateTime<Utc>, end: DateTime<Utc>, zone: chrono_tz::Tz) -> Vec<chrono::NaiveDate> {
+    assert!(end > start, "spans are not empty");
+    let first = start.with_timezone(&zone).date_naive();
+    let last = (end - chrono::Duration::seconds(1)).with_timezone(&zone).date_naive().max(first);
+    let days: Vec<chrono::NaiveDate> = first.iter_days().take_while(|d| *d <= last).take(MAX_ALL_DAY_DAYS).collect();
+    assert!(!days.is_empty() && days.len() <= MAX_ALL_DAY_DAYS);
+    days
+}
+
+/// The rule that gives one device event `kind` for every occurrence: a series rule on the
+/// event id, kept, in group `group`. Id derived like triage's series rules, so the owner's
+/// choice and a later triage answer write the same row. Unstamped.
+pub fn day_rule(user_id: &str, calendar_id: &str, event_id: &str, title: &str, group: &str, kind: DayKind) -> CalendarRule {
+    let source = RuleSource { calendar_id: calendar_id.to_string(), event_id: event_id.to_string(), title: title.to_string(), recurring: true };
+    let mut rules = rules_for(user_id, group, RuleDecision::Keep, &[source]);
+    assert_eq!(rules.len(), 1, "one event gives one series rule");
+    let mut rule = rules.remove(0);
+    rule.day_kind = Some(kind);
+    rule
+}
+
+/// The busy block `event` becomes under `rule`: id derived from the user, the calendar, the
+/// event and its start, so re-imports collapse; title cut to 500 characters. A timed event
+/// needs a keep rule; an all-day event may have none and takes its rule's day kind.
 /// Unstamped: the store stamps it on write.
-pub fn busy_block(user_id: &str, event: &DeviceEvent, rule: &CalendarRule) -> BusyBlock {
-    assert_eq!(rule.decision, RuleDecision::Keep, "only kept events become busy time");
+pub fn busy_block(user_id: &str, event: &DeviceEvent, rule: Option<&CalendarRule>) -> BusyBlock {
+    assert!(event.all_day || rule.is_some_and(|r| r.decision == RuleDecision::Keep), "only kept or all-day events become busy time");
     let start_ms = event.start_at.timestamp_millis();
     let key = format!("busy:{}:{}:{start_ms}", event.calendar_id, event.event_id);
     BusyBlock {
@@ -150,7 +179,8 @@ pub fn busy_block(user_id: &str, event: &DeviceEvent, rule: &CalendarRule) -> Bu
         start_at: event.start_at,
         end_at: event.end_at,
         all_day: event.all_day,
-        group_name: Some(rule.group_name.clone()),
+        group_name: rule.map(|r| r.group_name.clone()),
+        day_kind: if event.all_day { rule.and_then(|r| r.day_kind) } else { None },
         updated_at: String::new(),
         deleted: false,
     }
@@ -238,12 +268,39 @@ mod tests {
     fn busy_block_ids_are_stable_and_valid() {
         let rules = rules_for(USER, "Work", RuleDecision::Keep, &[source("work", "evt-1", "Standup", true)]);
         let e = event("work", "evt-1", "Standup", 9);
-        let mut block = busy_block(USER, &e, &rules[0]);
-        assert_eq!(block.id, busy_block(USER, &e, &rules[0]).id);
-        assert_ne!(block.id, busy_block(USER, &event("work", "evt-1", "Standup", 10), &rules[0]).id);
+        let mut block = busy_block(USER, &e, Some(&rules[0]));
+        assert_eq!(block.id, busy_block(USER, &e, Some(&rules[0])).id);
+        assert_ne!(block.id, busy_block(USER, &event("work", "evt-1", "Standup", 10), Some(&rules[0])).id);
         assert_eq!(block.group_name.as_deref(), Some("Work"));
         block.updated_at = crate::seed::SEED_STAMP.into();
         block.validate().unwrap();
+    }
+
+    #[test]
+    fn local_days_count_eventkit_spans_inclusively() {
+        let berlin = chrono_tz::Europe::Berlin;
+        let at = |text: &str| text.parse::<DateTime<Utc>>().unwrap();
+        let day = |d: u32| chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap();
+        assert_eq!(local_days(at("2026-11-26T23:00:00Z"), at("2026-11-27T23:00:00Z"), berlin), [day(27)]);
+        assert_eq!(local_days(at("2026-11-26T23:00:00Z"), at("2026-11-29T22:59:59Z"), berlin), [day(27), day(28), day(29)]);
+        assert_eq!(local_days(at("2026-11-26T23:00:00Z"), at("2026-11-29T23:00:00Z"), berlin), [day(27), day(28), day(29)]);
+        assert_eq!(local_days(at("2026-11-27T00:00:00Z"), at("2026-11-27T00:00:30Z"), chrono_tz::UTC), [day(27)]);
+        assert_eq!(local_days(at("2026-01-01T00:00:00Z"), at("2027-01-01T00:00:00Z"), chrono_tz::UTC).len(), MAX_ALL_DAY_DAYS);
+    }
+
+    #[test]
+    fn day_rules_share_the_series_id_and_carry_the_kind() {
+        let rule = day_rule(USER, "home", "trip-1", "Trip", "All day", DayKind::Away);
+        let series = &rules_for(USER, "Travel", RuleDecision::Ignore, &[source("home", "trip-1", "Trip", true)])[0];
+        assert_eq!((rule.id.as_str(), rule.series_key.as_deref()), (series.id.as_str(), Some("trip-1")));
+        assert_eq!((rule.decision, rule.day_kind), (RuleDecision::Keep, Some(DayKind::Away)));
+        let mut trip = event("home", "trip-1", "Trip", 0);
+        trip.all_day = true;
+        let block = busy_block(USER, &trip, Some(&rule));
+        assert_eq!(block.day_kind, Some(DayKind::Away));
+        assert_eq!(busy_block(USER, &trip, None).group_name, None);
+        let timed = busy_block(USER, &event("home", "trip-1", "Trip", 9), Some(&rule));
+        assert_eq!(timed.day_kind, None, "timed events never carry a day kind");
     }
 
     #[test]

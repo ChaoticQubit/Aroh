@@ -7,8 +7,11 @@
 	import { formatTime } from '$lib/ui/format';
 	import type { ActionView, OnChange, SpecOf } from '$lib/ui/contract';
 
-	/** Actions in time order with a done toggle. Emits `{ id, status }` when one is ticked or unticked. */
-	let { spec, onchange }: { spec: SpecOf<'action_list'>; onchange?: OnChange } = $props();
+	/**
+	 * Actions in time order with a done toggle. Emits `{ id, status }` when one is ticked or unticked.
+	 * With `onopen`, tapping a row's time and title opens that action by id.
+	 */
+	let { spec, onchange, onopen }: { spec: SpecOf<'action_list'>; onchange?: OnChange; onopen?: (id: string) => void } = $props();
 
 	const { zone } = getClock();
 	let overrides = $state<Record<string, ActionView['status']>>({});
@@ -29,12 +32,21 @@
 		<ul class="-mx-4 -mb-4 divide-y divide-border border-t border-border">
 			{#each items as a (a.id)}
 				<li class="flex min-h-12 items-center gap-3 py-1 pr-1 pl-4">
-					<span class="w-12 shrink-0 text-xs leading-4 text-muted tabular-nums">{formatTime(a.start, zone)}<br />{formatTime(a.end, zone)}</span>
-					<span class="size-2 shrink-0 rounded-full {DOT[a.status]}" aria-hidden="true"></span>
-					<div class="flex min-w-0 flex-1 flex-col">
-						<span class="truncate text-sm font-medium {a.status === 'done' ? 'text-muted line-through' : 'text-fg'}">{a.title}</span>
-						<span class="truncate text-xs text-muted">{a.goalTitle}</span>
-					</div>
+					<svelte:element
+						this={onopen ? 'button' : 'div'}
+						type={onopen ? 'button' : undefined}
+						role={onopen ? 'button' : undefined}
+						aria-label={onopen ? `Edit ${a.title}` : undefined}
+						class="flex min-w-0 flex-1 items-center gap-3 self-stretch rounded-sm text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+						onclick={onopen ? () => onopen(a.id) : undefined}
+					>
+						<span class="w-12 shrink-0 text-xs leading-4 text-muted tabular-nums">{formatTime(a.start, zone)}<br />{formatTime(a.end, zone)}</span>
+						<span class="size-2 shrink-0 rounded-full {DOT[a.status]}" aria-hidden="true"></span>
+						<span class="flex min-w-0 flex-1 flex-col">
+							<span class="truncate text-sm font-medium {a.status === 'done' ? 'text-muted line-through' : 'text-fg'}">{a.title}</span>
+							<span class="truncate text-xs text-muted">{a.goalTitle}</span>
+						</span>
+					</svelte:element>
 					{#if a.locked}<Lock class="size-4 shrink-0 text-muted" aria-label="Locked" />{/if}
 					{#if a.status === 'missed' || a.status === 'skipped'}
 						<span class="mr-3"><StatusChip tone={a.status} label={a.status === 'missed' ? 'Missed' : 'Skipped'} /></span>

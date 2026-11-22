@@ -50,6 +50,21 @@ export type AccountView = { supabaseUrl: string; anonKey: string; email: string 
 /** A kept device calendar event on the Calendar: neutral busy time with its triage group. */
 export type BusyView = { id: string; title: string; start: string; end: string; group: string };
 
+/** What an all-day event does to its days (Q47): `reminder` only shows, `busy` clears them, `away` adapts the plan. */
+export type DayKind = 'reminder' | 'busy' | 'away';
+
+/**
+ * A device all-day event from `start` to `end`, both "YYYY-MM-DD" and inclusive. `kind` is null
+ * until the owner confirms once; `suggested` is the triage persona's proposal, if any.
+ */
+export type AllDayView = { id: string; title: string; start: string; end: string; kind: DayKind | null; suggested?: DayKind | null };
+
+/** The owner's pick of a kind for the all-day event `id`. */
+export type DayPick = { id: string; kind: DayKind };
+
+/** An edit of one action from the Calendar or Today: its new start and end instants. */
+export type ActionEdit = { id: string; start: string; end: string };
+
 /** A goal row of the Goals list. */
 export type GoalRow = { id: string; title: string; category: string; slot: CategorySlot; deadline: string | null; autonomy: AutonomyLabel };
 

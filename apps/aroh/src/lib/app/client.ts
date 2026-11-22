@@ -64,7 +64,7 @@ export type SearchSetting = { id: string; label: string; provider: string; base_
 export type Budget = { id: string; scope: 'call' | 'run' | 'goal_month' | 'user_month'; goal_id: string | null; limit_usd_micros: number };
 
 /** A kept device calendar event as busy time; times are RFC 3339 UTC. */
-export type BusyBlock = { id: string; calendar_id: string; event_id: string; title: string; start_at: string; end_at: string; all_day: boolean; group_name: string | null };
+export type BusyBlock = { id: string; calendar_id: string; event_id: string; title: string; start_at: string; end_at: string; all_day: boolean; group_name: string | null; day_kind: 'reminder' | 'busy' | 'away' | null };
 
 /** One device calendar occurrence as the EventKit plugin reads it; times are ISO 8601. */
 export type DeviceEvent = { calendar_id: string; calendar: string; event_id: string; title: string; start_at: string; end_at: string; all_day: boolean; rrule: string | null };
@@ -165,6 +165,18 @@ export const readCalendar = (from: string, to: string) =>
 			throw new Error(typeof e === 'object' && e !== null && 'message' in e ? String(e.message) : String(e));
 		}
 	);
+
+/** Moves or resizes an action to `start`..`end` (RFC 3339); the action is locked so agents leave it. */
+export const editAction = (id: string, start: string, end: string) => invoke<Action>('app_edit_action', { id, startAt: start, endAt: end, delete: false });
+
+/** Deletes an action; the server learns from the edit when it syncs. */
+export const deleteAction = (id: string) => invoke<Action>('app_edit_action', { id, startAt: null, endAt: null, delete: true });
+
+/** What confirming an all-day kind did: actions moved off a Busy day and titles that found no slot. */
+export type DaySet = { blocks: number; moved: Action[]; stuck: string[] };
+
+/** Confirms the kind of the all-day event behind busy block `id`. */
+export const setDayKind = (id: string, kind: 'reminder' | 'busy' | 'away') => invoke<DaySet>('app_set_day_kind', { id, kind });
 
 /** Matches device occurrences against the synced rules: kept ones become busy blocks. */
 export const calendarImport = (events: DeviceEvent[]) => invoke<CalendarImport>('app_calendar_import', { events });

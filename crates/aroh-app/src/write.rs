@@ -3,16 +3,19 @@
 
 use crate::local::{self, MAX_LOG_CHARS};
 use crate::{invalid, Result};
+use aroh_domain::calendar::{day_rule, local_days};
 use aroh_domain::hlc::Hlc;
 use aroh_domain::rows::{
-    validate_entry, Action, ActionStatus, Autonomy, Budget, BudgetScope, EntrySource, FieldKind, Goal, Preference, Proposal,
-    ProposalStatus, ProviderSetting, Tracker, TrackerEntry,
+    validate_entry, Action, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, CalendarRule, DayKind, EntrySource, FieldKind, Goal,
+    Preference, Proposal, ProposalStatus, ProviderSetting, Tracker, TrackerEntry,
 };
 use aroh_store::repo;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono_tz::Tz;
 use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::collections::BTreeSet;
 
 /// Largest monthly budget the owner may set, in US dollars.
 pub const MAX_BUDGET_USD: f64 = 1_000_000.0;
@@ -269,6 +272,101 @@ pub fn edit_action(conn: &Connection, clock: &mut Hlc, id: &str, span: Option<(D
     action.locked = true;
     repo::put(conn, clock, &mut action)?;
     Ok(action)
+}
+
+/// Days ahead a Busy day's action may move to.
+pub const BUSY_MOVE_DAYS: i64 = 14;
+
+const DEFAULT_DAY_GROUP: &str = "All day";
+
+/// What confirming an all-day event's kind did: the rule written, how many of the event's
+/// blocks carry the kind now, the actions moved off a Busy day and the titles of those
+/// with no free slot in the next 14 days, which stay where they are.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct DaySet {
+    pub rule: CalendarRule,
+    pub blocks: usize,
+    pub moved: Vec<Action>,
+    pub stuck: Vec<String>,
+}
+
+fn overlaps(a: (DateTime<Utc>, DateTime<Utc>), b: (DateTime<Utc>, DateTime<Utc>)) -> bool {
+    a.0 < b.1 && b.0 < a.1
+}
+
+fn busy_days(blocks: &[BusyBlock], zone: Tz) -> BTreeSet<NaiveDate> {
+    blocks.iter().filter(|b| b.all_day && b.day_kind == Some(DayKind::Busy)).flat_map(|b| local_days(b.start_at, b.end_at, zone)).collect()
+}
+
+fn move_off(conn: &Connection, clock: &mut Hlc, user_id: &str, days: &BTreeSet<NaiveDate>, zone: Tz) -> Result<(Vec<Action>, Vec<String>)> {
+    let blocks: Vec<BusyBlock> = repo::list(conn, &[("user_id", user_id)])?;
+    let blocked = busy_days(&blocks, zone);
+    assert!(days.is_subset(&blocked), "the event's days are Busy days");
+    let mut actions: Vec<Action> = repo::list(conn, &[("user_id", user_id)])?;
+    actions.sort_by(|a, b| a.start_at.cmp(&b.start_at).then_with(|| a.id.cmp(&b.id)));
+    let mut taken: Vec<(String, (DateTime<Utc>, DateTime<Utc>))> = actions.iter().map(|a| (a.id.clone(), (a.start_at, a.end_at))).collect();
+    taken.extend(blocks.iter().filter(|b| !b.all_day).map(|b| (b.id.clone(), (b.start_at, b.end_at))));
+    let (mut moved, mut stuck) = (Vec::new(), Vec::new());
+    for mut action in actions.into_iter().filter(|a| a.status == ActionStatus::Planned && days.contains(&a.start_at.with_timezone(&zone).date_naive())) {
+        let local = action.start_at.with_timezone(&zone);
+        let length = action.end_at - action.start_at;
+        let slot = (1..=BUSY_MOVE_DAYS).find_map(|ahead| {
+            let date = local.date_naive() + chrono::Duration::days(ahead);
+            if blocked.contains(&date) {
+                return None;
+            }
+            let start = zone.from_local_datetime(&date.and_time(local.time())).earliest()?.with_timezone(&Utc);
+            let span = (start, start + length);
+            (!taken.iter().any(|(id, other)| *id != action.id && overlaps(span, *other))).then_some(span)
+        });
+        match slot {
+            Some(span) => {
+                (action.start_at, action.end_at) = span;
+                repo::put(conn, clock, &mut action)?;
+                taken.retain(|(id, _)| *id != action.id);
+                taken.push((action.id.clone(), span));
+                moved.push(action);
+            }
+            None => stuck.push(action.title.clone()),
+        }
+    }
+    Ok((moved, stuck))
+}
+
+/// Confirms the kind of the all-day event behind busy block `block_id` in one transaction:
+/// writes the event's series rule with `kind` (keeping an existing rule's group), sets the
+/// kind on every block of the event, and for `Busy` moves each planned action of its local
+/// days (in `zone`) to the same time on the next day that is no Busy day and has no overlap.
+/// Errors with `Invalid` for a timed or another user's block, `NotFound` for a gone one.
+pub fn set_day_kind(conn: &Connection, clock: &mut Hlc, user_id: &str, block_id: &str, kind: DayKind, zone: Tz) -> Result<DaySet> {
+    let block: BusyBlock = repo::get(conn, block_id)?;
+    if block.user_id != user_id {
+        return Err(invalid("block belongs to another user"));
+    }
+    if !block.all_day {
+        return Err(invalid("only all-day events have a kind"));
+    }
+    let tx = conn.unchecked_transaction()?;
+    let group = block.group_name.clone().unwrap_or_else(|| DEFAULT_DAY_GROUP.to_string());
+    let mut rule = day_rule(user_id, &block.calendar_id, &block.event_id, &block.title, &group, kind);
+    if let Some(old) = repo::list::<CalendarRule>(&tx, &[("id", rule.id.as_str())])?.into_iter().next() {
+        rule = CalendarRule { day_kind: Some(kind), ..old };
+    }
+    repo::put(&tx, clock, &mut rule)?;
+    let event: Vec<BusyBlock> = repo::list(&tx, &[("user_id", user_id), ("calendar_id", block.calendar_id.as_str()), ("event_id", block.event_id.as_str())])?;
+    let mut days = BTreeSet::new();
+    for mut b in event.iter().filter(|b| b.all_day).cloned() {
+        days.extend(local_days(b.start_at, b.end_at, zone));
+        if b.day_kind != Some(kind) {
+            b.day_kind = Some(kind);
+            repo::put(&tx, clock, &mut b)?;
+        }
+    }
+    let blocks = event.iter().filter(|b| b.all_day).count();
+    assert!(blocks >= 1, "the chosen block is one of the event's blocks");
+    let (moved, stuck) = if kind == DayKind::Busy { move_off(&tx, clock, user_id, &days, zone)? } else { (Vec::new(), Vec::new()) };
+    tx.commit()?;
+    Ok(DaySet { rule, blocks, moved, stuck })
 }
 
 /// Sets the autonomy level agents follow for goal `goal_id`.

@@ -26,10 +26,10 @@ insert into public.proposals (id, user_id, goal_id, summary, diff, size, status,
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', 'Move workout', '[]', 'small', 'proposed', now(), '1763683200001-0000-aaaaaaaaaaaaaaaa');
 insert into public.preferences (id, user_id, fact, source, noted_at, confirmed, updated_at)
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', 'Mornings', 'chat', now(), true, '1763683200001-0000-aaaaaaaaaaaaaaaa');
-insert into public.busy_blocks (id, user_id, calendar_id, event_id, title, start_at, end_at, all_day, updated_at)
-  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', 'work', 'evt-1', 'Standup', now(), now() + interval '15 minutes', false, '1763683200001-0000-aaaaaaaaaaaaaaaa');
-insert into public.calendar_rules (id, user_id, calendar_id, group_name, decision, updated_at)
-  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', 'work', 'Work', 'keep', '1763683200001-0000-aaaaaaaaaaaaaaaa');
+insert into public.busy_blocks (id, user_id, calendar_id, event_id, title, start_at, end_at, all_day, day_kind, updated_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', 'work', 'evt-1', 'Vacation', now(), now() + interval '1 day', true, 'away', '1763683200001-0000-aaaaaaaaaaaaaaaa');
+insert into public.calendar_rules (id, user_id, calendar_id, group_name, decision, day_kind, updated_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', 'work', 'Work', 'keep', 'busy', '1763683200001-0000-aaaaaaaaaaaaaaaa');
 insert into public.provider_settings (id, user_id, label, vendor, model, is_default, updated_at)
   values ('0190f2a0-0000-7000-8000-000000000016', '00000000-0000-0000-0000-00000000000a', 'Claude', 'anthropic', 'claude-opus', true, '1763683200001-0000-aaaaaaaaaaaaaaaa');
 insert into public.search_settings (id, user_id, label, provider, priority, enabled, updated_at)
@@ -61,7 +61,7 @@ insert into public.push_sent (device_id, key, sent_at)
 insert into public.action_events (user_id, goal_id, action_id, kind, after)
   values ('00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', gen_random_uuid(), 'missed', '{}');
 insert into public.adaptations (id, user_id, goal_id, source, window_key, reason, created_at)
-  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', 'actions', 'actions:2026-11-23', 'Missed: Core', now());
+  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', 'calendar', 'away:2026-11-23:2026-11-23', 'Away: Core', now());
 insert into public.review_schedules (user_id, goal_id, weekday, at, timezone, enabled, next_at)
   values ('00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', 0, '18:00', 'Europe/Berlin', true, now());
 

@@ -129,6 +129,7 @@ pub fn run() {
             commands::health::app_dev_health_seed,
             commands::push::app_dev_push_probe,
             commands::calendar_import::app_calendar_import,
+            commands::calendar_import::app_set_day_kind,
             commands::learning::app_edit_action,
             realtime::app_realtime_up,
         ])
