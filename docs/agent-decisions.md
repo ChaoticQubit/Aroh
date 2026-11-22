@@ -64,6 +64,10 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 | Q44 | Live architecture | `docs/architecture.html`, published at https://claude.ai/artifact/2GvdWKx4cyoC3WmqY8emDU, updated as pods land (build status table and change log). |
 | Q46 | Framework name | Troupekit: folder `troupekit/`, crates `troupekit-<layer>`. Free on crates.io, PyPI and npm, no GitHub repo of that name (checked 2026-11-21). Chosen over Dramaturg (hard to say), Rolecast, Castwork, Cuework. |
 | Q45 | Android and web | Deferred, timing decided at implementation. |
+| Q47 | All-day events | Must have (owner 2026-11-22). Device all-day events show as a row at the top of each day on Today and Calendar. The owner marks each one as blocking (vacation, out of office: no actions planned that day) or label only (birthday, holiday). New visual pattern, so mockup first. |
+| Q48 | Calendar edit sheet | Must have, a primary flow (owner 2026-11-22). Tap an action on Calendar or Today to move it, resize it or delete it; the change syncs and feeds learning from repeated edits. New visual pattern, so mockup first. |
+| Q49 | Persona safety | An edited copy of a built-in persona must keep every `Safety:` guardrail; the server rejects the edit otherwise (owner 2026-11-22). Reason: health and finance coaches must never give diagnoses or individual investment, tax or legal advice. |
+| Q50 | Persona library screen | Must have (owner 2026-11-22). An app screen to list the coaches per team, see which coaches work on a goal, copy one, edit its name, style, instructions and rules, and save. Built from approved components, no mockup (Q39). Safety lines show as locked. |
 
 ### Rejected alternatives
 
