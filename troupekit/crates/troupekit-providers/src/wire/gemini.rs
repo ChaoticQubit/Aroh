@@ -26,6 +26,7 @@ pub fn encode(
         let mut parts = Vec::new();
         for part in &m.parts {
             parts.push(match part {
+                ContentPart::Hosted { .. } => continue,
                 ContentPart::Text { text } => json!({"text": text}),
                 ContentPart::Image {
                     media_type,

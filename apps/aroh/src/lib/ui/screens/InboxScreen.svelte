@@ -3,10 +3,19 @@
 	import * as Card from '$lib/ui/primitives/card';
 	import { Progress } from '$lib/ui/primitives/progress';
 	import Persona from '../components/agent/Persona.svelte';
+	import StatusChip, { type Tone } from '../components/StatusChip.svelte';
 	import Render from '../components/Render.svelte';
 	import PlacePrompt from '../components/location/PlacePrompt.svelte';
 	import type { PlacePromptView } from '../components/location/types';
 	import type { InboxItem, RunView } from './types';
+
+	const BAR: Record<Tone, string> = {
+		done: '[&>[data-slot=progress-indicator]]:bg-status-done',
+		planned: '[&>[data-slot=progress-indicator]]:bg-status-planned',
+		warn: '[&>[data-slot=progress-indicator]]:bg-status-warn',
+		missed: '[&>[data-slot=progress-indicator]]:bg-status-missed',
+		skipped: '[&>[data-slot=progress-indicator]]:bg-status-skipped'
+	};
 
 	/**
 	 * Inbox: proposals to approve, preference suggestions, insights and agent runs in progress.
@@ -69,10 +78,10 @@
 					<div class="flex flex-col gap-2 py-3">
 						<div class="flex items-center justify-between gap-2">
 							<Persona name={run.persona} />
-							<LoaderCircle class="size-4 animate-spin text-status-planned" aria-hidden="true" />
+							{#if run.working}<LoaderCircle class="size-4 animate-spin text-status-planned" aria-hidden="true" />{:else}<StatusChip tone={run.tone} label={run.step.split(':')[0]} />{/if}
 						</div>
 						<p class="text-sm font-medium">{run.title}</p>
-						<Progress class="[&>[data-slot=progress-indicator]]:bg-status-planned" value={run.progress} aria-label="{run.title}, {run.progress} percent" />
+						<Progress class={BAR[run.tone]} value={run.progress} aria-label="{run.title}, {run.progress} percent" />
 						{#if run.href}
 							<a href={run.href} class="flex min-h-11 items-center text-sm font-medium text-fg underline underline-offset-4">{run.step}</a>
 						{:else}

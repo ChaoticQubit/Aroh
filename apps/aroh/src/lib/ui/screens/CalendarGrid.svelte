@@ -2,7 +2,9 @@
 	import AllDayChip from '../components/planning/AllDayChip.svelte';
 	import { getClock } from '$lib/ui/clock';
 	import { formatDate, formatTime, formatYmd, minuteOfDay } from '$lib/ui/format';
+	import { actionStyle } from '$lib/ui/status';
 	import { allDayOn, shiftMinutes } from './edits';
+	import { overlapColumns } from './overlap';
 	import type { ActionView } from '$lib/ui/contract';
 	import type { ActionEdit, AllDayView, BusyView } from './types';
 
@@ -67,6 +69,17 @@
 		return Math.min(height, Math.max(0, ((minute - startHour * 60) / 60) * HOUR));
 	}
 
+	/** Adds each block's side-by-side column (`col` of `cols`) so overlapping actions never cover each other. */
+	function laidOut<T extends { y: number; h: number }>(items: T[]): (T & { col: number; cols: number })[] {
+		const cols = overlapColumns(items);
+		return items.map((a, i) => ({ ...a, ...cols[i] }));
+	}
+
+	/** Inline left and width of a block in column `col` of `cols`, inside the day column's 4px gutters. */
+	function lane(col: number, cols: number): string {
+		return `left: calc(4px + (100% - 8px) * ${col} / ${cols}); width: calc((100% - 8px) / ${cols} - ${cols > 1 ? 2 : 0}px)`;
+	}
+
 	const columns = $derived(
 		days.map((date) => {
 			const events = allDayOn(allDay, date);
@@ -76,12 +89,14 @@
 				num: Number(date.slice(8)),
 				events,
 				blocked: events.find((e) => e.kind === 'busy') ?? null,
-				items: actions
-					.filter((a) => formatYmd(a.start, zone) === date)
-					.map((a) => {
-						const y = top(minuteOfDay(a.start, zone));
-						return { ...a, y, h: Math.max(22, top(minuteOfDay(a.end, zone)) - y) };
-					}),
+				items: laidOut(
+					actions
+						.filter((a) => formatYmd(a.start, zone) === date)
+						.map((a) => {
+							const y = top(minuteOfDay(a.start, zone));
+							return { ...a, y, h: Math.max(22, top(minuteOfDay(a.end, zone)) - y) };
+						})
+				),
 				blocks: busy
 					.filter((b) => formatYmd(b.start, zone) === date)
 					.map((b) => {
@@ -194,21 +209,24 @@
 				{#each c.items as a (a.id)}
 					{@const at = placed(a)}
 					{@const active = a.id === selected || at.moving}
+					{@const look = actionStyle(a.status)}
 					{#if at.moving}
-						<div class="absolute inset-x-1 rounded-sm border border-dashed border-border-strong" style="top: {a.y + 1}px; height: {a.h - 2}px" aria-hidden="true"></div>
+						<div class="absolute rounded-sm border border-dashed border-border-strong" style="top: {a.y + 1}px; height: {a.h - 2}px; {lane(a.col, a.cols)}" aria-hidden="true"></div>
 					{/if}
 					<div
 						role="listitem"
-						class="absolute inset-x-1 overflow-hidden rounded-sm border border-l-3 px-1.5 py-0.5 outline-none select-none {active ? 'z-20 ring-2 ring-fg' : ''} {a.status === 'missed' ? 'border-dashed border-status-missed' : 'border-border'} {onopen ? 'cursor-pointer' : ''}"
-						style="top: {at.y + 1}px; height: {at.h - 2}px; border-left-color: var(--cat-{a.category}); border-left-style: solid; background: color-mix(in oklch, var(--cat-{a.category}) {active ? 16 : 8}%, var(--bg)); touch-action: {a.id === selected ? 'none' : 'pan-y'}"
+						data-no-swipe={active || undefined}
+						data-dragging={(press?.live && press.id === a.id) || undefined}
+						class="absolute overflow-hidden rounded-sm border border-l-3 px-1.5 py-0.5 outline-none select-none {active ? 'z-20 ring-2 ring-fg' : ''} {a.status === 'missed' ? 'border-dashed border-status-missed' : 'border-border'} {onopen ? 'cursor-pointer' : ''}"
+						style="top: {at.y + 1}px; height: {at.h - 2}px; {lane(a.col, a.cols)}; border-left-color: var(--cat-{a.category}); border-left-style: solid; background: color-mix(in oklch, var(--cat-{a.category}) {active ? 16 : look.tint}%, var(--bg)); touch-action: {a.id === selected ? 'none' : 'pan-y'}"
 						title="{a.title}, {formatTime(at.start, zone)} - {formatTime(at.end, zone)}"
 						onpointerdown={(e) => down(e, a.id, 'move')}
 						onpointermove={drag}
 						onpointerup={() => up(a)}
 						onpointercancel={cancel}
 					>
-						<p class="truncate text-xs leading-4 font-medium {a.status === 'missed' ? 'text-status-missed line-through' : a.status === 'done' ? 'text-muted' : 'text-fg'}">{a.title}</p>
-						{#if at.h >= 36}<p class="truncate text-xs leading-4 text-muted tabular-nums">{#if a.status === 'missed'}<span class="font-medium text-status-missed">Missed</span> · {/if}<span class={at.moving ? 'font-medium text-fg' : ''}>{formatTime(at.start, zone)} - {formatTime(at.end, zone)}</span></p>{/if}
+						<p class="truncate text-xs leading-4 font-medium {look.title}">{a.title}</p>
+						{#if at.h >= 36}<p class="truncate text-xs leading-4 text-muted tabular-nums">{#if look.label}<span class="font-medium {look.labelClass}">{look.label}</span> · {/if}<span class={at.moving ? 'font-medium text-fg' : ''}>{formatTime(at.start, zone)} - {formatTime(at.end, zone)}</span></p>{/if}
 						{#if onopen}
 							<button type="button" class="sr-only" onclick={() => onopen?.(a.id)}>Edit {a.title}</button>
 						{/if}

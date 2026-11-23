@@ -25,6 +25,7 @@ pub use secrets::{EnvSecrets, SecretSource};
 pub use text::{
     cap_chars, fence_capped, fence_untrusted, html_to_text, response_text, MAX_TEXT_CHARS,
 };
-pub use tool::{Tool, ToolContext, ToolError, ToolOutput};
+pub use tool::{hosted, Tool, ToolContext, ToolError, ToolOutput};
+pub use troupekit_core::tool::HostedTool;
 pub use troupekit_core::tool::ToolSpec;
 pub use typed::{typed_tool, TypedTool};

@@ -12,7 +12,8 @@ export const IGNORE = 'Ignore';
 
 const DAY_MS = 86_400_000;
 const PAST_DAYS = 1;
-const AHEAD_DAYS = 14;
+/** How many days ahead device calendar events are imported as busy time. */
+export const AHEAD_DAYS = 14;
 const MAX_TRIAGE = 300;
 const SAMPLES = 3;
 const DONE = ['done', 'failed'];

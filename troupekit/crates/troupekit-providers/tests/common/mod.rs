@@ -65,6 +65,7 @@ pub fn rich_request() -> CompletionRequest {
             name: "calendar".into(),
             description: "Reads free slots".into(),
             schema: json!({"type":"object","properties":{"days":{"type":"integer"}},"required":["days"]}),
+            hosted: None,
         }],
         max_tokens: 1024,
         temperature: Some(0.5),

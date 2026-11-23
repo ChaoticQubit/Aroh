@@ -30,7 +30,7 @@ pub async fn files_available(app: AppHandle) -> Result<bool, String> {
     let state = app.state::<AppState>();
     let Ok(config) = supabase(&state) else { return Ok(false) };
     let Ok(session) = auth::valid_session(&config).await else { return Ok(false) };
-    Ok(storage::available(&config, &session.access_token).await)
+    Ok(storage::available(&config, &session.access_token, &session.user_id).await)
 }
 
 /// Attaches the file in the raw request body to a goal: reads its text off the main thread
@@ -78,6 +78,21 @@ pub fn attach_link(app: AppHandle, state: State<'_, AppState>, goal_id: String, 
 #[tauri::command]
 pub fn remove_goal_file(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     with_core(&state, |c| write::remove_goal_file(&c.conn, &mut c.clock, &id))?;
+    sync_if_signed_in(&app);
+    Ok(())
+}
+
+/// Deletes goal `goal_id` (Q68): with `keep_actions` its actions and series stay on the
+/// calendar under Routines, else they go with it. Queues its file objects for removal with
+/// the owner's session on the next sync, reschedules reminders, then syncs.
+/// Errors for the Routines goal or a missing goal; nothing changes then.
+#[tauri::command]
+pub fn delete_goal(app: AppHandle, state: State<'_, AppState>, goal_id: String, keep_actions: bool) -> Result<(), String> {
+    with_core(&state, |c| {
+        let paths = aroh_app::remove::delete_goal(&c.conn, &mut c.clock, &goal_id, keep_actions)?;
+        aroh_app::local::queue_removals(&c.conn, &paths)
+    })?;
+    after_write(&app);
     sync_if_signed_in(&app);
     Ok(())
 }

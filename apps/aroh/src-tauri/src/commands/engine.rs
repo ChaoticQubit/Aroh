@@ -81,12 +81,33 @@ pub fn sync_if_signed_in(app: &AppHandle) {
 async fn run_sync(app: &AppHandle, config: Config) -> Result<Synced, String> {
     let session = auth::valid_session(&config).await.map_err(text)?;
     let handle = app.clone();
-    let synced = tauri::async_runtime::spawn_blocking(move || sync_blocking(&handle, config, session.access_token)).await.map_err(text)??;
+    let (storage, token) = (config.clone(), session.access_token.clone());
+    let synced = tauri::async_runtime::spawn_blocking(move || sync_blocking(&handle, config, token)).await.map_err(text)??;
     let handle = app.clone();
     tauri::async_runtime::spawn(async move { super::push::register(&handle).await });
     let handle = app.clone();
     tauri::async_runtime::spawn(async move { send_zone(&handle).await });
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move { remove_files(&handle, &storage, &session.access_token, &session.user_id).await });
     Ok(synced)
+}
+
+/// After a sync, removes the objects of deleted goal files from the owner's bucket with the
+/// owner's session, in batches, and drops each removed batch from the device queue. A failed
+/// batch stays queued for the next sync. Failures are logged.
+async fn remove_files(app: &AppHandle, config: &Config, token: &str, user_id: &str) {
+    let state = app.state::<AppState>();
+    let Ok(paths) = with_core(&state, |c| local::pending_removals(&c.conn)) else { return };
+    for batch in paths.chunks(aroh_sync::storage::REMOVE_BATCH) {
+        if let Err(e) = aroh_sync::storage::remove(config, token, user_id, batch).await {
+            eprintln!("aroh: files not removed: {}", e.to_string().chars().take(200).collect::<String>());
+            return;
+        }
+        if let Err(e) = with_core(&state, |c| local::clear_removals(&c.conn, batch)) {
+            eprintln!("aroh: removal queue not cleared: {e}");
+            return;
+        }
+    }
 }
 
 /// After a sync, while a zone change is pending, moves the engine's weekly reviews to

@@ -4,6 +4,7 @@
 	import { getClock } from '$lib/ui/clock';
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
+	import { speech } from '$lib/app/speech.svelte';
 	import { actionViews, checkInData, dueCheckIns } from '$lib/app/views';
 	import { allDayViews, confirmDay, refreshSuggestions } from '$lib/app/calendar';
 
@@ -34,6 +35,7 @@
 		{onaction}
 		{oncheckin}
 		onlog={(text) => data.run(() => client.logText(text))}
+		voice={speech}
 		onedit={(e) => data.run(() => client.editAction(e.id, e.start, e.end))}
 		onlock={(id, locked) => data.run(() => client.setLocked(id, locked))}
 		ondelete={(id) => data.run(() => client.deleteAction(id))}

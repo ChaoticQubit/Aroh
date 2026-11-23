@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod calendar_import;
+pub mod dashboard;
 pub mod engine;
 pub mod goals;
 pub mod plugins;

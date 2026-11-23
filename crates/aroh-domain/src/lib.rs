@@ -3,6 +3,7 @@
 
 pub mod calendar;
 pub mod category;
+pub mod dashboard;
 pub mod hlc;
 pub mod lww;
 pub mod recur;

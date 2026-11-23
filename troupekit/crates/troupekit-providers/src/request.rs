@@ -9,7 +9,7 @@ use troupekit_core::tool::ToolSpec;
 
 /// What a blank tool result is sent as, since vendors reject blank text.
 /// The model still sees that its call ran and returned nothing.
-/// Used by `CompletionRequest::without_blank_text`.
+/// Used by `CompletionRequest::sendable`.
 pub const NO_OUTPUT: &str = "(no output)";
 
 /// One call to a chat model: the conversation, the tools it may call and
@@ -69,11 +69,11 @@ impl CompletionRequest {
         Ok(())
     }
 
-    /// Returns a copy without blank text: blank text parts are dropped, a
-    /// message left with no part is dropped, and a blank tool result reads
-    /// `(no output)` so it still answers its call. Vendors reject blank text
-    /// blocks. Returns `BadRequest` when no message is left.
-    pub fn without_blank_text(&self) -> Result<CompletionRequest, ProviderError> {
+    /// Returns the copy a wire sends: blank text parts are dropped, hosted
+    /// blocks too unless `keep_hosted`, a message left with no part is
+    /// dropped, and a blank tool result reads `(no output)` so it still
+    /// answers its call. Returns `BadRequest` when no message is left.
+    pub fn sendable(&self, keep_hosted: bool) -> Result<CompletionRequest, ProviderError> {
         let mut out = self.clone();
         out.messages = self
             .messages
@@ -83,6 +83,7 @@ impl CompletionRequest {
                     .parts
                     .iter()
                     .filter(|p| !matches!(p, ContentPart::Text { text } if text.trim().is_empty()))
+                    .filter(|p| keep_hosted || !matches!(p, ContentPart::Hosted { .. }))
                     .cloned()
                     .map(|p| match p {
                         ContentPart::ToolResult {
@@ -139,7 +140,8 @@ impl CompletionRequest {
 
 /// Why a model stopped producing output.
 /// Vendor reasons are normalized; unknown ones are kept as `Other`.
-/// Serializes in snake case.
+/// `PauseTurn` means a server-side tool loop paused: send the reply back
+/// unchanged to continue. Serializes in snake case.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
@@ -147,6 +149,7 @@ pub enum StopReason {
     ToolUse,
     MaxTokens,
     Refusal,
+    PauseTurn,
     Other(String),
 }
 
@@ -160,9 +163,9 @@ pub struct CompletionResponse {
     pub stop: StopReason,
 }
 
-/// One piece of a reply as it arrives. Tool calls are keyed by `index`
-/// and their JSON arguments arrive as fragments; usage values are running
-/// totals. Serializes with a `type` tag in snake case.
+/// One piece of a reply as it arrives. Tool calls and hosted tool blocks
+/// are keyed by `index`, and their JSON arguments arrive as fragments;
+/// usage values are running totals. Serializes with a `type` tag.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Delta {
@@ -177,6 +180,11 @@ pub enum Delta {
     ToolCallArgs {
         index: u32,
         json: String,
+    },
+    Hosted {
+        index: u32,
+        tool: Option<String>,
+        block: Value,
     },
     Usage {
         input_tokens: Option<u64>,

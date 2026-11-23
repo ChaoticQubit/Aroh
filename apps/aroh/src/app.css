@@ -144,3 +144,7 @@
 :root[data-typing] [data-hide-typing] {
 	display: none;
 }
+
+:root[data-typing] [data-composer]:not(:focus-within) {
+	display: none;
+}

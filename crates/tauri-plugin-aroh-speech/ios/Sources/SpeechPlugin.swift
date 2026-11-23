@@ -72,6 +72,24 @@ class SpeechPlugin: Plugin {
     }
   }
 
+  @objc public func openSettings(_ invoke: Invoke) {
+    DispatchQueue.main.async {
+      guard let url = URL(string: UIApplication.openSettingsURLString) else {
+        invoke.reject("Settings could not be opened.", code: "unsupported")
+        return
+      }
+      UIApplication.shared.open(url)
+      invoke.resolve()
+    }
+  }
+
+  /// The recognizer to use: the phone's language when it can run on this iPhone, else US English
+  /// on this iPhone, else nil. Recognition never falls back to Apple's servers, so audio stays local.
+  private func onDeviceRecognizer() -> SFSpeechRecognizer? {
+    let candidates = [SFSpeechRecognizer(locale: Locale.current), SFSpeechRecognizer(locale: Locale(identifier: "en-US"))]
+    return candidates.compactMap { $0 }.first { $0.supportsOnDeviceRecognition }
+  }
+
   /// Asks for microphone access, then for speech recognition, in one flow.
   /// Calls `done(nil)` on the main queue when both are granted, or `done((code, message))`
   /// naming the permission that is off, so the owner knows which switch to turn on.
@@ -79,13 +97,13 @@ class SpeechPlugin: Plugin {
     let micDone: (Bool) -> Void = { granted in
       guard granted else {
         DispatchQueue.main.async {
-          done(("mic_denied", "Microphone access is off for Aroh. Turn it on in Settings, Privacy, Microphone."))
+          done(("mic_denied", "Microphone is off for Aroh. Turn it on in Settings."))
         }
         return
       }
       SFSpeechRecognizer.requestAuthorization { status in
         DispatchQueue.main.async {
-          done(status == .authorized ? nil : ("speech_denied", "Speech recognition is off for Aroh. Turn it on in Settings, Privacy, Speech Recognition."))
+          done(status == .authorized ? nil : ("speech_denied", "Speech recognition is off for Aroh. Turn it on in Settings."))
         }
       }
     }
@@ -98,9 +116,7 @@ class SpeechPlugin: Plugin {
 
   private func begin(_ invoke: Invoke) {
     defer { starting = false }
-    guard let recognizer = SFSpeechRecognizer(locale: Locale.current) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US")),
-      recognizer.supportsOnDeviceRecognition
-    else {
+    guard let recognizer = onDeviceRecognizer() else {
       invoke.reject("On-device speech recognition is not available for this language on this device.", code: "on_device_unavailable")
       return
     }

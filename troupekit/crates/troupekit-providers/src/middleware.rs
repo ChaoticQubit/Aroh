@@ -248,7 +248,7 @@ impl MeteredModel {
     }
 
     fn priced(&self, mut reply: CompletionResponse) -> CompletionResponse {
-        reply.usage.cost_usd_micros = self.price.cost_usd_micros(&reply.usage);
+        reply.usage.cost_usd_micros = self.price.reply_cost_usd_micros(&reply);
         reply
     }
 }

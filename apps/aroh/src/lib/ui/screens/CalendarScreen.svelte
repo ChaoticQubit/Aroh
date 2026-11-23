@@ -11,6 +11,7 @@
 	import { allDayOn, applyEdits } from './edits';
 	import { getClock } from '$lib/ui/clock';
 	import { daysBetween, formatDate, formatYmd, mondayOf, shiftDay, shiftMonth } from '$lib/ui/format';
+	import { stepAnchor, swipe } from '$lib/ui/swipe';
 	import type { ActionView } from '$lib/ui/contract';
 	import type { ActionEdit, AllDayView, BusyView, CategoryView, DayKind, DayPick } from './types';
 
@@ -19,7 +20,8 @@
 	 * then a week hour grid on wide containers or a week strip over a day grid on phones. Kept device
 	 * events (`busy`) show in the hour grids as neutral blocks, device all-day events (`allDay`) in
 	 * an all-day row and as bars in month cells and the week strip, with the kind question for the
-	 * first unanswered one in view; tapping a chip reopens it. Tapping an action opens the edit
+	 * first unanswered one in view; tapping a chip reopens it. A sideways swipe pages a day, week or
+	 * month like the arrows. Tapping an action opens the edit
 	 * sheet; `onedit`, `onlock`, `ondelete` and `onchoose` report the changes. `initialView`, `day`, `editing`,
 	 * `confirming`, `selected` and `inline` (sheet drawn in place for mockups) set the opening state.
 	 */
@@ -90,7 +92,7 @@
 
 	/** Moves the anchor one day, week or month in `dir`. */
 	function step(dir: 1 | -1) {
-		anchor = view === 'month' ? shiftMonth(anchor, dir) : shiftDay(anchor, view === 'day' ? dir : dir * 7);
+		anchor = stepAnchor(view, anchor, dir);
 	}
 
 	/** Opens the edit sheet on an action and keeps it selected for dragging after the sheet closes. */
@@ -133,6 +135,7 @@
 	<CategoryFilter categories={used} bind:hidden />
 	{#if asking && onchoose}<AllDayChoice event={asking} onchoose={choose} onclose={reopened ? () => (choosing = null) : undefined} />{/if}
 
+	<div class="flex flex-col gap-3" use:swipe={step}>
 	{#if view === 'month'}
 		<div class="overflow-hidden rounded-md border border-border bg-bg">
 			<div class="grid grid-cols-7 border-b border-border">
@@ -177,6 +180,7 @@
 	{:else}
 		<CalendarGrid days={[anchor]} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} />
 	{/if}
+	</div>
 </div>
 {#if open}
 	<ActionSheet action={open} {confirming} {inline} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />

@@ -9,7 +9,7 @@
 	import PersonaChat from '$lib/ui/components/agent/PersonaChat.svelte';
 	import PhoneShell from '$lib/ui/shell/PhoneShell.svelte';
 	import DesktopShell from '$lib/ui/shell/DesktopShell.svelte';
-	import type { TabId } from '$lib/ui/shell/nav';
+	import type { Place, TabId } from '$lib/ui/shell/nav';
 	import TodayScreen from '$lib/ui/screens/TodayScreen.svelte';
 	import CalendarScreen from '$lib/ui/screens/CalendarScreen.svelte';
 	import GoalScreen from '$lib/ui/screens/GoalScreen.svelte';
@@ -21,6 +21,7 @@
 	import { setClock } from '$lib/ui/clock';
 	import ClockFrame from './ClockFrame.svelte';
 	import GoalRedesign from './goal-redesign/GoalRedesign.svelte';
+	import PlanView from './plan-view/PlanView.svelte';
 	import LocationExplainer from '$lib/ui/components/location/LocationExplainer.svelte';
 	import LockScreenNudge from '$lib/ui/components/location/LockScreenNudge.svelte';
 	import PlacesScreen from '$lib/ui/screens/PlacesScreen.svelte';
@@ -51,7 +52,7 @@
 
 	setClock({ now: mockNow, zone: mockZone });
 
-	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location';
+	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location' | 'plan-view';
 	const VIEWS: { value: View; label: string }[] = [
 		{ value: 'tokens', label: 'Tokens' },
 		{ value: 'inputs', label: 'Inputs' },
@@ -62,7 +63,8 @@
 		{ value: 'screens-desktop', label: 'Screens (desktop)' },
 		{ value: 'editing', label: 'Calendar editing' },
 		{ value: 'goal-redesign', label: 'Goals redesign' },
-		{ value: 'location', label: 'Location' }
+		{ value: 'location', label: 'Location' },
+		{ value: 'plan-view', label: 'Plan, back, dashboard' }
 	];
 	const keep = () => {};
 	const EDIT = { onedit: keep, onlock: keep, ondelete: keep, onchoose: keep, inline: true };
@@ -80,7 +82,7 @@
 		{ name: 'Edit sheet from Calendar', title: 'Calendar', tab: 'calendar', now: mockNow, screen: CalendarScreen, props: { actions: plannedActions, categories, allDay: sixpackAllDay, initialView: 'day', day: '2026-12-03', editing: CORE, ...EDIT } },
 		{ name: 'Drag to move, edge to resize', title: 'Calendar', tab: 'calendar', now: mockNow, screen: CalendarScreen, props: { actions: plannedActions.map((a) => (a.id === CORE ? { ...a, end: '2026-12-03T08:00:00Z' } : a)), categories, allDay: sixpackAllDay, initialView: 'day', day: '2026-12-03', selected: CORE, ...EDIT } }
 	];
-	const SCREENS: { name: string; title: string; tab: TabId | 'settings'; screen: Component<any>; props: Record<string, unknown> }[] = [
+	const SCREENS: { name: string; title: string; tab: Place; screen: Component<any>; props: Record<string, unknown> }[] = [
 		{ name: 'Today', title: 'Today', tab: 'today', screen: TodayScreen, props: { actions: plannedActions, checkIn: weightCheckIn, insight: sixpackInbox.insights[0], allDay: sixpackAllDay } },
 		{ name: 'Calendar', title: 'Calendar', tab: 'calendar', screen: CalendarScreen, props: { actions: plannedActions, categories, allDay: sixpackAllDay } },
 		{ name: 'Goals', title: 'Goals', tab: 'goals', screen: GoalsScreen, props: { goals: sixpackGoals, categories } },
@@ -91,7 +93,7 @@
 		{ name: 'Settings', title: 'Settings', tab: 'settings', screen: SettingsScreen, props: { settings: sixpackSettings } }
 	];
 	const NUDGE = { time: '18:04', date: 'Thursday 26 November', title: 'Strength session, due 18:00', body: 'Near your gym. Quick workout to stay on track?', detail: 'Six-pack by summer', actions: ['Mark done', 'Remind me in 1 hour', 'Skip today'] };
-	const LOCATION: { name: string; title: string | null; tab: TabId | 'settings'; now: string; screen: Component<any>; props: Record<string, unknown> }[] = [
+	const LOCATION: { name: string; title: string | null; tab: Place; now: string; screen: Component<any>; props: Record<string, unknown> }[] = [
 		{ name: 'Before asking for Always', title: null, tab: 'today', now: mockNow, screen: LocationExplainer, props: {} },
 		{ name: 'Inbox, is this your gym?', title: 'Inbox', tab: 'inbox', now: mockNow, screen: InboxScreen, props: { places: [gymPrompt], approvals: [], suggestions: [], insights: [], runs: [] } },
 		{ name: 'Lock screen nudge', title: null, tab: 'today', now: '2026-11-26T18:04:00Z', screen: LockScreenNudge, props: NUDGE },
@@ -112,7 +114,16 @@
 
 	let view = $state<View>('tokens');
 	let dark = $state(false);
+	let solo = $state<number | null>(null);
 	let values = $state<Record<string, string>>({});
+
+	/** Reads `#view`, or `#view/frame/theme` for one full-screen frame used by simulator screenshots. */
+	function readHash() {
+		const [name, frame, theme] = location.hash.slice(1).split('/');
+		if (VIEWS.some((v) => v.value === name)) view = name as View;
+		solo = frame === undefined ? null : Number(frame);
+		if (theme) dark = theme === 'dark';
+	}
 
 	/** Reads the current computed value of every listed token, for the swatch captions. */
 	function readTokens() {
@@ -121,14 +132,15 @@
 	}
 
 	onMount(() => {
-		const fromHash = location.hash.slice(1);
-		if (VIEWS.some((v) => v.value === fromHash)) view = fromHash as View;
 		dark = matchMedia('(prefers-color-scheme: dark)').matches;
+		readHash();
 		readTokens();
+		addEventListener('hashchange', readHash);
+		return () => removeEventListener('hashchange', readHash);
 	});
 
 	$effect(() => {
-		if (location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
+		if (solo === null && location.hash.slice(1) !== view) history.replaceState(null, '', `#${view}`);
 	});
 
 	$effect(() => {
@@ -139,6 +151,9 @@
 
 <svelte:head><title>Aroh Mockups</title></svelte:head>
 
+{#if solo !== null}
+	<PlanView {inboxCount} {solo} />
+{:else}
 <div class="min-h-dvh bg-surface text-fg">
 	<header class="sticky top-0 z-30 flex flex-wrap items-center gap-3 border-b border-border bg-bg px-4 py-2">
 		<p class="text-sm font-semibold">Aroh mockups</p>
@@ -236,6 +251,8 @@
 			</ul>
 		{:else if view === 'goal-redesign'}
 			<GoalRedesign {inboxCount} />
+		{:else if view === 'plan-view'}
+			<PlanView {inboxCount} />
 		{:else if view === 'location'}
 			<ul class="flex gap-6 overflow-x-auto pb-4">
 				{#each LOCATION as s (s.name)}
@@ -269,3 +286,4 @@
 		{/if}
 	</main>
 </div>
+{/if}

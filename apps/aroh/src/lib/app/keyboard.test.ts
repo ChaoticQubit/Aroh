@@ -85,6 +85,14 @@ describe('phone keyboard and zoom (build 1 feedback)', () => {
 		expect(form).toMatch(/<div data-hide-typing class="sticky bottom-0/);
 	});
 
+	it('hides the goal chat composer while another field is typed in, so it never covers that field (gate 4 D4)', () => {
+		const root = join(__dirname, '..', '..');
+		const css = readFileSync(join(root, 'app.css'), 'utf8');
+		expect(css).toMatch(/\n:root\[data-typing\] \[data-composer\]:not\(:focus-within\) \{\s*display: none;/);
+		const chat = readFileSync(join(root, 'lib/ui/components/agent/PersonaChat.svelte'), 'utf8');
+		expect(chat).toMatch(/<div data-composer class=/);
+	});
+
 	it('never zooms: no pinch zoom, and no text field below 16px', () => {
 		const root = join(__dirname, '..', '..');
 		expect(readFileSync(join(root, 'app.html'), 'utf8')).toContain('content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"');

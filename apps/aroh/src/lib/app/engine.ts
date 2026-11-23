@@ -137,12 +137,16 @@ export function progressLines(events: RunEvent[]): { text: string; done: boolean
 	return [...lines].map(([step, done]) => ({ text: STEP_TEXT[step], done }));
 }
 
-/** The question cards of a `questions` node, empty for any other node. */
+/** The question cards of a question node (`questions` or `limit_choice`), empty for any other node. */
 export function questionsOf(waiting: Waiting | undefined): Question[] {
-	if (waiting?.node !== 'questions') return [];
-	const intake = waiting.data.intake as { questions?: Question[] } | undefined;
-	return intake?.questions ?? [];
+	const source = waiting ? QUESTION_SOURCES[waiting.node] : undefined;
+	if (!waiting || !source) return [];
+	const held = waiting.data[source] as { questions?: Question[] } | undefined;
+	return held?.questions ?? [];
 }
+
+/** The state key that holds the questions of each question node: intake questions, and the limits card (Q64). */
+const QUESTION_SOURCES: Record<string, string> = { questions: 'intake', limit_choice: 'limits' };
 
 /** One plan item as a line: title, local day and time, length and repeat. */
 function itemLine(i: PlanItem): string {
@@ -192,7 +196,7 @@ export function fixedActionIds(actions: Action[], goalId: string, items: PlanIte
 export function chatFromRun(view: RunView): ChatMessage[] {
 	const out: ChatMessage[] = [];
 	const lines = progressLines(view.events);
-	if (lines.length) out.push({ type: 'progress', lines });
+	if (lines.length) out.push({ type: 'progress', lines, working: ACTIVE.includes(view.status.status) });
 	const stop = stopMessage(view.status);
 	if (stop) return [...out, { type: 'stopped', text: stop, retry: true }];
 	if (ACTIVE.includes(view.status.status)) {
@@ -203,8 +207,9 @@ export function chatFromRun(view: RunView): ChatMessage[] {
 	const w = view.waiting[0];
 	if (view.status.status === 'waiting_human' && w) {
 		if (w.node === 'approve' && w.data.plan) {
-			const plan = w.data.plan as { summary: string; items: PlanItem[] };
-			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine), fixable: plan.items.map((i) => !i.rrule) });
+			const plan = w.data.plan as { summary: string; items: PlanItem[]; timezone?: string };
+			const items = plan.items.map(({ title, start, minutes, rrule }) => ({ title, start, minutes, rrule }));
+			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine), fixable: plan.items.map((i) => !i.rrule), plan: { items, timezone: plan.timezone ?? null } });
 		} else if (w.node === 'approve' && w.data.proposal_record) {
 			const p = w.data.proposal_record as { summary: string };
 			out.push({ type: 'message', from: 'persona', name: 'Adaptation analyst', text: `${p.summary} It is in your Inbox to apply.` });

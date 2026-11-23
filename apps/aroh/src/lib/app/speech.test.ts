@@ -31,11 +31,38 @@ describe('chat voice input', () => {
 		expect(d.error).toBeNull();
 	});
 
-	it('shows why voice input did not start, and is not left listening', async () => {
+	it('a denied microphone says how to turn it on, offers Settings, and is not left listening', async () => {
 		const d = new Dictation(fakeSpeech([], '', { at: 'start', code: 'mic_denied' }), () => {});
 		await d.toggle();
 		expect(d.listening).toBe(false);
-		expect(d.error).toBe('Microphone access is off for Aroh. Turn it on in Settings.');
+		expect(d.error).toBe('Microphone is off for Aroh. Turn it on in Settings.');
+		expect(d.denied).toBe(true);
+	});
+
+	it('denied speech recognition offers Settings too', async () => {
+		const d = new Dictation(fakeSpeech([], '', { at: 'start', code: 'speech_denied' }), () => {});
+		await d.toggle();
+		expect(d.error).toBe('Speech recognition is off for Aroh. Turn it on in Settings.');
+		expect(d.denied).toBe(true);
+	});
+
+	it('any other failure shows its reason without the Settings button', async () => {
+		const d = new Dictation(fakeSpeech([], '', { at: 'stop', code: 'audio_failed' }), () => {});
+		await d.toggle();
+		await d.toggle();
+		expect(d.error).toBe('Nothing was heard.');
+		expect(d.denied).toBe(false);
+		await d.toggle();
+		expect(d.error).toBeNull();
+	});
+
+	it('a refused partial-words listener stops the microphone and says so instead of failing silently', async () => {
+		const core = await import('@tauri-apps/api/core');
+		vi.mocked(core.invoke).mockResolvedValue(undefined);
+		vi.mocked(core.addPluginListener).mockRejectedValue(new Error('aroh-speech.register_listener not allowed'));
+		const { speech } = await import('./speech.svelte');
+		await expect(speech.start(() => {})).rejects.toThrow('register_listener');
+		expect(core.invoke).toHaveBeenCalledWith('plugin:aroh-speech|stop');
 	});
 
 	it('an empty transcript leaves the typed message alone', async () => {

@@ -4,15 +4,27 @@ use crate::status::decode_error;
 use serde_json::{json, Value};
 use troupekit_core::error::{ProviderError, ProviderErrorKind};
 use troupekit_core::message::{ContentPart, MediaSource, Role};
+use troupekit_core::tool::{HostedTool, ToolSpec};
 
 /// The `anthropic-version` header this encoder targets.
 /// On it Claude rejects sampling parameters, so the catalog sets the
 /// `temperature` quirk to false for Anthropic.
 pub const API_VERSION: &str = "2026-10-21";
 
+/// Server tool types for hosted web search and fetch. The basic versions
+/// run on every current Claude model without a beta header.
+/// Hosted tools are sent with these and their fixed names.
+pub const WEB_SEARCH_TYPE: &str = "web_search_20250305";
+
+/// The hosted web fetch tool type; see `WEB_SEARCH_TYPE`.
+/// It fetches only URLs already in the conversation.
+/// Its page size is capped by the tool's `max_content_tokens`.
+pub const WEB_FETCH_TYPE: &str = "web_fetch_20250910";
+
 /// Encodes `req` as an Anthropic Messages body for `model`.
 /// Tool results ride in user turns and same-role turns are merged.
-/// Returns the body; every request fits this wire.
+/// Hosted tools become server tools and drop `output_config`, since
+/// cited search results cannot be combined with a JSON output format.
 pub fn encode(
     quirks: &Quirks,
     model: &str,
@@ -38,20 +50,16 @@ pub fn encode(
         body["system"] = json!(system);
     }
     if !req.tools.is_empty() {
-        body["tools"] = req
-            .tools
-            .iter()
-            .map(
-                |t| json!({"name": t.name, "description": t.description, "input_schema": t.schema}),
-            )
-            .collect();
+        body["tools"] = req.tools.iter().map(tool).collect();
     }
     if let (true, Some(t)) = (quirks.temperature, req.temperature) {
         body["temperature"] = json!(t);
     }
-    if let (Some(schema), false) = (
+    let hosted = req.tools.iter().any(|t| t.hosted.is_some());
+    if let (Some(schema), false, false) = (
         &req.output_schema,
         quirks.output_schema == SchemaMode::Unsupported,
+        hosted,
     ) {
         body["output_config"] = json!({"format": {"type": "json_schema", "schema": schema}});
     }
@@ -62,7 +70,7 @@ pub fn encode(
 }
 
 /// Turns a whole Messages reply into the deltas its stream would yield.
-/// Thinking and unknown blocks are skipped. Returns `Decode` without a
+/// Thinking is skipped; server tool blocks become `Hosted`. Returns `Decode` without a
 /// content array, or the mapped error for an error body.
 pub fn decode_body(body: &Value) -> Result<Vec<Delta>, ProviderError> {
     if body["type"] == "error" {
@@ -83,7 +91,9 @@ pub fn decode_body(body: &Value) -> Result<Vec<Delta>, ProviderError> {
                     json: b["input"].to_string(),
                 });
             }
-            _ => {}
+            Some("thinking") | Some("redacted_thinking") => {}
+            Some(_) => out.push(hosted(index, b)),
+            None => {}
         }
     }
     out.push(Delta::Stop {
@@ -110,7 +120,8 @@ impl StreamDecoder {
                 match str_at(b, "/type") {
                     Some("tool_use") => vec![started(index_at(data, "/index")?, b)],
                     Some("text") => text_delta(str_at(b, "/text")).into_iter().collect(),
-                    _ => Vec::new(),
+                    Some("thinking") | Some("redacted_thinking") | None => Vec::new(),
+                    Some(_) => vec![hosted(index_at(data, "/index")?, b)],
                 }
             }
             "content_block_delta" => match str_at(data, "/delta/type") {
@@ -140,8 +151,23 @@ impl StreamDecoder {
     }
 }
 
+fn tool(t: &ToolSpec) -> Value {
+    match t.hosted {
+        None => json!({"name": t.name, "description": t.description, "input_schema": t.schema}),
+        Some(HostedTool::WebSearch { max_uses }) => {
+            json!({"type": WEB_SEARCH_TYPE, "name": "web_search", "max_uses": max_uses})
+        }
+        Some(HostedTool::WebFetch {
+            max_uses,
+            max_content_tokens,
+        }) => json!({"type": WEB_FETCH_TYPE, "name": "web_fetch", "max_uses": max_uses,
+            "max_content_tokens": max_content_tokens}),
+    }
+}
+
 fn block(part: &ContentPart) -> Value {
     match part {
+        ContentPart::Hosted { block, .. } => block.clone(),
         ContentPart::Text { text } => json!({"type": "text", "text": text}),
         ContentPart::Image {
             source: MediaSource::Url { url },
@@ -167,6 +193,17 @@ fn block(part: &ContentPart) -> Value {
         } => {
             json!({"type": "tool_result", "tool_use_id": call_id, "content": content, "is_error": is_error})
         }
+    }
+}
+
+fn hosted(index: u32, block: &Value) -> Delta {
+    let tool = (str_at(block, "/type") == Some("server_tool_use"))
+        .then(|| str_at(block, "/name").map(str::to_owned))
+        .flatten();
+    Delta::Hosted {
+        index,
+        tool,
+        block: block.clone(),
     }
 }
 
@@ -199,6 +236,7 @@ fn stop_reason(reason: &str) -> StopReason {
         "tool_use" => StopReason::ToolUse,
         "max_tokens" => StopReason::MaxTokens,
         "refusal" => StopReason::Refusal,
+        "pause_turn" => StopReason::PauseTurn,
         other => StopReason::Other(other.to_owned()),
     }
 }

@@ -32,11 +32,26 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B26 | Pod 26 DONE | chat composer | Placeholder says "Message your personas" instead of the lead coach | low | open |
 | B27 | PR #3 review (P2) | `apps/aroh/src-tauri/src/commands/goals.rs:112` | Snapshot not reloaded after profile edits, so the profile screen can show stale facts until the next refresh | medium | open |
 | B28 | Owner, build 3 | plan node request | New goal run stopped at node "plan": HTTP 400 "messages: text content blocks must be non-empty" | critical | closed, a8eed02 + f978f84 (prod PR #4) |
-| B29 | Owner, build 3 | Today action rows | Action rows overflow the screen width; checkbox only visible after scrolling right | high | open, pod 31 |
-| B30 | Owner, build 3 | Inbox run cards | Stopped goal-planner cards still show a spinning blue circle | medium | open, pod 31 |
-| B31 | Owner, build 3 | composer mic, attach Photo | Mic, camera and every attachment (Link, Photo, File) in New Goal do nothing on iPhone; Info.plist lacks NSCameraUsageDescription and NSPhotoLibraryUsageDescription | high | open, pod 32 |
-| B32 | Owner, build 3 | Goals tab | Tapping Goals from inside a goal shows a blank screen until another tab is visited | high | open, pod 31 |
-| B33 | Owner, build 3 | write_plan tool | First goal's later run stopped: write_plan invalid arguments "bad cadence for quizzes score" after the plan was applied | high | open, pod 29 |
-| B34 | Owner, build 3 | Calendar status | Action checked done on Today still shows blue (planned) on the Calendar, not marked done | high | open, pod 31 |
-| B35 | Owner, build 3 | Calendar | No swipe left or right to change day or week | medium | open, pod 31 |
-| B36 | Owner, build 3 | intake, planner | Intake questions shallow for every goal; workout plan had no session content (exercises, sets, reps) and no nutrition guidance | high | open, pod 29 (planner notes, coach intake) |
+| B29 | Owner, build 3 | Today action rows | Action rows overflow the screen width; checkbox only visible after scrolling right | high | closed, c829697 (pod 31) |
+| B30 | Owner, build 3 | Inbox run cards | Stopped goal-planner cards still show a spinning blue circle | medium | closed, ac51d57 (pod 31) |
+| B31 | Owner, build 3 | composer mic, attach Photo | Mic, camera and every attachment (Link, Photo, File) in New Goal do nothing on iPhone; Info.plist lacks NSCameraUsageDescription and NSPhotoLibraryUsageDescription | high | closed, 023168f (simulator up to probe and prompt; phone confirms on build 4) |
+| B32 | Owner, build 3 | Goals tab | Tapping Goals from inside a goal shows a blank screen until another tab is visited | high | open, pod 31: not reproduced on the simulator (dev build, sample goals, no engine run, goal screen scrolled or not); e2e/pod31.sh checks it. Pod 30: not reproduced on a production-asset build either (e2e/pod30-b32.js); the layout now resets the main scroller on every navigation and restores it on back, a likely cause if the blank screen was a stale scroll offset. Needs the owner's phone check on build 5 |
+| B33 | Owner, build 3 | write_plan tool | First goal's later run stopped: write_plan invalid arguments "bad cadence for quizzes score" after the plan was applied | high | closed, b339d13 + b638eb1 (prod PR #5) |
+| B34 | Owner, build 3 | Calendar status | Action checked done on Today still shows blue (planned) on the Calendar, not marked done | high | closed, 9e9056f (pod 31) |
+| B35 | Owner, build 3 | Calendar | No swipe left or right to change day or week | medium | closed, e068703 (pod 31) |
+| B36 | Owner, build 3 | intake, planner | Intake questions shallow for every goal; workout plan had no session content (exercises, sets, reps) and no nutrition guidance | high | closed, a23d3dd |
+| B37 | Pod 33 DONE | delete goal | Kept actions take the Routines reminder setting (on) even if the deleted goal had reminders off | low | open |
+| B38 | Pod 33 DONE | storage bulk delete | DELETE /storage/v1/object/goal-files with prefixes tested only against a stub; confirm on prod | medium | open, check on build 4 |
+| B39 | Pod 31 DONE | Calendar phone week view | Swipe moves 7 days while the phone grid shows one day; next page not drawn during the drag | low | open |
+| B40 | Pod 29 DONE | troupekit http | `http::tests::times_out` fails in the full parallel run, passes alone (flaky) | low | open |
+| B41 | Pod 29 DONE | limit_choice | Choosing "Move the date" does not update the goal's target date | medium | fixed on feat/plan-view (pod 30), server test `moving_the_date_on_the_limits_card_sets_the_deadline`; ships with build 5 |
+| B42 | Pod 29 DONE | replan, record_proposal | No daily-cap check on replans and proposals, only on new plans | medium | open |
+| B43 | Pod 29 DONE | web search errors | "web search not enabled" 400 from the API surfaces raw, not as a clear message | medium | open |
+| B44 | Pod 29 DONE | coach_questions eval | Matches English keywords only | low | open |
+| B45 | Pod 30 dataviz check | `apps/aroh/src/lib/ui/tokens/tokens.css` dark `--cat-*`, `--series-*` | Dark category and series colours fail the dataviz validator's lightness band; light order cat-1, cat-5, cat-4 passes | medium | open, foundation |
+| B46 | Pod 30 | `e2e/pod30-app.js` | One of four runs timed out waiting for the plan card on the first goal (20 s); passed on retry | low | open |
+| B47 | Gate 4 D4 | goal chat composer | With the keyboard open, the chat composer covers the focused intake answer and the can't-fit number answer | high | closed, 3d4c7fb (re-gate PASS) |
+| B48 | Gate 4 D5 | Settings | Search providers "Add" and Location "Open iOS Settings" have no click handler | medium | closed, ff9888c (re-gate PASS; Search providers section removed, Q63) |
+| B49 | Gate 4 D1 | Calendar day and week | Overlapping blocks draw on top of each other | medium | closed, 413aac3 (re-gate PASS) |
+| B50 | Gate 4 D6 | plan card summary | "1 days a week"; finish date has no year when it is in another year | low | closed, 9ec0916 (re-gate PASS) |
+| B51 | Gate 4 D2 | goal Next sessions | Times shown without the day, so sessions look duplicated | low | closed, f1e96d8 (re-gate PASS) and 67e7596 (Today label, unit test only) |

@@ -81,12 +81,13 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 | Q61 | Goal redesign | New Goal is a form first: title (required), description, target date, category (auto-detected, editable), attachments (photos, PDFs, files, links the agents read), and agent controls (Ask / Balanced / Auto, reminders, use my calendars). Then the goal card opens: agents research first, then ask follow-up questions inside that goal card with good inputs (sliders, wheels, units, typing), and the chat stays available in the same card. Goal screen made clearer: what agents are doing, what they wait for, upcoming actions. Mockup first (owner 2026-11-22). Mockup approved 2026-11-22 (artifact v7) with: custom categories (the owner can add a new category from the category picker; it gets the next free category hue, or past 6 categories a hue the owner picks from the 6 (colors may repeat), and the general coach team until coaches are set); agent controls and run limit are Settings defaults each goal can override; Stopped is grey, Waiting for you amber; cost shows while agents work and on stop; mic and attach show only when they work; attachments sync to the owner's account for the agents and go nowhere else; Retry continues from what research found; answers stay editable later as a form in the goal card and through chat. Built after pod 25 merges, since both touch the goal screens. |
 | Q62 | Profile from answers | Owner 2026-11-22. After a goal's questions are answered, a profile agent keeps the answers that stay true across goals (reading time of day, free minutes a day, preferred format, limits) as profile facts with source goal and date, saved automatically; one-off answers (pages left in one book) are not kept. Before asking, the intake reads the profile and, instead of re-asking, shows known facts as "Still true?" with confirm or edit; a skipped question is not saved as a fact. Profile facts from answers and confirmed edit preferences (Q37) form one profile that intake and planner both read. Settings has "What Aroh knows about you": every fact with source and date, edit, delete, and "never learn this". Built with the goal redesign (pod 26), after pod 25 merges. |
 | Q63 | Web search | Owner 2026-11-23. Research uses Claude's built-in server-side web search and web fetch through the owner's existing Claude key; no separate search key. Anthropic bills searches on the owner's account (about $10 per 1,000). Replaces the unconfigured search stub that returned "web search is not configured". Sources are cited in the research card; fetched page text is untrusted input. |
-| Q64 | Plans never exceed limits | Owner 2026-11-23. The planner never schedules more than the owner's daily minutes (from answers, profile or goal), never adds extra same-day sessions to catch up. If the target cannot be met within the limit by the target date, the planner does not plan; it states the real finish date at the limit ("At 20 min/day you finish on Dec 14, 9 days after your target") and offers three choices: move the date, raise the daily minutes, or lower the target. It plans after the owner picks. |
-| Q65 | Plan view | Owner 2026-11-23. A plan before approval shows a one-line summary (amount, time of day, finish date) and a 7-day week strip with blocks per day, swipeable to later weeks, fixed items and busy time shown as busy; tapping a block shows details. Text-only plan cards are replaced. Mockup first for owner approval (new visual pattern). |
-| Q66 | Back navigation | Owner 2026-11-23. Every screen below a tab (goal, settings sub-pages, places, profile, persona library, edit screens) shows a top bar with a back arrow and the parent screen's name; tab roots show no back arrow. iOS edge swipe from the left also goes back. Back returns to the exact previous screen and scroll position. Mocked with the plan view (pod 30) for approval. |
+| Q64 | Plans never exceed limits | Owner 2026-11-23. The planner never schedules more than the owner's daily minutes (from answers, profile or goal), never adds extra same-day sessions to catch up. If the target cannot be met within the limit by the target date, the planner does not plan; it states the real finish date at the limit ("At 20 min/day you finish on Dec 14, 9 days after your target") and offers three choices: move the date, raise the daily minutes, or lower the target. It plans after the owner picks. Pod 30 (2026-11-23): the limits step output always carries `card` (`cap`, `today`, `target`, `finish`, `needed`, `raise_to` = minutes a day that fit by the target rounded up to 5, `fits_minutes` = minutes that fit by the target) and `move_to` (the finish date when the owner picked Move); `write_plan` sets the goal's deadline to `move_to` (B41). The app renders the card from these numbers and posts the server's choice text unchanged. |
+| Q65 | Plan view | Owner 2026-11-23. A plan before approval shows a one-line summary (amount, time of day, finish date) and a 7-day week strip with blocks per day, swipeable to later weeks, fixed items and busy time shown as busy; tapping a block shows details. Text-only plan cards are replaced. Mockup first for owner approval (new visual pattern). Pod 30 mockup approved by the owner 2026-11-23 and built (`PlanCard.svelte`, logic in `lib/ui/plan/strip.ts`): the strip is a compact 06:00 to 22:00 time grid with a minimum block height so a 20 min session stays tappable; proposed sessions are the only coloured blocks (category tint and left edge), busy time, busy days and fixed items are neutral grey (fixed ones with a lock); the Q53 Fixed time switch moves into the tapped-block detail; arrows and a horizontal swipe page weeks; a flag marks the finish day. The Q64 card shows a today, target, finish bar and the three choices with their numbers, no strip and no Approve. Built notes: the strip expands DAILY and WEEKLY RRULEs (INTERVAL, COUNT, UNTIL, BYDAY) and names items it cannot draw; the Fixed time switch shows only on one-off sessions (repeating items cannot be locked, as before); busy time comes from the snapshot and other goals' planned actions (locked ones as fixed); weeks past the device calendar import horizon (14 days) carry "Your calendar is checked up to ...". |
+| Q66 | Back navigation | Owner 2026-11-23. Every screen below a tab (goal, settings sub-pages, places, profile, persona library, edit screens) shows a top bar with a back arrow and the parent screen's name; tab roots show no back arrow. iOS edge swipe from the left also goes back. Back returns to the exact previous screen and scroll position. Label rule (owner 2026-11-23): the back label names the real previous screen when there is one in this session's history; on a cold start (deep link, relaunch) it names the parent screen and goes there. Built in pod 30 (`lib/ui/shell/back.ts`, layout back stack, scroll kept per URL, `allowsBackForwardNavigationGestures` on the iOS web view). |
 | Q67 | Build gate before TestFlight | Leader 2026-11-23 after owner reported many build 3 bugs. No TestFlight upload until a gate pass on master passes: every screen on the simulator in light and dark with long real-world seed data (long titles, many actions, 6 questions); the real software keyboard opened on every text field; the no-horizontal-overflow check on every route; every button tapped, with buttons the simulator cannot confirm (mic, camera) listed for the owner's phone; the leader reviews all screenshots before upload. A failing gate means no upload. |
 | Q68 | Delete goal | Owner 2026-11-23. A goal can be deleted from its screen with a confirmation offering two choices: "Delete goal and its actions" removes the goal, its actions, series, runs, proposals, trackers and attached files (storage objects too); "Delete goal, keep actions" removes the goal but keeps its actions on the calendar as standalone actions. Profile facts learned from the goal are kept in both cases (they describe the owner). Deletes sync as tombstones. |
-| Q69 | Dashboard tab and Inbox bell | Owner 2026-11-23. A new Dashboard tab in the bottom bar replaces the Inbox tab; the Inbox moves to a bell icon in the top bar next to the Settings gear, with an unread count. The dashboard shows all goals combined and each goal through filters (All, category, status): on track vs behind (done vs planned to date, projected finish date), minutes done per week as bars stacked by goal or category, streaks and completion rate (week and month), and each goal's tracker trend as a small line chart. Mockup first (pod 30, with Q65 and Q66). |
+| Q69 | Dashboard tab and Inbox bell | Owner 2026-11-23. A new Dashboard tab in the bottom bar replaces the Inbox tab; the Inbox moves to a bell icon in the top bar next to the Settings gear, with an unread count. The dashboard shows all goals combined and each goal through filters (All, category, status): on track vs behind (done vs planned to date, projected finish date), minutes done per week as bars stacked by goal or category, streaks and completion rate (week and month), and each goal's tracker trend as a small line chart. Split 2026-11-23: pod 30 built the shell part (Dashboard tab to `/dashboard` with a placeholder page, Inbox bell with count next to the gear on phone, Inbox item with count above Settings on desktop); pod 34 builds the dashboard screen. |
+| Q70 | Design system migration | Owner 2026-11-23, approving the pod 30 mockup (plan view, can't-fit card, back bar, Dashboard): the whole app UI later migrates to this mockup's design language. Pod 30 keeps its new components and tokens reusable; a dedicated migration slice follows build 5. |
 
 ### Rejected alternatives
 
@@ -118,3 +119,90 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 ### Unresolved
 
 - `docs/decisions.md` still holds the MVP contract and must be rewritten to match this record.
+
+## Delete goal (pod 33, 2026-11-23, branch `feat/delete-goal`, Q68)
+
+### Goal
+
+Delete a goal from its screen through a native-style action sheet: "Delete goal and its actions", "Delete goal, keep actions", Cancel. Only the two delete choices are red (Q41).
+
+### Constraints
+
+- No schema change: `actions.goal_id` and `action_series.goal_id` stay not null on SQLite and Postgres.
+- Deletes travel as tombstones over the existing LWW sync; the server only sees rows, never the delete mode.
+- The built-in Routines goal (`seed::routines_id()`) cannot be deleted: the option is hidden there and the write refuses it.
+- Profile facts (`preferences`) and spend history (`usage`) stay in both modes.
+
+### Decisions
+
+- Delete all tombstones the goal, its actions, series, proposals, trackers and their entries, goal files (extracted text cleared), goal links in both directions, goal personas and plugins, its goal-month budget and its place links, in one transaction.
+- Keep actions moves the goal's actions and series onto the built-in Routines goal, the existing home of actions that belong to no goal of the owner's; place links naming a kept series move with it; everything else is tombstoned as in delete all. Reason: no nullable migration rippling through every pod's code.
+- Goal file objects in `goal-files` are removed with the owner's session (bulk `DELETE /storage/v1/object/goal-files`). Paths are queued device-locally (`local:pending_file_removals`) and drained after every sync, so an offline delete still removes them later.
+- Late rows (an occurrence the server materialized, a row another device wrote before it saw the tombstone): the tick settles a live action or series whose goal is a tombstone. An action follows its live series' goal; an action of a tombstoned series is tombstoned; anything else moves to Routines, so no owner data is lost.
+- Server: the trigger scan cancels non-terminal runs of tombstoned goals and disables their weekly reviews and marks their pending action events handled; `process` fails a job whose run's goal is tombstoned; plan and proposal tools refuse a tombstoned goal; `start_goal` refuses a tombstoned id instead of re-creating it (it used to resurrect); `retry` refuses too.
+- Device reminders are rescheduled from live rows after the write, so tombstoned actions lose their notifications; server pushes plan from live rows the same way.
+
+### Rejected alternatives
+
+- Nullable `goal_id` migration: correct but touches every Action and ActionSeries constructor while four pods work in parallel.
+- A server delete endpoint: the server would not hear an offline delete; the scan sees the tombstone whichever device made it.
+
+### Risks
+
+- Kept actions now carry Routines' reminder setting (on), even when the deleted goal had reminders off.
+- A row written by a race in delete-all mode lands under Routines rather than gone.
+
+### Acceptance criteria
+
+- Domain tests for both modes and for refusing Routines; a two-device sync test converges, server-materialized occurrences included; a pg test shows a deleted goal's run cancelled, its job not run and no new run started.
+- Simulator screenshots of the sheet and both outcomes in `docs/screenshots/pod33/`.
+
+### Unresolved
+
+- None.
+
+## Dashboard (pod 34, 2026-11-23, branch `feat/dashboard`, Q69)
+
+### Goal
+
+Build the Dashboard tab at `/dashboard` matching the approved pod 30 mockup: filter chips (All, each category, On track, Behind, Ahead), combined tiles, each goal's done vs planned to date with its projected finish, minutes done per week stacked by goal or category, streaks and completion rate, and each goal's tracker trend.
+
+### Constraints
+
+- The snapshot holds actions within 45 days of now and entries of the last 90 days, and series are only materialized 14 days ahead, so full-history figures cannot come from the snapshot.
+- Do not touch the shell, top bar, plan card or goal screen; pod 30 owns the tab and may add a placeholder route.
+- Do not change `--cat-*` or `--series-*`; other screens use them.
+
+### Decisions
+
+- Aggregation is a pure function in `aroh-domain::dashboard` over all live actions, series, trackers and entries of the dashboard goals, read by `aroh-app::dashboard` and exposed by one Tauri command `app_dashboard` in `commands/dashboard.rs`. It returns raw counts per goal; the app joins titles and category slots from the snapshot and sums the filtered goals for the combined tiles, so a chip never needs a new call.
+- Dashboard goals: every goal that is not draft or archived, except the built-in Routines goal. No such goal shows the empty state.
+- Days and weeks are local to the device zone; weeks start Monday. The minutes chart shows the last 6 weeks, the trends the last 7 weeks.
+- Due to date: an action whose slot has ended or whose status is no longer planned. Done to date: due actions marked done. Skipped counts as not done for done-to-date and completion. Each goal row also shows its missed and skipped counts in the shared status colours (`status.ts`).
+- Completion rate: done over due for actions starting in this local week, and this local month. The tile reads "76% this week · 82% this month", and "None due" for a window with nothing due.
+- Streak: the run of local days, newest first, on which every due action of the goal was done. Days with no due action, or only skipped ones, neither count nor break it; today counts only once all its due actions are done, and a still-open today never breaks it. Best is the longest such run ever. The combined tile shows the largest current and best streak of the shown goals.
+- Plan end: the date of the goal's last session, as in the pod 30 plan view: the latest action, or the last occurrence of a bounded series. A goal with an unbounded series has no plan end and shows "Ongoing".
+- Projected finish: the sessions owed (due minus done), each taking the plan's average gap between sessions (one day when the goal has under 2 actions), added from the later of the plan end and today, so a finish with sessions owed is never in the past. No actions and no series: no finish. Changed 2026-11-23 from "plan end plus owed sessions": a goal that missed its last session showed a past finish.
+- Pace: Behind when done is under 85 % of due, or the finish falls after the deadline. Ahead when nothing is owed, a deadline is set and the finish is at least 7 days before it. Otherwise On track. Without a deadline or a finish, only the 85 % rule applies and a goal is never Ahead. The On track tile and the On track chip both count Ahead goals; the Ahead chip shows only Ahead goals.
+- Minutes per week: the slot length of done actions, bucketed by the local week of their start. The readout shows the current week; bars stay full colour until a week is tapped, then the other weeks dim.
+- Tracker trend: the goal's first number field that has a target in its active plugin version, else its first number field, trackers taken by name; one point per week with an entry, the last value logged that week, with a dot on the latest. The dashed target line uses that plugin field target, else no line.
+- Chart colours: goals take new `--chart-1..6` tokens in a stable goal order (created, then id), so a filter never repaints a goal; goals past the sixth fold into "Other" in the muted ink. The order red, cyan, green, amber, violet, pink passes the dataviz validator in light and dark (CVD at the 6 to 8 floor, so the legend and 2 px gaps stay). Stacking by category uses new `--chart-cat-1..6` tokens: the category hues in light, and in dark the same hues capped at OKLCH L 0.66, which pass the validator where the `--cat-*` dark values fail the lightness band.
+
+### Rejected alternatives
+
+- Aggregating in TS from the snapshot: misses history older than 45 days and series beyond 14 days.
+- A pace-based finish (done per day extrapolated): unstable for new goals with few sessions.
+
+### Risks
+
+- The projected finish ignores occurrences of bounded series beyond the materialized window when averaging the gap.
+- Light category hues fail the CVD check on the green and amber pair; the legend, the 2 px gaps and the tap readout carry identity.
+
+### Acceptance criteria
+
+- Rust unit tests for on track and pace, projected finish, streaks, weekly minutes and the zone week boundary; vitest for the chart helpers; `pnpm check` clean.
+- Simulator screenshots with seeded long data in `docs/screenshots/pod34/` light and dark, made by `e2e/pod34.sh` with the debug-only `app_dev_dashboard_seed` (the sample goals plus four goals with up to 120 days of history and one finance plugin target); `/dashboard` is in the `e2e/pod31.sh` overflow guard route list and passes.
+
+### Unresolved
+
+- None.

@@ -19,6 +19,7 @@ pub const PRICE: Price = Price {
     output_usd_micros_per_mtok: 2_000_000,
     verified: true,
     long_context: None,
+    search_usd_micros: 0,
 };
 
 pub const LINEAR: &str = r#"

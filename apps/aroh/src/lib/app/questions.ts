@@ -1,4 +1,5 @@
 import type { ChatMessage, ComponentSpec } from '$lib/ui/contract';
+import type { LimitsCard } from '$lib/ui/plan/limits';
 import type { Question } from './engine';
 
 /** Slider bounds for a number question that names none, as in runs started before units existed. */
@@ -7,12 +8,14 @@ export const FALLBACK_BOUNDS = { min: 0, max: 100 } as const;
 /** One open question set of a run: the questions, the owner's answers by id, skips, and the submit state. */
 export type QuestionGroup = {
 	runId: string;
+	node: string;
 	prompt: string;
 	questions: Question[];
 	values: Record<string, string>;
 	skipped: string[];
 	sending: boolean;
 	error: string | null;
+	card?: LimitsCard | null;
 };
 
 /** An answer input's value as the text posted: choices joined, numbers as digits, blanks empty. */
@@ -89,7 +92,9 @@ export function fillNext(g: QuestionGroup, text: string): QuestionGroup | null {
 export function groupMessage(g: QuestionGroup, submitted = false): Extract<ChatMessage, { type: 'questions' }> {
 	return {
 		type: 'questions',
-		persona: 'Intake interviewer',
+		persona: g.node === 'limit_choice' ? 'Aroh' : 'Intake interviewer',
+		node: g.node,
+		...(g.node === 'limit_choice' ? { card: g.card ?? null } : {}),
 		prompt: g.prompt,
 		items: g.questions.map((q) => ({
 			id: q.id,

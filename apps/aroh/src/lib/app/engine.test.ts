@@ -31,14 +31,16 @@ function view(status: RunView['status'], waiting: Waiting[] = []): RunView {
 describe('engine client', () => {
 	it('maps a run view to chat messages', () => {
 		const asking = chatFromRun(view({ status: 'waiting_human' }, [questions]));
-		expect(asking[0]).toEqual({ type: 'progress', lines: [{ text: 'Reading your goal', done: true }, { text: 'Researching how to reach it', done: false }] });
+		expect(asking[0]).toEqual({ type: 'progress', working: false, lines: [{ text: 'Reading your goal', done: true }, { text: 'Researching how to reach it', done: false }] });
+		expect(chatFromRun(view({ status: 'failed', reason: { kind: 'cancelled' } }))[0]).toMatchObject({ type: 'progress', working: false });
+		expect(chatFromRun(view({ status: 'running' }))[0]).toMatchObject({ type: 'progress', working: true });
 		expect(asking.filter((m) => m.type === 'card')).toHaveLength(0);
 		expect(waitLabel(view({ status: 'waiting_human' }, [questions]))).toBe('2 questions to answer');
 		expect(waitLabel(view({ status: 'waiting_human' }, [approve]))).toBe('Plan to approve');
 		expect(waitLabel(view({ status: 'waiting_human' }, [{ node: 'change', ask: 'question', prompt: null, data: {} }]))).toBe('What to change in the plan');
 		expect(waitLabel(view({ status: 'running' }))).toBeNull();
 		const plan = chatFromRun(view({ status: 'waiting_human' }, [approve])).at(-1);
-		expect(plan).toEqual({ type: 'plan', title: 'Core work and a daily plank.', items: ['Core workout, 2026-11-22 07:00, 30 min'], fixable: [true] });
+		expect(plan).toEqual({ type: 'plan', title: 'Core work and a daily plank.', items: ['Core workout, 2026-11-22 07:00, 30 min'], fixable: [true], plan: { items: [{ title: 'Core workout', start: '2026-11-22T07:00:00', minutes: 30, rrule: null }], timezone: null } });
 		expect(chatFromRun(view({ status: 'done' })).at(-1)).toMatchObject({ text: 'Approved. The plan is on your calendar.' });
 	});
 
@@ -80,6 +82,9 @@ describe('engine client', () => {
 	it('routes chat text to the waiting node or a replan', () => {
 		expect(route(undefined, 'I missed today')).toEqual({ kind: 'replan', reason: 'I missed today' });
 		expect(route(questions, '4')).toEqual({ kind: 'questions' });
+		const limits: Waiting = { node: 'limit_choice', ask: 'question', prompt: 'Pick what should change.', data: { limits: { questions: [{ id: 'limit_choice', text: 'What should change?', kind: 'choice', choices: ['Lower the target'] }] } } };
+		expect(route(limits, 'lower it')).toEqual({ kind: 'questions' });
+		expect(waitLabel(view({ status: 'waiting_human' }, [limits]))).toBe('1 question to answer');
 		expect(route(approve, 'Mornings only')).toEqual({ kind: 'answer', node: 'approve', answer: false, change: 'Mornings only' });
 		expect(route({ node: 'change', ask: 'question', prompt: null, data: {} }, 'Mornings only')).toEqual({ kind: 'answer', node: 'change', answer: 'Mornings only' });
 	});

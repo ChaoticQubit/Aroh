@@ -78,9 +78,9 @@ window.AROH_LIB = (() => {
   };
   const started = async () => {
     await useLocalStack();
-    await until('app or setup rendered', () => text().includes('Skip for now') || (text().includes('Calendar') && text().includes('Inbox')), 120000);
+    await until('app or setup rendered', () => text().includes('Skip for now') || (text().includes('Calendar') && text().includes('Dashboard')), 120000);
     await skipSetup();
-    await until('app rendered', () => text().includes('Calendar') && text().includes('Inbox'), 120000);
+    await until('app rendered', () => text().includes('Calendar') && text().includes('Dashboard'), 120000);
     await sleep(3000);
     await invoke('app_dev_mark', { mark: 'start' });
   };

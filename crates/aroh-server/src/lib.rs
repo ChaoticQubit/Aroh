@@ -12,6 +12,7 @@ pub mod fake;
 pub mod insights;
 pub mod io;
 pub mod learning;
+pub mod limits;
 pub mod ledger;
 pub mod personas;
 pub mod plugins;

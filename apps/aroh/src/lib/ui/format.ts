@@ -66,6 +66,17 @@ export function formatDay(iso: string, zone: string): string {
 	return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: zone }).format(new Date(iso));
 }
 
+/**
+ * Day labels for a list of ISO starts in an IANA zone, against `today` ("YYYY-MM-DD"). All null
+ * when every start is today, so a list of today's actions shows times alone. Otherwise every
+ * start gets its day: "Today" or a short day such as "Tue 24". Returns one label per start.
+ */
+export function dayLabels(starts: string[], zone: string, today: string): (string | null)[] {
+	const days = starts.map((iso) => formatYmd(iso, zone));
+	if (days.every((d) => d === today)) return days.map(() => null);
+	return days.map((d) => (d === today ? 'Today' : formatDate(d, { weekday: 'short', day: 'numeric' })));
+}
+
 /** Formats an ISO instant as its calendar date "YYYY-MM-DD" in an IANA zone. */
 export function formatYmd(iso: string, zone: string): string {
 	return new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: zone }).format(new Date(iso));

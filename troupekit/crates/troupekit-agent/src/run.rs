@@ -12,7 +12,7 @@ use troupekit_core::event::{Event, EventBody, PauseReason, Usage};
 use troupekit_core::ids::RunId;
 use troupekit_core::message::{ContentPart, Message, Role};
 use troupekit_core::store::{Checkpoint, CheckpointStore};
-use troupekit_providers::{CompletionRequest, CompletionResponse, Delta};
+use troupekit_providers::{CompletionRequest, CompletionResponse, Delta, StopReason};
 use troupekit_tools::{ToolContext, ToolOutput};
 
 /// Version of the serialized run.
@@ -337,6 +337,19 @@ impl AgentRun {
             .specs()
             .into_iter()
             .filter(|s| self.spec.tools.contains(&s.name))
+            .filter_map(|mut s| {
+                if let Some(h) = s.hosted {
+                    let used: u64 = self.messages.iter().map(|m| m.hosted_calls(h.name())).sum();
+                    let left = u64::from(h.max_uses()).saturating_sub(used);
+                    if left == 0 {
+                        return None;
+                    }
+                    s.hosted = Some(
+                        h.with_max_uses(u32::try_from(left).expect("left is at most max_uses")),
+                    );
+                }
+                Some(s)
+            })
             .collect();
         CompletionRequest {
             model: None,
@@ -375,11 +388,18 @@ impl AgentRun {
                 arguments: arguments.clone(),
             })
             .collect();
-        let answer = reply.message.text_content();
-        if !calls.is_empty() || !answer.trim().is_empty() {
+        let answer = reply.message.final_text();
+        let kept = reply
+            .message
+            .parts
+            .iter()
+            .any(|p| !matches!(p, ContentPart::Text { text } if text.trim().is_empty()));
+        if kept {
             self.messages.push(reply.message);
         }
-        self.state = if calls.is_empty() {
+        self.state = if reply.stop == StopReason::PauseTurn {
+            RunState::CallModel
+        } else if calls.is_empty() {
             RunState::Check { answer }
         } else {
             RunState::CallTools { calls }

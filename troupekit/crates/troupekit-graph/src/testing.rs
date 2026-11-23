@@ -52,6 +52,7 @@ impl FnTool {
                 name: name.to_string(),
                 description: format!("test tool {name}"),
                 schema: json!({"type": "object"}),
+                hosted: None,
             },
             call: Box::new(move |args, ctx| Box::pin(f(args, ctx))),
         })

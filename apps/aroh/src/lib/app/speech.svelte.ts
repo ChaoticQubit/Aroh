@@ -49,7 +49,12 @@ export const speech: Speech = {
 		} catch (raw) {
 			throw speechError(raw);
 		}
-		partials = await addPluginListener<{ text: string }>('aroh-speech', 'partial', (p) => onPartial(p.text)).catch(() => null);
+		try {
+			partials = await addPluginListener<{ text: string }>('aroh-speech', 'partial', (p) => onPartial(p.text));
+		} catch (raw) {
+			await invoke('plugin:aroh-speech|stop').catch(() => undefined);
+			throw new SpeechError('unknown', `Voice input could not show your words: ${raw instanceof Error ? raw.message : String(raw)}`);
+		}
 	},
 	async stop() {
 		try {
@@ -62,13 +67,23 @@ export const speech: Speech = {
 	}
 };
 
+const DENIED: Partial<Record<SpeechErrorCode, string>> = {
+	mic_denied: 'Microphone is off for Aroh. Turn it on in Settings.',
+	speech_denied: 'Speech recognition is off for Aroh. Turn it on in Settings.'
+};
+
+/** Opens Aroh's page in the iPhone Settings app, where microphone, speech and location access are turned on. */
+export const openSettings = () => invoke<void>('plugin:aroh-speech|open_settings');
+
 /**
  * One mic button: `toggle` starts listening or stops and hands the final words to `ontext`, which
- * also gets each partial. `error` is the owner-facing reason the last start or stop failed.
+ * also gets each partial. `error` is the owner-facing reason the last start or stop failed, and
+ * `denied` is true when that reason is microphone or speech access turned off, so Settings can open.
  */
 export class Dictation {
 	listening = $state(false);
 	error = $state<string | null>(null);
+	denied = $state(false);
 
 	constructor(
 		private readonly voice: Speech,
@@ -78,6 +93,7 @@ export class Dictation {
 	/** Starts or stops listening; never throws. */
 	async toggle(): Promise<void> {
 		this.error = null;
+		this.denied = false;
 		try {
 			if (!this.listening) {
 				this.listening = true;
@@ -89,7 +105,9 @@ export class Dictation {
 			if (text) this.ontext(text);
 		} catch (e) {
 			this.listening = false;
-			this.error = e instanceof Error ? e.message : String(e);
+			const code = e instanceof SpeechError ? e.code : 'unknown';
+			this.denied = code in DENIED;
+			this.error = DENIED[code] ?? (e instanceof Error ? e.message : String(e));
 		}
 	}
 }

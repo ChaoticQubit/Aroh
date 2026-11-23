@@ -1,5 +1,6 @@
 <script lang="ts">
 	import CircleCheck from '@lucide/svelte/icons/circle-check';
+	import Circle from '@lucide/svelte/icons/circle';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Mic from '@lucide/svelte/icons/mic';
 	import Send from '@lucide/svelte/icons/send';
@@ -10,8 +11,11 @@
 	import Persona from './Persona.svelte';
 	import QuestionCard from './QuestionCard.svelte';
 	import QuestionGroup from './QuestionGroup.svelte';
+	import PlanCard, { type PlanContext } from '../plan/PlanCard.svelte';
+	import CantFitCard from '../plan/CantFitCard.svelte';
 	import type { ChatMessage, OnChange } from '$lib/ui/contract';
 	import { Dictation, type Speech } from '$lib/app/speech.svelte';
+	import DictationNotice from '../inputs/DictationNotice.svelte';
 	import { scrollFor } from '$lib/app/questions';
 
 	/**
@@ -22,14 +26,18 @@
 	 * run's `stop` and `retry`. With `echo` false the caller adds sent messages itself. With
 	 * `inline` the thread flows in the page, which is the only scroller, and the composer sticks
 	 * to the bottom of the screen (the goal card); only a new question group scrolls into view.
+	 * A plan with its items renders as the week strip (Q65) on `planContext`, in category `slot`; the
+	 * limits question group renders as the can't-fit card (Q64).
 	 */
 	let {
 		messages,
 		onchange,
 		echo = true,
 		voice,
-		inline = false
-	}: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean; voice?: Speech; inline?: boolean } = $props();
+		inline = false,
+		planContext,
+		slot = 1
+	}: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean; voice?: Speech; inline?: boolean; planContext?: PlanContext; slot?: number } = $props();
 
 	const id = $props.id();
 	let sent = $state<ChatMessage[]>([]);
@@ -87,13 +95,15 @@
 					{:else}
 						<Render spec={m.spec} onchange={(v) => answer(v)} />
 					{/if}
+				{:else if m.type === 'questions' && m.node === 'limit_choice'}
+					<CantFitCard group={m} {onchange} />
 				{:else if m.type === 'questions'}
 					<QuestionGroup group={m} {onchange} />
 				{:else if m.type === 'progress'}
 					<div class="flex flex-col gap-1.5 border-l-2 border-border py-1 pl-3" role="status" aria-label="Research progress">
 						{#each m.lines as line (line.text)}
 							<p class="flex items-center gap-2 text-sm {line.done ? 'text-muted' : 'text-fg'}">
-								{#if line.done}<CircleCheck class="size-4 text-status-done" />{:else}<LoaderCircle class="size-4 animate-spin text-status-planned" />{/if}
+								{#if line.done}<CircleCheck class="size-4 text-status-done" />{:else if m.working}<LoaderCircle class="size-4 animate-spin text-status-planned" />{:else}<Circle class="size-4 text-status-skipped" />{/if}
 								{line.text}
 							</p>
 						{/each}
@@ -109,6 +119,19 @@
 						<p class="min-w-0 flex-1 text-sm text-fg">{m.text}</p>
 						{#if m.retry}<Button size="touch" variant="outline" onclick={() => onchange?.({ type: 'retry' })}>Retry</Button>{/if}
 					</div>
+				{:else if m.type === 'plan' && m.plan}
+					<PlanCard
+						title={m.title}
+						plan={m.plan}
+						context={planContext}
+						{slot}
+						{approved}
+						onapprove={(f) => {
+							approved = true;
+							onchange?.({ type: 'approve', fixed: f });
+						}}
+						onchange={() => onchange?.({ type: 'change' })}
+					/>
 				{:else if m.type === 'plan'}
 					<Card.Root size="sm" class="gap-3 px-4">
 						<Persona name="Orchestrator" note="Plan ready" />
@@ -148,31 +171,33 @@
 			</li>
 		{/each}
 	</ol>
-	<form
-		class="flex items-end gap-1 border-t border-border bg-bg p-2 {inline ? 'sticky bottom-0 z-10 -mx-4 @3xl:-mx-6' : ''}"
-		onsubmit={(e) => {
-			e.preventDefault();
-			send();
-		}}
-	>
-		<label for={id} class="sr-only">Message</label>
-		<textarea
-			{id}
-			rows="1"
-			placeholder="Message your personas"
-			class="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:truncate placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-			bind:value={draft}
-			onkeydown={(e) => {
-				if (e.key === 'Enter' && !e.shiftKey) {
-					e.preventDefault();
-					send();
-				}
+	<div data-composer class={inline ? 'sticky bottom-0 z-10 -mx-4 @3xl:-mx-6' : ''}>
+		{#if dictation}<DictationNotice {dictation} />{/if}
+		<form
+			class="flex items-end gap-1 border-t border-border bg-bg p-2"
+			onsubmit={(e) => {
+				e.preventDefault();
+				send();
 			}}
-		></textarea>
-		{#if dictation}
-			<Button variant={dictation.listening ? 'default' : 'ghost'} size="icon-touch" aria-label={dictation.listening ? 'Stop speaking' : 'Speak a message'} aria-pressed={dictation.listening} type="button" onclick={() => void dictation.toggle()}><Mic /></Button>
-		{/if}
-		<Button size="icon-touch" aria-label="Send" type="submit" disabled={!draft.trim()}><Send /></Button>
-	</form>
-	{#if dictation?.error}<p role="alert" class="border-t border-border bg-bg px-3 py-2 text-sm text-status-missed">{dictation.error}</p>{/if}
+		>
+			<label for={id} class="sr-only">Message</label>
+			<textarea
+				{id}
+				rows="1"
+				placeholder="Message your personas"
+				class="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:truncate placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+				bind:value={draft}
+				onkeydown={(e) => {
+					if (e.key === 'Enter' && !e.shiftKey) {
+						e.preventDefault();
+						send();
+					}
+				}}
+			></textarea>
+			{#if dictation}
+				<Button variant={dictation.listening ? 'default' : 'ghost'} size="icon-touch" aria-label={dictation.listening ? 'Stop speaking' : 'Speak a message'} aria-pressed={dictation.listening} type="button" onclick={() => void dictation.toggle()}><Mic /></Button>
+			{/if}
+			<Button size="icon-touch" aria-label="Send" type="submit" disabled={!draft.trim()}><Send /></Button>
+		</form>
+	</div>
 </div>

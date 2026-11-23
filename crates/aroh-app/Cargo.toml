@@ -15,3 +15,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
+
+[dev-dependencies]
+aroh-domain = { workspace = true, features = ["samples"] }
+tokio.workspace = true

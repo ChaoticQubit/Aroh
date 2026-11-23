@@ -1,0 +1,123 @@
+merged tip run (master 052fd24 merged), full gate: screens, overflow, inputs, keyboard, taps up to 12b-dashboard
+setup pass three steps skipped
+harness-hook pass account owner.with.a.long.address@example.com via ipc f
+overflow-01-today pass 393:none 375:none
+inputs16-01-today pass all >= 16px
+overflow-02-calendar-day pass 393:none 375:none
+inputs16-02-calendar-day pass all >= 16px
+overflow-03-calendar-week pass 393:none 375:none
+inputs16-03-calendar-week pass all >= 16px
+overflow-04-calendar-month pass 393:none 375:none
+inputs16-04-calendar-month pass all >= 16px
+overflow-05-goals pass 393:none 375:none
+inputs16-05-goals pass all >= 16px
+overflow-06-goal-questions pass 393:none 375:none
+inputs16-06-goal-questions pass all >= 16px
+overflow-07-goal-plan pass 393:none 375:none
+inputs16-07-goal-plan pass all >= 16px
+overflow-08-goal-stopped pass 393:none 375:none
+inputs16-08-goal-stopped pass all >= 16px
+overflow-09-goal-working pass 393:none 375:none
+inputs16-09-goal-working pass all >= 16px
+overflow-10-new-goal pass 393:none 375:none
+inputs16-10-new-goal pass all >= 16px
+overflow-11-new-goal-category pass 393:none 375:none
+inputs16-11-new-goal-category pass all >= 16px
+overflow-12-inbox pass 393:none 375:none
+inputs16-12-inbox pass all >= 16px
+overflow-12b-dashboard pass 393:none 375:none
+inputs16-12b-dashboard pass all >= 16px
+overflow-13-log pass 393:none 375:none
+inputs16-13-log pass all >= 16px
+overflow-14-settings pass 393:none 375:none
+inputs16-14-settings pass all >= 16px
+overflow-15-settings-profile pass 393:none 375:none
+inputs16-15-settings-profile pass all >= 16px
+overflow-16-settings-run-limit pass 393:none 375:none
+inputs16-16-settings-run-limit pass all >= 16px
+overflow-17-settings-location pass 393:none 375:none
+inputs16-17-settings-location pass all >= 16px
+overflow-17b-settings-location-on pass 393:none 375:none
+inputs16-17b-settings-location-on pass all >= 16px
+overflow-18-settings-location-log pass 393:none 375:none
+inputs16-18-settings-location-log pass all >= 16px
+overflow-19-settings-places pass 393:none 375:none
+inputs16-19-settings-places pass all >= 16px
+overflow-20-coaches pass 393:none 375:none
+inputs16-20-coaches pass all >= 16px
+overflow-21-coach pass 393:none 375:none
+inputs16-21-coach pass all >= 16px
+overflow-22-settings-signed-out pass 393:none 375:none
+inputs16-22-settings-signed-out pass all >= 16px
+overflow-all pass 0 screens with overflow
+keyboard-goal-chat pass kb=403 stayed=true clear=yes tab=off f=397-441/44
+keyboard-new-goal-title pass kb=403 stayed=true clear=yes tab=off f=175-2
+keyboard-new-goal-description pass kb=403 stayed=true clear=yes tab=off f
+keyboard-number-question fail kb=376 stayed=true clear=TEXTAREA tab=off f
+keyboard-log-quick-log pass kb=403 stayed=true clear=yes tab=off f=397-44
+keyboard-today-quick-log pass kb=403 stayed=true clear=yes tab=off f=397-
+keyboard-new-category-name pass kb=403 stayed=true clear=yes tab=off f=40
+keyboard-attach-link pass kb=376 stayed=true clear=yes tab=off f=416-460/
+keyboard-places-search pass kb=403 stayed=true clear=yes tab=off f=132-17
+keyboard-coach-rule pass kb=403 stayed=true clear=yes tab=off f=405-449/4
+keyboard-question-1 fail kb=376 stayed=true clear=TEXTAREA tab=off f=416-
+keyboard-question-2 fail kb=376 stayed=true clear=TEXTAREA tab=off f=416-
+keyboard-question-3 fail kb=403 stayed=true clear=TEXTAREA tab=off f=353-
+keyboard-question-4 fail kb=403 stayed=true clear=TEXTAREA tab=off f=353-
+keyboard-settings-project-url pass kb=376 stayed=true clear=yes tab=off f
+keyboard-settings-anon-key pass kb=403 stayed=true clear=yes tab=off f=20
+keyboard-settings-api-key pass kb=403 stayed=true clear=yes tab=off f=405
+keyboard-settings-server-url pass kb=376 stayed=true clear=yes tab=off f=
+keyboard-settings-monthly-budget-all-goals pass kb=376 stayed=true clear=
+keyboard-settings-monthly-budget-per-goal pass kb=376 stayed=true clear=y
+keyboard-settings-time-limit-per-run-minutes pass kb=376 stayed=true clea
+keyboard-settings-out-project-url pass kb=376 stayed=true clear=yes tab=o
+keyboard-settings-out-anon-key pass kb=403 stayed=true clear=yes tab=off 
+keyboard-settings-out-email pass kb=403 stayed=true clear=yes tab=off f=2
+keyboard-settings-out-password pass kb=403 stayed=true clear=yes tab=off 
+keyboard-settings-out-api-key pass kb=403 stayed=true clear=yes tab=off f
+keyboard-settings-out-server-url pass kb=376 stayed=true clear=yes tab=of
+keyboard-settings-out-monthly-budget-all-goals pass kb=376 stayed=true cl
+keyboard-settings-out-monthly-budget-per-goal pass kb=376 stayed=true cle
+
+rerun of screens 12b-dashboard to 22 after the SVG tap fix (no keyboard)
+setup pass three steps skipped
+harness-hook pass account owner.with.a.long.address@example.com via ipc f
+overflow-12b-dashboard pass 393:none 375:none
+inputs16-12b-dashboard pass all >= 16px
+overflow-13-log pass 393:none 375:none
+inputs16-13-log pass all >= 16px
+overflow-14-settings pass 393:none 375:none
+inputs16-14-settings pass all >= 16px
+overflow-15-settings-profile pass 393:none 375:none
+inputs16-15-settings-profile pass all >= 16px
+overflow-16-settings-run-limit pass 393:none 375:none
+inputs16-16-settings-run-limit pass all >= 16px
+overflow-17-settings-location pass 393:none 375:none
+inputs16-17-settings-location pass all >= 16px
+overflow-17b-settings-location-on pass 393:none 375:none
+inputs16-17b-settings-location-on pass all >= 16px
+overflow-18-settings-location-log pass 393:none 375:none
+inputs16-18-settings-location-log pass all >= 16px
+overflow-19-settings-places pass 393:none 375:none
+inputs16-19-settings-places pass all >= 16px
+overflow-20-coaches pass 393:none 375:none
+inputs16-20-coaches pass all >= 16px
+overflow-21-coach pass 393:none 375:none
+inputs16-21-coach pass all >= 16px
+overflow-22-settings-signed-out pass 393:none 375:none
+inputs16-22-settings-signed-out pass all >= 16px
+overflow-all pass 0 screens with overflow
+inbox-waiting-link pass /goals/01a20809-5ffd-71dd-8611-3be4d7ce1a27/chat 
+
+can't-fit card number answer, keyboard probe (e2e/pod30.sh with a probe flow)
+keyboard-cant-fit-number fail kb=376 clear=TEXTAREA tab=off f=416-460/476 16px
+
+guards on the merged tip
+pod30 light: seeded true | back label Back to Today | back path /today scroll 0 of kept 0 | restore goal scroll 400 of kept 400 | done | done
+pod30 dark: seeded true | back label Back to Today | back path /today scroll 0 of kept 0 | restore goal scroll 400 of kept 400 | done | done
+pod34: dark start | dark overflow 0 | dark target shown | dark overflow-behind 0 | dark done | dashboard overflow: light 0 , dark 0 ; plugin target: light shown, dark shown
+pod31: dark goals-tab ok /goals | dark calendar-done ok struck=true tinted=false | dark swipe ok | dark swipe 23 Nov - 29 Nov 2026 > 30 Nov - 6 Dec 2026 > 23 Nov - 29 Nov 2026 | dark done | routes with horizontal overflow: light 0, dark 0; goals tab from a goal: light ok /goals, dark ok /goals; done on calendar: light ok struck=true tinted=false, dark ok struck=true tinted=false; swipe: light ok, dark ok
+pod32 ask: attach buttons Link | mic after tap pressed=true label=Stop speaking | mic after wait pressed=true alert= | mic after stop pressed=false alert=Voice input is not running. | done | done
+pod32 deny: attach buttons Link | mic after tap pressed=false label=Speak a message | mic after wait pressed=false alert=Microphone is off for Aroh. Turn it on in Set | burst 03b-settings-opened | done | done
+pod33: granted notifications to io.aroh.app: {'authorizationStatus': 2, 'alertType': 1, 'pushSettings': 63, 'lockScreenSetting': 2, 'notificationCenterSetting': 2, 'showsInLockScreen': True, 'showsInNotificationCenter': True} | start | done | done

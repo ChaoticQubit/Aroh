@@ -1,6 +1,6 @@
 import { catalog } from '$lib/app/catalog';
 import type { ActionView, CategorySlot, ChatMessage, ComponentSpec, Point, Ring, SpecOf, ViewSpec } from '../contract';
-import type { AllDayView, CoachView, GoalHeader, GoalRow, InboxItem, ProviderView, SearchView, SettingsView } from '../screens/types';
+import type { AllDayView, CoachView, GoalHeader, GoalRow, InboxItem, ProviderView, SettingsView } from '../screens/types';
 
 /** Zone every mockup formats times in. Sample instants are written in this zone. */
 export const mockZone = 'UTC';
@@ -145,8 +145,8 @@ export const sixpackInbox = {
 	] satisfies ComponentSpec[],
 	questions: [weightCheckIn],
 	runs: [
-		{ persona: 'Fitness coach', title: 'Weekly review of training load', step: 'Reading the last 7 days of sessions', progress: 60 },
-		{ persona: 'Nutritionist', title: 'Meal plan for next week', step: 'Waiting for the weekly review', progress: 10 }
+		{ persona: 'Fitness coach', title: 'Weekly review of training load', step: 'Reading the last 7 days of sessions', progress: 60, tone: 'planned', working: true },
+		{ persona: 'Nutritionist', title: 'Meal plan for next week', step: 'Waiting for the weekly review', progress: 10, tone: 'planned', working: true }
 	]
 };
 
@@ -188,6 +188,7 @@ export const sixpackChat: ChatMessage[] = [
 	},
 	{
 		type: 'progress',
+		working: true,
 		lines: [
 			{ text: 'Reading 3 sources on fat loss rates', done: true },
 			{ text: 'Nutritionist setting a protein and calorie target', done: true },
@@ -244,18 +245,11 @@ export const sixpackView: ViewSpec = {
 /** Model providers the owner can pick in Settings, with sample key flags. */
 export const providerCatalog: ProviderView[] = catalog.map((p) => ({ ...p, keySet: p.id === 'anthropic' || p.id === 'ollama', last4: p.id === 'anthropic' ? '7Q2x' : null }));
 
-/** Web search providers configured in Settings, in fallback order. */
-export const searchProviders: SearchView[] = [
-	{ name: 'Brave Search', detail: 'API key', keySet: true },
-	{ name: 'SearXNG', detail: 'https://search.home.lan', keySet: true }
-];
-
 /** The Settings screen's sample values. */
 export const sixpackSettings: SettingsView = {
 	providers: providerCatalog,
 	providerId: 'anthropic',
 	model: 'claude-opus-5-5',
-	search: searchProviders,
 	serverUrl: 'https://aroh-engine.example.com',
 	budgetAll: 20,
 	budgetGoal: 8,

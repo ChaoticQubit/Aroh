@@ -2,10 +2,12 @@
 //! store (start-up tick, screen reads, writes, reminder planning). No AI, no network.
 
 pub mod calendar;
+pub mod dashboard;
 pub mod health;
 pub mod local;
 pub mod location;
 pub mod remind;
+pub mod remove;
 pub mod sample;
 pub mod snapshot;
 pub mod tick;

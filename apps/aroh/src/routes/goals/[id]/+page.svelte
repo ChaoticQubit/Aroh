@@ -20,6 +20,10 @@
 	import { loadCoaches } from '$lib/app/personas';
 	import { goalAttachments, pendingAttachment, uploadFailed } from '$lib/app/files';
 	import type { Attachment } from '$lib/ui/components/goal/Attachments.svelte';
+	import DeleteGoalSheet from '$lib/ui/components/goal/DeleteGoalSheet.svelte';
+	import type { PlanContext } from '$lib/ui/components/plan/PlanCard.svelte';
+	import { AHEAD_DAYS } from '$lib/app/calendar';
+	import { formatYmd, shiftDay } from '$lib/ui/format';
 
 	const DERIVED = 'derived';
 	const SHOWN_VERSIONS = 3;
@@ -126,6 +130,9 @@
 	);
 	const controls = $derived<AgentSettings | null>(goal ? { autonomy: goal.autonomy, reminders: goal.reminders, useCalendars: goal.use_calendars, runLimit: goal.run_limit_minutes } : null);
 	const status = $derived(goalStatus(chat.view, goal?.run_limit_minutes ?? settingsLimit, now));
+	const planContext = $derived<PlanContext | undefined>(
+		s && goal ? { busy: s.busy ?? [], actions: s.actions, goalId: goal.id, deadline: goal.deadline, knownUntil: shiftDay(formatYmd(clock.now, clock.zone), AHEAD_DAYS) } : undefined
+	);
 
 	/**
 	 * Saves changed agent controls (the autonomy level, or reminders, calendars and the run
@@ -146,6 +153,26 @@
 	async function onretry() {
 		await client.sync().catch(() => null);
 		await chat.retry();
+	}
+
+	let confirmDelete = $state(false);
+	let deleting = $state(false);
+
+	/** Deletes the goal (Q68), keeping its actions under Routines when `keepActions`, then opens Goals. */
+	async function deleteGoal(keepActions: boolean) {
+		const id = goal?.id;
+		if (!id || deleting) return;
+		deleting = true;
+		try {
+			await client.deleteGoal(id, keepActions);
+			confirmDelete = false;
+			await goto('/goals');
+			await data.load();
+		} catch (e) {
+			data.error = String(e);
+		} finally {
+			deleting = false;
+		}
 	}
 
 	/** Switches the dashboard to a plugin version, or to the derived view. */
@@ -184,9 +211,18 @@
 			onfiles={(list) => void uploadFiles(list)}
 			onretryfile={(key) => void retryUpload(key)}
 			onlink={(url) => attaching(() => client.attachLink(goal.id, url))}
+			{planContext}
 			onremove={(fid) => (retries.has(fid) ? ((retries.delete(fid)), (failed = failed.filter((f) => f.id !== fid))) : attaching(() => client.removeGoalFile(fid)))}
 		/>
 	{/key}
+	{#if places && goal.id !== places.routines_goal}
+		<div class="px-4 pt-2 pb-6">
+			<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-muted outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => (confirmDelete = true)}>Delete goal</button>
+		</div>
+	{/if}
+	{#if confirmDelete}
+		<DeleteGoalSheet title={goal.title} busy={deleting} ondelete={(keep) => void deleteGoal(keep)} onclose={() => (confirmDelete = false)} />
+	{/if}
 {:else if s}
 	<p class="p-4 text-sm text-muted">This goal no longer exists.</p>
 {/if}

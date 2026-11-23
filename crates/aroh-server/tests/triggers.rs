@@ -6,7 +6,7 @@ use aroh_domain::rows::{
     TrackerEntry, TrackerField, TrackerRule,
 };
 use aroh_server::db::{self, PgPool};
-use aroh_server::engine::{Engine, SetKey, StartReplan};
+use aroh_server::engine::{Engine, SetKey, StartGoal, StartReplan};
 use aroh_server::fake::{body_text, json_reply, sse_text, FnTransport};
 use aroh_server::insights;
 use aroh_server::rows::{put_row, utc, ServerClock};
@@ -497,4 +497,50 @@ async fn timezone_moves_every_review_of_the_owner() {
     assert_eq!(b.next_at.to_rfc3339(), "2026-11-25T12:30:00+00:00");
     assert_eq!(w.engine.review(other, theirs).await.unwrap().timezone, "Europe/Berlin");
     assert_eq!(w.engine.set_timezone(w.user, "America/New_York").await.unwrap(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_deleted_goal_stops_its_runs_and_jobs_and_never_comes_back() {
+    let w = world(move_reply("none")).await;
+    let goal = w.goal(Autonomy::Auto).await;
+    let _missed = w.action(goal, "2026-11-22T09:00:00Z").await;
+    let started = w
+        .engine
+        .start_replan(w.user, goal, StartReplan { reason: "Busy week.".into(), timezone: "Europe/Berlin".into() })
+        .await
+        .unwrap();
+    let current: String = db::query_scalar("select updated_at from public.goals where id = $1").bind(goal).fetch_one(&w.pool).await.unwrap();
+    let stamp = Hlc::new(DEVICE).stamp_after(&current).unwrap();
+    db::query("update public.goals set deleted = true, updated_at = $2 where id = $1").bind(goal).bind(&stamp).execute(&w.pool).await.unwrap();
+
+    w.tick().await;
+    let state: String = db::query_scalar("select state from public.runs where id = $1").bind(started.run_id).fetch_one(&w.pool).await.unwrap();
+    assert_eq!(state, "failed", "the run of a deleted goal is cancelled");
+    assert_eq!(w.count("select count(*) from public.jobs where user_id = $1 and status in ('queued', 'running')").await, 0);
+    assert!(w.seen.lock().unwrap().is_empty(), "no model call for a deleted goal");
+    assert_eq!(w.count("select count(*) from public.runs where user_id = $1").await, 1, "the scan starts nothing for it");
+    assert_eq!(w.count("select count(*) from public.proposals where user_id = $1").await, 0);
+    assert_eq!(w.count("select count(*) from public.review_schedules where user_id = $1 and enabled").await, 0);
+    assert_eq!(w.count("select count(*) from public.action_events where user_id = $1 and not handled").await, 0);
+
+    assert!(w.engine.retry(w.user, started.run_id).await.is_err(), "a run of a deleted goal is not retried");
+    let again = StartGoal {
+        goal_id: Some(goal),
+        title: "Six pack by Feb 1".into(),
+        context: None,
+        deadline: None,
+        category_id: None,
+        autonomy: None,
+        timezone: "Europe/Berlin".into(),
+        reminders: None,
+        use_calendars: None,
+        run_limit_minutes: None,
+    };
+    assert!(w.engine.start_goal(w.user, again).await.is_err(), "a deleted goal id is not planned again");
+    let deleted: bool = db::query_scalar("select deleted from public.goals where id = $1").bind(goal).fetch_one(&w.pool).await.unwrap();
+    assert!(deleted, "the server never resurrects a deleted goal");
+    w.later(31_000);
+    w.tick().await;
+    assert_eq!(w.count("select count(*) from public.runs where user_id = $1").await, 1);
 }

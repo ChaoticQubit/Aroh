@@ -398,6 +398,7 @@ impl Engine {
     /// Returns how many runs it started.
     pub async fn scan(&self, now: DateTime<Utc>) -> Result<usize, ServerError> {
         let pool = self.deps().pool.clone();
+        self.stop_deleted_goals(&pool).await?;
         derive_missed(&pool, now, None).await?;
         let mut started = 0;
         started += self.scan_events(&pool, now).await?;
@@ -406,6 +407,34 @@ impl Engine {
         started += self.scan_edits(&pool, now).await?;
         started += self.scan_away(&pool, now).await?;
         Ok(started)
+    }
+
+    /// Stops what the server still does for goals the owner deleted (Q68), whichever device
+    /// sent the tombstone: cancels their unfinished runs, turns off their weekly reviews and
+    /// marks their pending action events handled. Returns how many runs it cancelled.
+    pub async fn stop_deleted_goals(&self, pool: &db::PgPool) -> Result<usize, ServerError> {
+        let runs: Vec<(Uuid, Uuid)> = db::query_as(
+            "select r.user_id, r.id from public.runs r join public.goals g on g.user_id = r.user_id and g.id = r.goal_id
+             where g.deleted and r.state not in ('done', 'failed') order by r.id",
+        )
+        .fetch_all(pool)
+        .await?;
+        for (user, run) in &runs {
+            self.cancel(*user, *run).await?;
+        }
+        db::query(
+            "update public.review_schedules s set enabled = false from public.goals g
+             where g.user_id = s.user_id and g.id = s.goal_id and g.deleted and s.enabled",
+        )
+        .execute(pool)
+        .await?;
+        db::query(
+            "update public.action_events e set handled = true from public.goals g
+             where g.user_id = e.user_id and g.id = e.goal_id and g.deleted and not e.handled",
+        )
+        .execute(pool)
+        .await?;
+        Ok(runs.len())
     }
 
     async fn trigger_replan(&self, user: Uuid, goal: &Goal, source: Source, window: &str, reason: &str, now: DateTime<Utc>) -> Result<bool, ServerError> {

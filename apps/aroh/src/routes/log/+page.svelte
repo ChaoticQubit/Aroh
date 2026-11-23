@@ -3,6 +3,7 @@
 	import { getClock } from '$lib/ui/clock';
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
+	import { speech } from '$lib/app/speech.svelte';
 	import { checkInData, logView } from '$lib/app/views';
 
 	const clock = getClock();
@@ -18,5 +19,5 @@
 </script>
 
 {#if view}
-	<LogScreen {...view} {oncheckin} onlog={(text) => data.run(() => client.logText(text))} />
+	<LogScreen {...view} {oncheckin} onlog={(text) => data.run(() => client.logText(text))} voice={speech} />
 {/if}

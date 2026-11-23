@@ -3,7 +3,7 @@ use crate::error::ServerError;
 use crate::io::{connect, Deps, RunIo};
 use crate::ledger::{goal_key, user_key, UsageWriter};
 use crate::queue::PgQueue;
-use crate::rows::{get_row, insert_run, list_rows, prepare_reads, put_row, run_row, run_row_for, utc, RunRow};
+use crate::rows::{get_row, goal_deleted, insert_run, list_rows, prepare_reads, put_row, run_row, run_row_for, utc, RunRow};
 use crate::tools::local_text;
 use crate::vault::{check_vendor, KeyInfo};
 use crate::teams;
@@ -283,7 +283,7 @@ pub(crate) fn parse_tz(name: &str) -> Result<Tz, ServerError> {
 /// Joins a goal's `title` and optional `context` into one text.
 /// The team classifier in `teams` reads this text for keywords.
 /// Returns the joined text; an absent context adds nothing.
-fn about(title: &str, context: Option<&str>) -> String {
+pub(crate) fn about(title: &str, context: Option<&str>) -> String {
     format!("{title} {}", context.unwrap_or(""))
 }
 
@@ -508,7 +508,7 @@ impl Engine {
         let now = self.now();
         prepare_reads(&self.deps.pool, user, now, DEFAULT_WINDOW_DAYS).await?;
         let id = req.goal_id.unwrap_or_else(|| Uuid::now_v7());
-        let goal = match get_row::<Goal>(&self.deps.pool, user, &id.to_string()).await? {
+        let goal = match list_rows::<Goal>(&self.deps.pool, user, &[("id", id.to_string())], true).await?.pop() {
             Some(g) if !g.deleted => g,
             Some(_) => return Err(ServerError::NotFound(format!("goal {id}"))),
             None => {
@@ -544,6 +544,8 @@ impl Engine {
         let (busy, away_days) = self.busy(user, &goal, tz, now).await?;
         input.insert("busy".into(), json!(busy));
         input.insert("away_days".into(), json!(away_days));
+        input.insert("limits".into(), crate::limits::initial());
+        input.insert("limit_answers".into(), json!([]));
         let team = teams::for_goal(user, goal.category_id.as_deref(), &about(&goal.title, goal.context.as_deref()));
         let template = aroh_plugins::template(team.template).expect("every team template ships");
         input.insert("plugin_guide".into(), json!({"template": template, "reference": aroh_plugins::reference()}));
@@ -715,6 +717,11 @@ impl Engine {
     /// Returns `Conflict` for a run that is not stopped.
     pub async fn retry(&self, user: Uuid, run_id: Uuid) -> Result<(), ServerError> {
         let row = run_row_for(&self.deps.pool, user, RunId(run_id)).await?;
+        if let Some(goal) = row.goal_id {
+            if goal_deleted(&self.deps.pool, user, goal).await? {
+                return Err(ServerError::NotFound(format!("goal {goal}")));
+            }
+        }
         let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
         let cp = store.latest(row.id).await?.ok_or_else(|| ServerError::NotFound(format!("run {run_id}")))?;
         let mut run = GraphRun::from_checkpoint(&cp)?;
@@ -862,6 +869,13 @@ impl Engine {
             self.queue.fail(lease, "run row is gone").await?;
             return Err(ServerError::NotFound(format!("run {}", lease.run_id)));
         };
+        if let Some(goal) = row.goal_id {
+            if goal_deleted(&self.deps.pool, row.user_id, goal).await? {
+                self.cancel(row.user_id, row.id.0).await?;
+                self.queue.fail(lease, "the goal was deleted").await?;
+                return Ok(Processed::Lost);
+            }
+        }
         let events = Arc::new(EventBuffer::default());
         let io = match RunIo::build(self.deps.clone(), row.user_id, row.goal_id, Some(row.id), &row.personas, events.clone()).await {
             Ok(io) => io,

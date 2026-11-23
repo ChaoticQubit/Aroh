@@ -1,3 +1,4 @@
+import type { Tone } from '../components/StatusChip.svelte';
 import type { CategorySlot, ComponentSpec, Unit } from '../contract';
 
 /** Autonomy level as the screens label it (Q19). */
@@ -21,20 +22,16 @@ export type GoalHeader = {
 export type InboxItem = { id: string; spec: ComponentSpec };
 
 /** One agent run in progress, as the Inbox lists it. */
-export type RunView = { persona: string; title: string; step: string; progress: number; href?: string };
+export type RunView = { persona: string; title: string; step: string; progress: number; tone: Tone; working: boolean; href?: string };
 
 /** One model provider of the Settings dropdown. */
 export type ProviderView = { id: string; name: string; protocol: string; models: string[]; keySet: boolean; last4: string | null; selfHosted: boolean };
-
-/** One configured web search provider, in fallback order. */
-export type SearchView = { name: string; detail: string; keySet: boolean };
 
 /** Everything the Settings screen shows. Numbers are US dollars. */
 export type SettingsView = {
 	providers: ProviderView[];
 	providerId: string;
 	model: string;
-	search: SearchView[];
 	serverUrl: string;
 	budgetAll: number | null;
 	budgetGoal: number | null;

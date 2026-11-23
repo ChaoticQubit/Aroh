@@ -1,4 +1,5 @@
 import type { ChatMessage } from '$lib/ui/contract';
+import type { LimitsCard } from '$lib/ui/plan/limits';
 import * as client from './client';
 import { ACTIVE, chatFromRun, engine, fixedActionIds, NEEDS_ENGINE, questionsOf, type PlanItem, type RunEvent, type RunView } from './engine';
 import { fillNext, groupMessage, submissionOf, withAnswer, withSkip, type QuestionGroup } from './questions';
@@ -129,8 +130,10 @@ export class GoalChat {
 		this.live = chatFromRun(v);
 		const questions = v.status.status === 'waiting_human' ? questionsOf(v.waiting[0]) : [];
 		if (!questions.length) this.group = null;
-		else if (this.group?.runId !== v.run_id) {
-			this.group = { runId: v.run_id, prompt: v.waiting[0].prompt ?? 'Answer these so the plan fits you.', questions, values: {}, skipped: [], sending: false, error: null };
+		else if (this.group?.runId !== v.run_id || this.group.node !== v.waiting[0].node) {
+			const w = v.waiting[0];
+			const card = w.node === 'limit_choice' ? (((w.data.limits as { card?: LimitsCard | null } | undefined)?.card ?? null) as LimitsCard | null) : undefined;
+			this.group = { runId: v.run_id, node: w.node, prompt: w.prompt ?? 'Answer these so the plan fits you.', questions, values: {}, skipped: [], sending: false, error: null, card };
 		}
 	}
 
@@ -193,7 +196,7 @@ export class GoalChat {
 			return;
 		}
 		this.group = { ...g, sending: true, error: null };
-		const r = await engine.answer(g.runId, 'questions', answer);
+		const r = await engine.answer(g.runId, g.node, answer);
 		if (!r.ok) {
 			this.group = { ...g, sending: false, error: `Your answers were not sent: ${r.message}` };
 			return;

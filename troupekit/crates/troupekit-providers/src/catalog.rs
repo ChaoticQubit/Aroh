@@ -1,5 +1,6 @@
 use crate::middleware::MeteredModel;
 use crate::model::{valid_model_id, Endpoint, HttpModel, Model};
+use crate::request::CompletionResponse;
 use crate::transport::Transport;
 use crate::wire::{AuthStyle, Protocol, Quirks};
 use serde::{Deserialize, Serialize};
@@ -7,6 +8,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use troupekit_core::event::Usage;
 use troupekit_core::secret::Secret;
+use troupekit_core::tool::WEB_SEARCH;
 
 /// Why a catalog could not be loaded or a model could not be connected.
 /// Parse and Invalid come from `load`; the rest from selecting and
@@ -43,12 +45,15 @@ pub struct LongContextPrice {
 /// A model's prices in millionths of a US dollar per million tokens.
 /// `verified` is false when nobody checked them against the vendor's
 /// price page: budgets must not read an unverified zero as free.
+/// `search_usd_micros` is the vendor's fee per hosted web search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Price {
     pub input_usd_micros_per_mtok: u64,
     pub output_usd_micros_per_mtok: u64,
     pub verified: bool,
     pub long_context: Option<LongContextPrice>,
+    #[serde(default)]
+    pub search_usd_micros: u64,
 }
 
 impl Price {
@@ -60,7 +65,17 @@ impl Price {
         output_usd_micros_per_mtok: 0,
         verified: true,
         long_context: None,
+        search_usd_micros: 0,
     };
+
+    /// Cost of one finished `reply`: its tokens plus the fee of every
+    /// hosted web search it ran. A failed search is counted too, so the
+    /// figure never under-counts. Saturates at `u64::MAX`.
+    pub fn reply_cost_usd_micros(&self, reply: &CompletionResponse) -> u64 {
+        let searches = reply.message.hosted_calls(WEB_SEARCH);
+        self.cost_usd_micros(&reply.usage)
+            .saturating_add(searches.saturating_mul(self.search_usd_micros))
+    }
 
     /// Cost of `usage` in millionths of a dollar, rounded up so budgets
     /// never under-count. Long-context rates apply to the whole call once
@@ -106,6 +121,7 @@ impl ModelSpec {
             output_usd_micros_per_mtok: self.output_usd_micros_per_mtok,
             verified: self.price_verified,
             long_context: self.long_context,
+            search_usd_micros: 0,
         }
     }
 }
@@ -113,7 +129,7 @@ impl ModelSpec {
 /// One vendor in the catalog: how to reach it and which models it serves.
 /// `open_models` vendors (local servers) also accept model ids the
 /// catalog does not list, at a verified zero price. `price_source` is the
-/// vendor's price page that verified paid prices were checked against.
+/// vendor's price page that verified paid prices were checked against; `search_usd_micros` its fee per hosted web search.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VendorSpec {
@@ -128,6 +144,8 @@ pub struct VendorSpec {
     pub open_models: bool,
     #[serde(default)]
     pub quirks: Quirks,
+    #[serde(default)]
+    pub search_usd_micros: u64,
     #[serde(default, rename = "model")]
     pub models: Vec<ModelSpec>,
 }
@@ -234,7 +252,11 @@ impl Catalog {
             .vendor(vendor_id)
             .ok_or_else(|| CatalogError::UnknownVendor(vendor_id.to_owned()))?;
         if let Some(model) = vendor.models.iter().find(|m| m.id == model_id) {
-            return Ok((vendor, model.id.clone(), model.price()));
+            let price = Price {
+                search_usd_micros: vendor.search_usd_micros,
+                ..model.price()
+            };
+            return Ok((vendor, model.id.clone(), price));
         }
         match (vendor.open_models, valid_model_id(model_id)) {
             (true, true) => Ok((vendor, model_id.to_owned(), Price::FREE)),

@@ -112,6 +112,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_snapshot,
+            commands::dashboard::app_dashboard,
+            commands::dashboard::app_dev_dashboard_seed,
             commands::app::app_tick,
             commands::app::app_set_action_status,
             commands::app::app_add_entry,
@@ -142,6 +144,7 @@ pub fn run() {
             commands::goals::attach_file,
             commands::goals::attach_link,
             commands::goals::remove_goal_file,
+            commands::goals::delete_goal,
             commands::plugins::plugins_list,
             commands::plugins::plugins_enable,
             commands::plugins::plugins_save,

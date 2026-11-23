@@ -1,5 +1,5 @@
 use crate::evals::{parse_local, slots};
-use crate::rows::{get_row, materialize, put_row, utc, ServerClock};
+use crate::rows::{get_row, goal_deleted, materialize, put_row, utc, ServerClock};
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{
     self, Action, ActionSeries, ActionStatus, FieldKind, GoalStatus, Proposal, ProposalSize, ProposalStatus, Tracker,
@@ -31,6 +31,16 @@ pub struct ToolEnv {
 impl ToolEnv {
     fn goal(&self) -> Result<Uuid, ToolError> {
         self.goal.ok_or_else(|| ToolError::Failed("this run has no goal".into()))
+    }
+
+    /// The run's goal while it is live; fails once the owner deleted it (Q68), so a run
+    /// caught mid-step writes no plan, proposal or plugin for a deleted goal.
+    async fn live_goal(&self) -> Result<Uuid, ToolError> {
+        let goal = self.goal()?;
+        if goal_deleted(&self.pool, self.user, goal).await.map_err(failed)? {
+            return Err(ToolError::Failed("this goal was deleted".into()));
+        }
+        Ok(goal)
     }
 
     fn now(&self) -> DateTime<Utc> {
@@ -208,10 +218,15 @@ pub struct Plan {
 #[derive(Deserialize, JsonSchema)]
 struct PlanArgs {
     plan: Plan,
+    #[serde(default)]
+    limits: Option<Value>,
 }
 
-async fn write_plan(env: &ToolEnv, plan: &Plan, ctx: &ToolContext) -> Result<Value, ToolError> {
-    let goal = env.goal()?;
+/// Stores an approved plan as actions, series and trackers, activates a draft
+/// goal and, when the owner moved the date on the limits card (B41), sets the
+/// goal's deadline to `move_to`. Returns the counts it wrote.
+async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, ctx: &ToolContext) -> Result<Value, ToolError> {
+    let goal = env.live_goal().await?;
     let tz = timezone(&plan.timezone)?;
     let (user, goal_text) = (env.user.to_string(), goal.to_string());
     let (mut actions, mut series_count, mut occurrences) = (0, 0, 0);
@@ -286,8 +301,14 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, ctx: &ToolContext) -> Result<Val
         put_row(&env.pool, &env.hlc, env.user, &mut tracker).await.map_err(failed)?;
     }
     if let Some(mut g) = get_row::<rows::Goal>(&env.pool, env.user, &goal_text).await.map_err(failed)? {
-        if g.status == GoalStatus::Draft {
-            g.status = GoalStatus::Active;
+        let moved = move_to.filter(|d| g.deadline.as_deref() != Some(*d));
+        if g.status == GoalStatus::Draft || moved.is_some() {
+            if g.status == GoalStatus::Draft {
+                g.status = GoalStatus::Active;
+            }
+            if let Some(d) = moved {
+                g.deadline = Some(d.to_string());
+            }
             put_row(&env.pool, &env.hlc, env.user, &mut g).await.map_err(failed)?;
         }
     }
@@ -391,7 +412,7 @@ fn span_of(a: &Action) -> Span {
 }
 
 async fn record_proposal(env: &ToolEnv, args: RecordArgs, ctx: &ToolContext) -> Result<Value, ToolError> {
-    let goal = env.goal()?;
+    let goal = env.live_goal().await?;
     let tz = timezone(&args.goal.timezone)?;
     let size: ProposalSize = serde_json::from_value(json!(args.proposal.size))
         .map_err(|_| ToolError::InvalidArgs("size must be small or big".into()))?;
@@ -625,7 +646,7 @@ struct StorePluginArgs {
 }
 
 async fn store_plugin(env: &ToolEnv, draft: &PluginDraft, ctx: &ToolContext) -> Result<Value, ToolError> {
-    let goal = env.goal()?;
+    let goal = env.live_goal().await?;
     let writer = crate::plugins::Writer { pool: &env.pool, hlc: &env.hlc, user: env.user };
     let row = writer.store(goal, &draft.bundle_toml, row_id(ctx, "plugin")?, true).await.map_err(|e| match e {
         crate::error::ServerError::Setup(m) => ToolError::InvalidArgs(m),
@@ -645,7 +666,10 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
     let e1 = env.clone();
     let write = typed_tool("write_plan", "Store an approved plan as actions, series and trackers.", move |a: PlanArgs, ctx: ToolContext| {
         let env = e1.clone();
-        async move { write_plan(&env, &a.plan, &ctx).await.map(json_output) }
+        async move {
+            let move_to = a.limits.as_ref().and_then(|l| l.get("move_to")).and_then(Value::as_str);
+            write_plan(&env, &a.plan, move_to, &ctx).await.map(json_output)
+        }
     });
     let e2 = env.clone();
     let record = typed_tool("record_proposal", "Store a plan change as a proposal for the Inbox.", move |a: RecordArgs, ctx: ToolContext| {

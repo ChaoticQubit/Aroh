@@ -206,6 +206,7 @@ pub(crate) mod tests {
                     name: name.into(),
                     description: "echo q".into(),
                     schema,
+                    hosted: None,
                 },
                 calls: AtomicUsize::new(0),
             })

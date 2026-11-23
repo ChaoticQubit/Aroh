@@ -307,6 +307,7 @@ async fn meter_fills_in_the_cost() {
         output_usd_micros_per_mtok: 15_000_000,
         verified: true,
         long_context: None,
+        search_usd_micros: 0,
     };
     let (inner, _) = fake("a", vec![Step::Reply, Step::Reply]);
     let model = MeteredModel::new(inner, price);

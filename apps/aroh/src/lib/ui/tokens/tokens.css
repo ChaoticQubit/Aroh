@@ -68,3 +68,17 @@
 :root {
 	--danger: var(--status-missed);
 }
+:root {
+	--chart-1: #e5383b; --chart-2: #0891b2; --chart-3: #16a34a; --chart-4: #d97706; --chart-5: #7c3aed; --chart-6: #d6409f;
+	--chart-cat-1: var(--cat-1); --chart-cat-2: var(--cat-2); --chart-cat-3: var(--cat-3); --chart-cat-4: var(--cat-4); --chart-cat-5: var(--cat-5); --chart-cat-6: var(--cat-6);
+}
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) {
+		--chart-4: #d06f00;
+		--chart-cat-1: #4f94e8; --chart-cat-2: #00b055; --chart-cat-3: #b88c00; --chart-cat-4: #ad71e7; --chart-cat-5: #d9730b; --chart-cat-6: #00ac98;
+	}
+}
+:root[data-theme='dark'] {
+	--chart-4: #d06f00;
+	--chart-cat-1: #4f94e8; --chart-cat-2: #00b055; --chart-cat-3: #b88c00; --chart-cat-4: #ad71e7; --chart-cat-5: #d9730b; --chart-cat-6: #00ac98;
+}

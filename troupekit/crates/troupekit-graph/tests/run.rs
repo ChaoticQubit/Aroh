@@ -20,7 +20,7 @@ const PRICE: Price = Price {
     input_usd_micros_per_mtok: 1_000_000,
     output_usd_micros_per_mtok: 2_000_000,
     verified: true,
-    long_context: None,
+    long_context: None, search_usd_micros: 0,
 };
 
 fn last_user(req: &CompletionRequest) -> String {

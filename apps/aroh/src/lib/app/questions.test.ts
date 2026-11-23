@@ -17,7 +17,7 @@ describe('question inputs', () => {
 
 	it('a typed number past the fallback bounds is kept and the slider reaches it (build 2: 315 pages became 100)', () => {
 		const q = { id: 'pages_read', text: 'Pages read so far?', kind: 'number' as const, choices: [], unit: 'pages' };
-		const g: QuestionGroup = { runId: 'r1', prompt: 'Answer these.', questions: [q], values: {}, skipped: [], sending: false, error: null };
+		const g: QuestionGroup = { runId: 'r1', node: 'questions', prompt: 'Answer these.', questions: [q], values: {}, skipped: [], sending: false, error: null };
 		const input = groupMessage(withAnswer(g, 'pages_read', typedNumber(315, 1))).items[0].input;
 		expect(input).toMatchObject({ kind: 'number_input', value: 315, ...FALLBACK_BOUNDS });
 		if (input.kind !== 'number_input') throw new Error('number question renders a number input');
@@ -37,7 +37,7 @@ describe('question inputs', () => {
 describe('still true checks', () => {
 	it('a question the profile answers shows its known value and source, and Yes sends that value', () => {
 		const known = { fact_id: 'f1', value: '30 min', source: 'your answer on Run a 5k' };
-		const g: QuestionGroup = { runId: 'r1', prompt: 'Answer these.', questions: [{ id: 'minutes', text: 'Minutes a day?', kind: 'text', choices: [], known }, { id: 'old', text: 'Old?', kind: 'text', choices: [] }], values: {}, skipped: [], sending: false, error: null };
+		const g: QuestionGroup = { runId: 'r1', node: 'questions', prompt: 'Answer these.', questions: [{ id: 'minutes', text: 'Minutes a day?', kind: 'text', choices: [], known }, { id: 'old', text: 'Old?', kind: 'text', choices: [] }], values: {}, skipped: [], sending: false, error: null };
 		const m = groupMessage(g);
 		expect(m.items[0].known).toEqual({ value: '30 min', source: 'From your answer on Run a 5k' });
 		expect(m.items[1].known).toBeUndefined();
@@ -51,7 +51,7 @@ describe('still true checks', () => {
 describe('chat scroll around a question group (build 1 feedback)', () => {
 	it('shows a new group from its first question, stays put while the owner answers, and follows later messages', () => {
 		const q = (id: string) => ({ id, text: `${id}?`, kind: 'number' as const, choices: [], unit: 'chapters', min: 0, max: 30 });
-		const g: QuestionGroup = { runId: 'r1', prompt: 'Answer these.', questions: [q('a'), q('b')], values: {}, skipped: [], sending: false, error: null };
+		const g: QuestionGroup = { runId: 'r1', node: 'questions', prompt: 'Answer these.', questions: [q('a'), q('b')], values: {}, skipped: [], sending: false, error: null };
 		const say = { type: 'message' as const, from: 'persona' as const, name: 'Aroh', text: 'Hi' };
 		const first = scrollFor([say, groupMessage(g)], null);
 		expect(first.to).toBe('group');

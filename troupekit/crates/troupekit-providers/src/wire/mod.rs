@@ -101,7 +101,7 @@ pub fn encode(
     req: &CompletionRequest,
     stream: bool,
 ) -> Result<Value, ProviderError> {
-    let req = &req.without_blank_text()?;
+    let req = &req.sendable(protocol == Protocol::Anthropic)?;
     match protocol {
         Protocol::Anthropic => anthropic::encode(quirks, model, req, stream),
         Protocol::OpenAi | Protocol::OpenAiCompatible => openai::encode(quirks, model, req, stream),

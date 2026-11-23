@@ -175,13 +175,29 @@ impl Api {
     }
 }
 
+/// The fitness intake a coach asks (Q59): runs a week first, then the daily
+/// minutes cap and the body, activity, diet and injury facts the
+/// `coach_questions` eval needs for a fitness goal.
+fn coach_intake() -> Value {
+    let q = |id: &str, text: &str| json!({"id": id, "text": text, "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null});
+    json!({"questions": [
+        {"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7, "lasting": null, "known": null},
+        {"id": "daily_minutes", "text": "How many minutes a day can you give this?", "kind": "number", "choices": [], "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null},
+        q("weight_kg", "What is your body weight now?"),
+        q("height_cm", "How tall are you?"),
+        q("activity", "How active are you on a normal day?"),
+        q("diet", "Do you eat meat, or are you vegetarian or vegan?"),
+        q("injuries", "Any injuries or pain to plan around?"),
+    ]})
+}
+
 fn plan() -> Value {
     json!({
         "summary": "Three easy runs a week and new shoes.",
-        "timezone": "Europe/Berlin",
+        "timezone": "Europe/Berlin", "daily_minutes": null, "needed_minutes": null,
         "items": [
-            {"title": "Easy run", "start": "2026-11-23T07:00:00", "minutes": 30, "rrule": "FREQ=WEEKLY;BYDAY=MO,WE,FR", "notes": null},
-            {"title": "Buy running shoes", "start": "2026-11-24T18:00:00", "minutes": 45, "rrule": null, "notes": "Gait check"}
+            {"title": "Easy run", "start": "2026-11-23T07:00:00", "minutes": 30, "rrule": "FREQ=WEEKLY;BYDAY=MO,WE,FR", "notes": "Run 1 min, walk 2 min, eight rounds"},
+            {"title": "Buy running shoes", "start": "2026-11-24T18:00:00", "minutes": 30, "rrule": null, "notes": "Gait check"}
         ],
         "trackers": [{"name": "Runs", "fields": [
             {"key": "distance_km", "label": "Distance", "kind": "number", "unit": "km"},
@@ -264,7 +280,7 @@ fn goal_models_with(builder: impl Fn(&str) -> Reply + Send + Sync + 'static) -> 
                 "stop_reason": "max_tokens", "usage": {"input_tokens": 5, "output_tokens": 1}}));
         }
         if body.contains("You are Intake interviewer") {
-            return sse_text(&json!({"questions": [{"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7, "lasting": null, "known": null}]}).to_string());
+            return sse_text(&coach_intake().to_string());
         }
         if body.contains("You are Goal researcher") {
             if body.contains("tool_result") {
@@ -710,15 +726,15 @@ async fn planner_repairs_a_plan_over_busy_time() {
     let models = FnTransport::new(|req| {
         let body = body_text(req);
         if body.contains("You are Intake interviewer") {
-            return sse_text(&json!({"questions": [{"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7, "lasting": null, "known": null}]}).to_string());
+            return sse_text(&coach_intake().to_string());
         }
         if body.contains("You are Goal researcher") {
             return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
         }
         if body.contains("You are Goal planner") {
             let start = if body.contains("overlaps busy") { "2026-11-23T07:00:00" } else { "2026-11-23T09:15:00" };
-            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [],
-                "items": [{"title": "Easy run", "start": start, "minutes": 30, "rrule": null, "notes": null}]});
+            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [], "daily_minutes": null, "needed_minutes": null,
+                "items": [{"title": "Easy run", "start": start, "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
             return sse_text(&plan.to_string());
         }
         json_reply(400, json!({}))
@@ -893,10 +909,10 @@ async fn triage_rejects_bad_requests() {
 fn music_plan() -> Value {
     json!({
         "summary": "Learn Clair de Lune section by section, then raise the tempo.",
-        "timezone": "Europe/Berlin",
+        "timezone": "Europe/Berlin", "daily_minutes": null, "needed_minutes": null,
         "items": [
             {"title": "Piano practice: bars 1 to 14", "start": "2026-11-23T19:00:00", "minutes": 30, "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA", "notes": "Hands separately, slow"},
-            {"title": "Record a run-through", "start": "2026-11-29T11:00:00", "minutes": 20, "rrule": null, "notes": null}
+            {"title": "Record a run-through", "start": "2026-11-29T11:00:00", "minutes": 20, "rrule": null, "notes": "Play it through twice, slow"}
         ],
         "trackers": [
             {"name": "Practice", "fields": [{"key": "minutes", "label": "Practice", "kind": "number", "unit": "min"}], "cadence": {"freq": "daily", "weekdays": [], "at": "20:00"}, "rules": null},
@@ -917,7 +933,7 @@ fn music_models() -> Arc<FnTransport> {
             return builder_reply(aroh_plugins::template("music").unwrap());
         }
         if body.contains("You are Intake interviewer") {
-            return sse_text(&json!({"questions": [{"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null}]}).to_string());
+            return sse_text(&json!({"questions": [{"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null}, {"id": "daily_minutes", "text": "Minutes a day to practise?", "kind": "number", "choices": [], "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null}]}).to_string());
         }
         if body.contains("You are Instrument teacher") {
             return sse_text(&json!({"summary": "Learn it in four sections, slow practice first.", "sources": [{"title": "Clair de Lune guide", "url": "https://example.org/clair"}]}).to_string());
@@ -956,7 +972,7 @@ async fn a_music_goal_runs_with_the_music_team_category_and_template() {
     assert_eq!(api.goal_category(&goal).await, aroh_server::teams::seeded_id(u, "hobby-skill"));
 
     api.tick().await;
-    api.answer(&t, &run, "questions", json!([{"id": "level", "answer": "Two years"}])).await;
+    api.answer(&t, &run, "questions", json!([{"id": "level", "answer": "Two years"}, {"id": "daily_minutes", "answer": "30"}])).await;
     api.tick().await;
     let view = api.run(&t, &run).await;
     assert_eq!(view["waiting"][0]["node"], "approve", "{view}");
@@ -1093,7 +1109,7 @@ fn reading_intake() -> Value {
     };
     json!({"questions": [
         q("chapters_done", "number", "How many chapters of The Joy of X have you finished?", json!([]), json!("chapters"), json!(0), json!(30)),
-        q("daily_reading_minutes", "number", "How many minutes a day can you read?", json!([]), json!("minutes per day"), json!(0), json!(180)),
+        q("daily_minutes", "number", "How many minutes a day can you read?", json!([]), json!("minutes per day"), json!(0), json!(180)),
         q("preferred_reading_time", "choice", "When do you prefer to read?", json!(["Early morning", "Midday", "Evening", "Late night", "It varies"]), Value::Null, Value::Null, Value::Null),
         q("reading_days", "number", "How many days this week can you read?", json!([]), json!("days"), json!(1), json!(7)),
         q("book_format", "choice", "What format are you reading the book in?", json!(["Print book", "E-reader", "Phone or tablet", "Audiobook"]), Value::Null, Value::Null, Value::Null),
@@ -1153,7 +1169,7 @@ async fn questions_take_string_answers_and_skips_and_old_runs_still_submit() {
     assert_eq!(api.post_answers(&t, &run, json!([{"id": "chapters_done", "answer": 4}])).await, 409, "numbers are posted as strings");
     let answers = json!([
         {"id": "chapters_done", "answer": "4"},
-        {"id": "daily_reading_minutes", "answer": "30"},
+        {"id": "daily_minutes", "answer": "30"},
         {"id": "preferred_reading_time", "answer": null},
         {"id": "reading_days", "answer": "5"},
         {"id": "book_format", "answer": null},
@@ -1168,7 +1184,7 @@ async fn questions_take_string_answers_and_skips_and_old_runs_still_submit() {
     assert!(planner.contains("sensible default"), "the planner is told what to do with skipped questions");
 
     let all_skipped = api.reading_goal(&t).await;
-    let skips: Vec<Value> = ["chapters_done", "daily_reading_minutes", "preferred_reading_time", "reading_days", "book_format", "busy_days_limits"]
+    let skips: Vec<Value> = ["chapters_done", "daily_minutes", "preferred_reading_time", "reading_days", "book_format", "busy_days_limits"]
         .iter()
         .map(|id| json!({"id": id, "answer": null}))
         .collect();
@@ -1184,7 +1200,7 @@ async fn questions_take_string_answers_and_skips_and_old_runs_still_submit() {
         .unwrap();
     let mixed = json!([
         {"id": "chapters_done", "answer": "4"},
-        {"id": "daily_reading_minutes", "answer": null},
+        {"id": "daily_minutes", "answer": null},
         {"id": "preferred_reading_time", "answer": "Evening"},
         {"id": "reading_days", "answer": "5"},
         {"id": "book_format", "answer": "Print book"},
@@ -1196,7 +1212,7 @@ async fn questions_take_string_answers_and_skips_and_old_runs_still_submit() {
         .fetch_one(&api.pool)
         .await
         .unwrap();
-    assert_eq!(state["state"]["answers"][1], json!({"id": "daily_reading_minutes", "answer": "skipped"}));
+    assert_eq!(state["state"]["answers"][1], json!({"id": "daily_minutes", "answer": "skipped"}));
 }
 
 /// Reading models where each planner call takes `ms` of active work on the
@@ -1232,7 +1248,7 @@ async fn a_run_stops_at_its_active_time_limit_and_the_owner_can_stop_and_retry_i
 
     let run = api.reading_goal(&t).await;
     api.clock.advance(3_600_000);
-    let skips: Vec<Value> = ["chapters_done", "daily_reading_minutes", "preferred_reading_time", "reading_days", "book_format", "busy_days_limits"]
+    let skips: Vec<Value> = ["chapters_done", "daily_minutes", "preferred_reading_time", "reading_days", "book_format", "busy_days_limits"]
         .iter()
         .map(|id| json!({"id": id, "answer": null}))
         .collect();
@@ -1295,6 +1311,7 @@ fn profile_models() -> Arc<FnTransport> {
                 {"id": "runs_done", "text": "Runs done so far?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null},
                 {"id": "when", "text": "When do you run?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": {"topic": "time_of_day", "label": "Running time of day"}, "known": null},
                 {"id": "weight", "text": "Your weight?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": {"topic": "weight", "label": "Body weight"}, "known": null},
+                {"id": "body", "text": "How tall are you, how active are you, what do you eat, and any injuries?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null},
             ]);
             return sse_text(&json!({"questions": questions}).to_string());
         }
@@ -1302,8 +1319,8 @@ fn profile_models() -> Arc<FnTransport> {
             return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
         }
         if body.contains("You are Goal planner") {
-            let plan = json!({"summary": "One run.", "timezone": "UTC", "trackers": [],
-                "items": [{"title": "Easy run", "start": "2026-11-23T09:15:00", "minutes": 30, "rrule": null, "notes": null}]});
+            let plan = json!({"summary": "One run.", "timezone": "UTC", "trackers": [], "daily_minutes": null, "needed_minutes": null,
+                "items": [{"title": "Easy run", "start": "2026-11-23T09:15:00", "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
             return sse_text(&plan.to_string());
         }
         json_reply(400, json!({}))
@@ -1335,7 +1352,7 @@ async fn lasting_answers_become_facts_and_known_questions_update_them() {
     let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "UTC"}))).await;
     let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
     api.tick().await;
-    let answers = json!([{"id": "minutes", "answer": "30 min"}, {"id": "runs_done", "answer": "2"}, {"id": "when", "answer": null}, {"id": "weight", "answer": "70 kg"}]);
+    let answers = json!([{"id": "minutes", "answer": "30 min"}, {"id": "runs_done", "answer": "2"}, {"id": "when", "answer": null}, {"id": "weight", "answer": "70 kg"}, {"id": "body", "answer": null}]);
     api.answer(&t, &run, "questions", answers).await;
     api.tick().await;
     assert_eq!(api.run(&t, &run).await["waiting"][0]["node"], "approve");
@@ -1356,7 +1373,7 @@ async fn lasting_answers_become_facts_and_known_questions_update_them() {
     let view = api.run(&t, &run).await;
     assert_eq!(view["waiting"][0]["data"]["intake"]["questions"][0]["known"]["value"], "30 min", "the intake read the profile: {view}");
     api.clock.advance(86_400_000);
-    api.answer(&t, &run, "questions", json!([{"id": "minutes", "answer": "45 min"}, {"id": "runs_done", "answer": null}, {"id": "when", "answer": null}, {"id": "weight", "answer": null}])).await;
+    api.answer(&t, &run, "questions", json!([{"id": "minutes", "answer": "45 min"}, {"id": "runs_done", "answer": null}, {"id": "when", "answer": null}, {"id": "weight", "answer": null}, {"id": "body", "answer": null}])).await;
     api.tick().await;
     assert_eq!(api.run(&t, &run).await["waiting"][0]["node"], "approve");
     let kept = facts(&api, u).await;
@@ -1391,7 +1408,7 @@ async fn a_run_waiting_before_the_profile_node_resumes_on_its_own_graph() {
 
     let answers = json!([
         {"id": "chapters_done", "answer": "4"},
-        {"id": "daily_reading_minutes", "answer": "30"},
+        {"id": "daily_minutes", "answer": "30"},
         {"id": "preferred_reading_time", "answer": "Evening"},
         {"id": "reading_days", "answer": "5"},
         {"id": "book_format", "answer": null},
@@ -1427,7 +1444,7 @@ async fn a_goal_run_limit_overrides_the_settings_limit() {
         .unwrap();
     assert_eq!(stored, (Some(10), false, true));
     api.tick().await;
-    let skips: Vec<Value> = ["chapters_done", "daily_reading_minutes", "preferred_reading_time", "reading_days", "book_format", "busy_days_limits"]
+    let skips: Vec<Value> = ["chapters_done", "daily_minutes", "preferred_reading_time", "reading_days", "book_format", "busy_days_limits"]
         .iter()
         .map(|id| json!({"id": id, "answer": null}))
         .collect();
@@ -1447,14 +1464,14 @@ async fn a_goal_that_skips_calendars_plans_without_busy_time() {
     let models = FnTransport::new(|req| {
         let body = body_text(req);
         if body.contains("You are Intake interviewer") {
-            return sse_text(&json!({"questions": [{"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7, "lasting": null, "known": null}]}).to_string());
+            return sse_text(&coach_intake().to_string());
         }
         if body.contains("You are Goal researcher") {
             return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
         }
         if body.contains("You are Goal planner") {
-            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [],
-                "items": [{"title": "Easy run", "start": "2026-11-23T09:15:00", "minutes": 30, "rrule": null, "notes": null}]});
+            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [], "daily_minutes": null, "needed_minutes": null,
+                "items": [{"title": "Easy run", "start": "2026-11-23T09:15:00", "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
             return sse_text(&plan.to_string());
         }
         json_reply(400, json!({}))
@@ -1547,4 +1564,49 @@ async fn research_runs_first_and_without_search_the_interviewer_asks_for_what_it
     let intake = &bodies[first("You are Intake interviewer")];
     assert!(intake.contains("chapter count is unknown"), "the interviewer reads the research, so it can ask for what search could not find");
     assert_eq!(api.run(&t, &run).await["waiting"][0]["node"], "questions");
+}
+
+/// Models for the limits flow (Q64): a reading intake with the daily cap, and
+/// a planner whose 20 minutes a day need until Dec 15 for a Dec 5 target.
+fn limits_models() -> Arc<FnTransport> {
+    FnTransport::new(|req| {
+        let body = body_text(req);
+        if body.contains("You are Intake interviewer") {
+            return sse_text(&json!({"questions": [
+                {"id": "chapters_done", "text": "How many chapters have you read so far?", "kind": "number", "choices": [], "unit": "chapters", "min": 0, "max": 30, "lasting": null, "known": null},
+                {"id": "daily_minutes", "text": "How many minutes a day can you read?", "kind": "number", "choices": [], "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null}
+            ]}).to_string());
+        }
+        if body.contains("You are Tutor") {
+            return sse_text(&json!({"summary": "The book has 22 chapters of about 20 minutes each.", "sources": []}).to_string());
+        }
+        if body.contains("You are Practice planner") {
+            return sse_text(&json!({"summary": "One chapter a day.", "timezone": "UTC", "trackers": [], "daily_minutes": 20, "needed_minutes": 440,
+                "items": [{"title": "Read", "start": "2026-11-24T20:00:00", "minutes": 20, "rrule": "FREQ=DAILY", "notes": "Next chapter"}]}).to_string());
+        }
+        json_reply(400, json!({}))
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_plan_late_for_its_date_asks_the_owner_before_approval() {
+    let api = api(limits_models(), offline()).await;
+    let (_, t) = api.signed_up().await;
+    let body = json!({"title": "Finish reading The Joy of X", "deadline": "2026-12-05", "timezone": "UTC"});
+    let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(body)).await;
+    assert_eq!(status, 202, "{started}");
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "chapters_done", "answer": "0"}, {"id": "daily_minutes", "answer": "20"}])).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "limit_choice", "{view}");
+    let card = &view["waiting"][0]["data"]["limits"]["questions"];
+    assert_eq!(card[0]["text"], "At 20 min/day you finish on Dec 15, 10 days after your target. What should change?", "{card}");
+    assert_eq!(card[0]["choices"], json!(["Move the date to Dec 15", "Raise the daily minutes", "Lower the target"]));
+    api.answer(&t, &run, "limit_choice", json!([{"id": "limit_choice", "answer": "Move the date to Dec 15"}, {"id": "new_minutes", "answer": null}])).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "approve", "the moved date fits: {view}");
 }

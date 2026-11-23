@@ -193,6 +193,9 @@ export const attachLink = (goalId: string, url: string) => invoke<GoalFile>('att
 /** Removes goal file `id`. */
 export const removeGoalFile = (id: string) => invoke<void>('remove_goal_file', { id });
 
+/** Deletes goal `goalId` (Q68); `keepActions` keeps its actions on the calendar under Routines. */
+export const deleteGoal = (goalId: string, keepActions: boolean) => invoke<void>('delete_goal', { goalId, keepActions });
+
 /** Sets a goal's reminders, calendar reads and run time limit in minutes (null: the Settings limit). */
 export const setGoalControls = (goalId: string, reminders: boolean, useCalendars: boolean, runLimitMinutes: number | null) =>
 	invoke<Goal>('set_goal_controls', { goalId, reminders, useCalendars, runLimitMinutes });

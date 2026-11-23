@@ -1,11 +1,12 @@
 <script lang="ts">
 	import '../app.css';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
-	import { onMount, type Snippet } from 'svelte';
+	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
+	import { onMount, tick, type Snippet } from 'svelte';
 	import PhoneShell from '$lib/ui/shell/PhoneShell.svelte';
 	import DesktopShell from '$lib/ui/shell/DesktopShell.svelte';
-	import type { TabId } from '$lib/ui/shell/nav';
+	import type { Place } from '$lib/ui/shell/nav';
+	import { backTarget, nextStack, screenTitle } from '$lib/ui/shell/back';
 	import { data } from '$lib/app/data.svelte';
 	import SetupScreen from '$lib/ui/screens/SetupScreen.svelte';
 	import { healthConnect, notificationPermission, setSetting } from '$lib/app/client';
@@ -16,12 +17,36 @@
 
 	let { children }: { children: Snippet } = $props();
 
-	const TITLES: Record<TabId | 'settings', string> = { today: 'Today', calendar: 'Calendar', goals: 'Goals', inbox: 'Inbox', log: 'Log', settings: 'Settings' };
-	const SUBTITLES: Record<string, string> = { '/settings/location': 'Location', '/settings/location/log': 'Location log', '/settings/places': 'Places', '/settings/profile': 'What Aroh knows' };
+	const PLACES: Place[] = ['today', 'calendar', 'goals', 'dashboard', 'log', 'inbox', 'settings'];
 	const bare = $derived((page.data as { bare?: boolean }).bare === true);
 	const coaches = $derived(page.url.pathname.startsWith('/personas'));
-	const tab = $derived((Object.keys(TITLES) as (TabId | 'settings')[]).find((t) => page.url.pathname.startsWith(`/${t}`)) ?? (coaches ? (page.url.searchParams.has('goal') ? 'goals' : 'settings') : 'today'));
-	const title = $derived(coaches ? 'Coaches' : page.url.pathname === '/goals/new' ? 'New goal' : /^\/goals\/[^/]+\/chat$/.test(page.url.pathname) ? 'Goal chat' : (SUBTITLES[page.url.pathname] ?? TITLES[tab]));
+	const tab = $derived(PLACES.find((t) => page.url.pathname.startsWith(`/${t}`)) ?? (coaches ? (page.url.searchParams.has('goal') ? 'goals' : 'settings') : 'today'));
+	const title = $derived(screenTitle(page.url.pathname + page.url.search));
+	let stack = $state<string[]>([]);
+	const back = $derived(stack.length ? backTarget(stack) : null);
+	const scrolls = new Map<string, number>();
+	const scroller = () => document.querySelector<HTMLElement>('main');
+
+	beforeNavigate(({ from }) => {
+		const main = scroller();
+		if (from && main) scrolls.set(from.url.pathname + from.url.search, main.scrollTop);
+	});
+
+	afterNavigate(async ({ to, type }) => {
+		if (!to) return;
+		const here = to.url.pathname + to.url.search;
+		stack = nextStack(stack, here, type);
+		await tick();
+		const main = scroller();
+		if (main) main.scrollTop = type === 'popstate' ? (scrolls.get(here) ?? 0) : 0;
+	});
+
+	/** Goes back (Q66): a history step to the previous screen, or the parent screen on a cold start. */
+	function goBack() {
+		if (!back) return;
+		if (back.history) history.back();
+		else void goto(back.path, { replaceState: true });
+	}
 	const count = $derived(data.snapshot ? inboxCount(data.snapshot) : 0);
 	const categories = $derived(data.snapshot ? categoryList(data.snapshot) : []);
 	const setup = $derived(data.snapshot ? needsSetup(data.snapshot.settings) : false);
@@ -55,8 +80,8 @@
 		await goto('/settings');
 	}
 
-	/** Opens a tab or Settings. */
-	function navigate(to: TabId | 'settings') {
+	/** Opens a tab, the Inbox or Settings. */
+	function navigate(to: Place) {
 		void goto(`/${to}`);
 	}
 </script>
@@ -73,9 +98,9 @@
 		{#if setup}
 			<SetupScreen steps={SETUP_STEPS} onallow={allow} ondone={finishSetup} />
 		{:else if wide}
-			<DesktopShell {title} {tab} inboxCount={count} {categories} onnavigate={navigate}>{@render body()}</DesktopShell>
+			<DesktopShell {title} {tab} {back} onback={goBack} inboxCount={count} {categories} onnavigate={navigate}>{@render body()}</DesktopShell>
 		{:else}
-			<PhoneShell {title} {tab} inboxCount={count} onnavigate={navigate}>{@render body()}</PhoneShell>
+			<PhoneShell {title} {tab} {back} onback={goBack} inboxCount={count} onnavigate={navigate}>{@render body()}</PhoneShell>
 		{/if}
 	</div>
 {/if}
