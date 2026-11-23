@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { allDayViews, busyViews, connect, decisionsFrom, IGNORE, KEEP, triageCards, triageKinds, triageOf, type CalendarDeps } from './calendar';
+import { allDayViews, busyViews, connect, decisionsFrom, IGNORE, KEEP, mergeSuggestions, refreshSuggestions, triageCards, triageKinds, triageOf, type CalendarDeps, type SuggestionDeps } from './calendar';
 import type { CalendarImport, DeviceEvent, Snapshot } from './client';
 import type { RunSummary, Waiting } from './engine';
 
@@ -123,13 +123,58 @@ describe('calendar triage', () => {
 				block('three', 'Vacation', '2026-11-26T23:00:00Z', '2026-11-29T23:00:00Z', true, null, 'trip'),
 				block('late', 'Fair', '2026-11-30T23:00:00Z', '2026-12-01T22:59:59Z', true, 'busy', 'fair'),
 				block('timed', 'Standup', '2026-11-23T08:00:00Z', '2026-11-23T08:30:00Z', false)
-			]
+			],
+			settings: { day_suggestions: JSON.stringify({ trip: 'away', bday: 'busy' }) }
 		} as unknown as Snapshot;
-		expect(allDayViews(s, 'Europe/Berlin', { trip: 'away', bday: 'busy' })).toEqual([
+		expect(allDayViews(s, 'Europe/Berlin')).toEqual([
 			{ id: 'three', title: 'Vacation', start: '2026-11-27', end: '2026-11-29', kind: null, suggested: 'away' },
-			{ id: 'one', title: 'Birthday', start: '2026-11-28', end: '2026-11-28', kind: 'reminder', suggested: 'busy' },
+			{ id: 'one', title: 'Birthday', start: '2026-11-28', end: '2026-11-28', kind: 'reminder', suggested: null },
 			{ id: 'late', title: 'Fair', start: '2026-12-01', end: '2026-12-01', kind: 'busy', suggested: null }
 		]);
 		expect(allDayViews({} as Snapshot, 'UTC')).toEqual([]);
+	});
+
+	it('keeps a stored suggestion after the run ended and drops it once a kind is set', () => {
+		const s = { busy: [block('three', 'Vacation', '2026-11-26T23:00:00Z', '2026-11-29T23:00:00Z', true, null, 'trip')], settings: { day_suggestions: '{"trip":"away"}' } } as unknown as Snapshot;
+		expect(allDayViews(s, 'UTC')[0].suggested).toBe('away');
+		s.busy![0].day_kind = 'busy';
+		expect(allDayViews(s, 'UTC')[0].suggested).toBeNull();
+		s.settings.day_suggestions = 'not json';
+		s.busy![0].day_kind = null;
+		expect(allDayViews(s, 'UTC')[0].suggested).toBeNull();
+	});
+
+	it('merges new picks into the stored suggestions and prunes confirmed or gone events', () => {
+		const s = {
+			busy: [
+				block('b1', 'Vacation', '2026-11-26T23:00:00Z', '2026-11-29T23:00:00Z', true, null, 'trip'),
+				block('b2', 'Fair', '2026-11-30T23:00:00Z', '2026-12-01T23:00:00Z', true, 'busy', 'fair'),
+				block('b3', 'Move', '2026-12-02T23:00:00Z', '2026-12-03T23:00:00Z', true, null, 'move')
+			],
+			settings: {}
+		} as unknown as Snapshot;
+		expect(mergeSuggestions({ trip: 'busy', fair: 'busy', gone: 'away' }, { trip: 'away', move: 'busy' }, s)).toEqual({ trip: 'away', move: 'busy' });
+	});
+
+	it('stores the picks of a waiting run and answers a run with no group so it ends', async () => {
+		const s = { busy: [block('b1', 'Thanksgiving', '2026-11-25T23:00:00Z', '2026-11-26T23:00:00Z', true, null, 'thanks')], settings: {} } as unknown as Snapshot;
+		const calls: string[] = [];
+		const empty = { ...waiting, data: { ...waiting.data, sorted: { groups: [], days: [{ event: 'e5', kind: 'reminder' }] } } };
+		const make = (w: Waiting): SuggestionDeps => ({
+			open: async () => ({ runId: 'r1', waiting: w }),
+			save: async (value) => void calls.push(`save ${value}`),
+			answer: async (runId, value) => (calls.push(`answer ${runId} ${JSON.stringify(value)}`), { ok: true as const, value: null }),
+			finish: async (runId) => void calls.push(`finish ${runId}`)
+		});
+		expect(await refreshSuggestions(s, make(empty))).toBeNull();
+		expect(calls).toEqual(['save {"thanks":"reminder"}', 'answer r1 []', 'finish r1']);
+		calls.length = 0;
+		const open = await refreshSuggestions(s, make(waiting));
+		expect(open?.runId).toBe('r1');
+		expect(calls, 'a run with groups waits for the owner').toEqual(['save {"thanks":"reminder"}']);
+		calls.length = 0;
+		const saved = { ...s, settings: { day_suggestions: '{"thanks":"reminder"}' } } as unknown as Snapshot;
+		await refreshSuggestions(saved, { ...make(waiting), open: async () => null });
+		expect(calls, 'nothing changed, nothing saved').toEqual([]);
 	});
 });

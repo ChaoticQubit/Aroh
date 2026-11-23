@@ -14,16 +14,25 @@
 		confirming = false,
 		inline = false,
 		onsave,
+		onlock,
 		ondelete,
 		onclose
-	}: { action: ActionView; confirming?: boolean; inline?: boolean; onsave?: (edit: ActionEdit) => void; ondelete?: (id: string) => void; onclose?: () => void } = $props();
+	}: {
+		action: ActionView;
+		confirming?: boolean;
+		inline?: boolean;
+		onsave?: (edit: ActionEdit) => void;
+		onlock?: (id: string, locked: boolean) => void;
+		ondelete?: (id: string) => void;
+		onclose?: () => void;
+	} = $props();
 
 	const PANEL = 'flex flex-col gap-3 rounded-t-[var(--radius-dialog)] border-t border-border bg-bg px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]';
 </script>
 
 {#snippet body()}
 	<span class="mx-auto h-1 w-9 rounded-full bg-border-strong" aria-hidden="true"></span>
-	<ActionEditor {action} {confirming} {onsave} {ondelete} {onclose} />
+	<ActionEditor {action} {confirming} {onsave} {onlock} {ondelete} {onclose} />
 {/snippet}
 
 {#if inline}

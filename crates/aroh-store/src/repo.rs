@@ -120,7 +120,9 @@ pub fn delete<R: Record>(conn: &Connection, clock: &mut Hlc, id: &str) -> Result
     Ok(())
 }
 
-fn occurrences(conn: &Connection, series_id: &str) -> Result<BTreeSet<DateTime<Utc>>> {
+/// The occurrence instants stored for series `series_id`, tombstoned and moved rows included.
+/// Materializing skips these, so they are what a series will not create again.
+pub fn occurrences(conn: &Connection, series_id: &str) -> Result<BTreeSet<DateTime<Utc>>> {
     let mut stmt = conn.prepare("SELECT occurrence FROM actions WHERE series_id = ?1 AND occurrence IS NOT NULL")?;
     let texts = stmt.query_map([series_id], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
     texts

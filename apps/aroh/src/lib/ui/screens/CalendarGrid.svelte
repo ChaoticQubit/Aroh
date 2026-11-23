@@ -166,6 +166,9 @@
 			{/each}
 		</div>
 	{/if}
+	{#if days.length === 1 && columns[0]?.blocked}
+		<p class="border-b border-border bg-surface-2 px-3 py-1.5 text-center text-xs text-muted">{columns[0].blocked.title} is a busy day.</p>
+	{/if}
 	<div class="relative grid" style="grid-template-columns: 52px repeat({days.length}, minmax(0, 1fr)); height: {height}px">
 		<div class="relative">
 			{#each hours.slice(0, -1) as h (h)}
@@ -177,9 +180,6 @@
 				{#each hours.slice(1, -1) as h (h)}
 					<div class="absolute inset-x-0 border-t border-border/70" style="top: {(h - startHour) * HOUR}px"></div>
 				{/each}
-				{#if c.blocked && days.length === 1}
-					<p class="absolute inset-x-0 top-3 px-3 text-center text-xs text-muted">{c.blocked.title} is a busy day.</p>
-				{/if}
 				{#each c.blocks as b (b.id)}
 					<div
 						role="listitem"

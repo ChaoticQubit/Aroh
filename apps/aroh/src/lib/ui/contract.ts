@@ -71,7 +71,7 @@ export type ChatMessage =
 	| { type: 'message'; from: 'owner' | 'persona'; name: string; text: string }
 	| { type: 'card'; spec: ComponentSpec; answered?: boolean }
 	| { type: 'progress'; lines: { text: string; done: boolean }[] }
-	| { type: 'plan'; title: string; items: string[] };
+	| { type: 'plan'; title: string; items: string[]; fixable?: boolean[] };
 
 /** A plugin view: a titled column of component specs, phone first. */
 export type ViewSpec = { title: string; sections: { title: string; items: ComponentSpec[] }[] };

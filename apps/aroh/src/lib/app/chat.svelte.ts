@@ -1,9 +1,11 @@
 import type { ChatMessage } from '$lib/ui/contract';
 import * as client from './client';
-import { ACTIVE, chatFromRun, closeOldestQuestion, engine, NEEDS_ENGINE, type RunEvent, type RunView } from './engine';
+import { ACTIVE, chatFromRun, closeOldestQuestion, engine, fixedActionIds, NEEDS_ENGINE, type PlanItem, type RunEvent, type RunView } from './engine';
 import { connectWakeups, wakeups } from './realtime';
 
 const POLL_MAX = 400;
+const DAY_MS = 86_400_000;
+const SNAPSHOT_DAYS = 119;
 
 /**
  * Reads a run with `after_seq` while it is queued, running or checkpointed, waking on its
@@ -43,6 +45,7 @@ export class GoalChat {
 	private held: string[] = [];
 	private seq = -1;
 	private shown = '';
+	private plan: { items: PlanItem[]; timezone: string } | null = null;
 
 	constructor(goalId: string | null, greeting: string) {
 		this.goalId = goalId;
@@ -79,6 +82,8 @@ export class GoalChat {
 		const key = `${v.status.status}:${v.waiting[0]?.node ?? ''}:${top}`;
 		if (key === this.shown) return;
 		this.shown = key;
+		const plan = v.waiting.find((w) => w.node === 'approve')?.data.plan as { items: PlanItem[]; timezone: string } | undefined;
+		if (plan) this.plan = plan;
 		this.live = chatFromRun(v);
 	}
 
@@ -117,21 +122,38 @@ export class GoalChat {
 		if (sent.value.run_id) await this.watch(sent.value.run_id);
 	}
 
-	/** Hands a PersonaChat event (send, approve or change) to `send` or `decide`. */
+	/** Hands a PersonaChat event (send, approve with its fixed items, or change) to `send` or `decide`. */
 	handle(event: unknown) {
-		const e = event as { type: string; text?: string };
+		const e = event as { type: string; text?: string; fixed?: number[] };
 		if (e.type === 'send' && e.text) void this.send(e.text);
-		if (e.type === 'approve') void this.decide(true);
+		if (e.type === 'approve') void this.decide(true, e.fixed ?? []);
 		if (e.type === 'change') void this.decide(false);
 	}
 
-	/** Approves the plan or proposal the run waits on, or with `yes` false asks what to change. */
-	async decide(yes: boolean) {
+	/**
+	 * Approves the plan or proposal the run waits on, or with `yes` false asks what to change.
+	 * Once an approved plan is written and synced, the actions of its `fixed` item indexes are locked.
+	 */
+	async decide(yes: boolean, fixed: number[] = []) {
 		if (!this.runId) return;
+		const plan = this.plan;
 		const r = await engine.answer(this.runId, 'approve', yes);
 		if (!r.ok) return this.say(r.message);
 		this.freeze();
 		if (!yes) this.say('What should change? Type it below.');
 		await this.watch(this.runId);
+		if (yes && plan && fixed.length && this.goalId) await this.lockFixed(this.goalId, plan, fixed);
+	}
+
+	/** Syncs the written plan, then sets Fixed time on the actions the plan items at `fixed` became. */
+	private async lockFixed(goalId: string, plan: { items: PlanItem[]; timezone: string }, fixed: number[]) {
+		try {
+			await client.sync();
+			const now = Date.now();
+			const s = await client.snapshot(new Date(now - DAY_MS).toISOString(), new Date(now + SNAPSHOT_DAYS * DAY_MS).toISOString());
+			for (const id of fixedActionIds(s.actions, goalId, plan.items, fixed, plan.timezone)) await client.setLocked(id, true);
+		} catch (e) {
+			this.say(`Fixed time was not set: ${String(e)}`);
+		}
 	}
 }

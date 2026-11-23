@@ -14,10 +14,13 @@ const ACCOUNT: &str = "account";
 const PENDING: &str = "pending_logs";
 
 /// Settings the owner may write, all stored as text.
-pub const SETTINGS: [&str; 7] = ["server_url", "goal_budget_usd", "calendars", "health", "supabase_url", "supabase_anon_key", "dismissed_insights"];
+pub const SETTINGS: [&str; 8] = ["server_url", "goal_budget_usd", "calendars", "health", "supabase_url", "supabase_anon_key", "dismissed_insights", "day_suggestions"];
 
 /// Most insight ids `dismissed_insights` holds: the Inbox shows the 30 newest insights.
 pub const MAX_DISMISSED: usize = 30;
+
+/// Most all-day events `day_suggestions` holds a triage suggestion for, as a triage run sends.
+pub const MAX_DAY_SUGGESTIONS: usize = 300;
 
 /// Most free-text logs that may wait for the engine at once.
 pub const MAX_PENDING: usize = 100;
@@ -65,10 +68,21 @@ pub fn settings(conn: &Connection) -> Result<BTreeMap<String, String>> {
     Ok(out)
 }
 
-/// Validates and stores one owner setting; an empty value clears it.
-/// Errors with `Invalid` for an unknown name, a non-https server URL, a negative or
-/// non-numeric budget, a bad Supabase URL or anon key, a dismissed list that is not
-/// at most [`MAX_DISMISSED`] comma-separated uuids, or a switch that is not `true` or `false`.
+/// Checks `day_suggestions`: a JSON object of at most [`MAX_DAY_SUGGESTIONS`] device event ids
+/// (1 to 255 characters) to a day kind, `reminder`, `busy` or `away`.
+/// Errors with `Invalid` for anything else.
+fn check_day_suggestions(value: &str) -> Result<()> {
+    let map: BTreeMap<String, aroh_domain::rows::DayKind> = serde_json::from_str(value).map_err(|_| invalid("day_suggestions"))?;
+    if map.len() > MAX_DAY_SUGGESTIONS || map.keys().any(|id| id.is_empty() || id.chars().count() > aroh_domain::calendar::MAX_ID) {
+        return Err(invalid("day_suggestions"));
+    }
+    Ok(())
+}
+
+/// Validates and stores one owner setting; an empty value clears it. Errors with `Invalid`
+/// for an unknown name, a non-https server URL, a bad budget, Supabase URL or anon key, a
+/// dismissed list that is not at most [`MAX_DISMISSED`] uuids, bad day suggestions, or a
+/// switch that is not `true` or `false`.
 pub fn set_setting(conn: &Connection, name: &str, value: &str) -> Result<()> {
     if !SETTINGS.contains(&name) {
         return Err(invalid(format!("setting {name}")));
@@ -88,6 +102,7 @@ pub fn set_setting(conn: &Connection, name: &str, value: &str) -> Result<()> {
                     aroh_domain::rows::check_uuid("dismissed_insights", id)?;
                 }
             }
+            "day_suggestions" => check_day_suggestions(value)?,
             "goal_budget_usd" => {
                 let usd: f64 = value.parse().map_err(|_| invalid("goal_budget_usd"))?;
                 if !usd.is_finite() || !(0.0..=1_000_000.0).contains(&usd) {

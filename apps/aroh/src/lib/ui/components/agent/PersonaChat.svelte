@@ -6,6 +6,7 @@
 	import Send from '@lucide/svelte/icons/send';
 	import { Button } from '$lib/ui/primitives/button';
 	import * as Card from '$lib/ui/primitives/card';
+	import { Switch } from '$lib/ui/primitives/switch';
 	import Render from '../Render.svelte';
 	import Persona from './Persona.svelte';
 	import QuestionCard from './QuestionCard.svelte';
@@ -14,8 +15,8 @@
 	/**
 	 * Owner and persona thread with inline cards, research progress and a plan awaiting approval,
 	 * above a composer with text, attach and mic. Emits `{ type: 'send', text }` (typed or a card's
-	 * answer), `{ type: 'approve' }` or `{ type: 'change' }`. With `echo` false the caller adds
-	 * sent messages to `messages` itself, so its replies stay in order after them.
+	 * answer), `{ type: 'approve', fixed }` (indexes of plan items switched to Fixed time) or
+	 * `{ type: 'change' }`. With `echo` false the caller adds sent messages itself.
 	 */
 	let { messages, onchange, echo = true }: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean } = $props();
 
@@ -23,6 +24,7 @@
 	let sent = $state<ChatMessage[]>([]);
 	let draft = $state('');
 	let approved = $state(false);
+	let fixed = $state<number[]>([]);
 	const thread = $derived([...messages, ...sent]);
 	let list = $state<HTMLOListElement>();
 
@@ -81,7 +83,19 @@
 						<Persona name="Orchestrator" note="Plan ready" />
 						<p class="text-sm font-semibold">{m.title}</p>
 						<ul class="flex list-disc flex-col gap-1 pl-5 text-sm text-fg">
-							{#each m.items as item (item)}<li>{item}</li>{/each}
+							{#each m.items as item, i (i)}
+								<li>
+									<span class="flex items-center justify-between gap-3">
+										<span>{item}</span>
+										{#if m.fixable?.[i] && !approved}
+											<label class="flex shrink-0 items-center gap-2 text-xs text-muted">
+												Fixed time
+												<Switch checked={fixed.includes(i)} aria-label="Fixed time for {item}" onCheckedChange={(v) => (fixed = v ? [...fixed, i] : fixed.filter((x) => x !== i))} />
+											</label>
+										{/if}
+									</span>
+								</li>
+							{/each}
 						</ul>
 						{#if approved}
 							<p class="text-sm text-muted" role="status">Approved. The plan is on your calendar.</p>
@@ -92,7 +106,7 @@
 									class="@3xl:h-8"
 									onclick={() => {
 										approved = true;
-										onchange?.({ type: 'approve' });
+										onchange?.({ type: 'approve', fixed });
 									}}>Approve plan</Button
 								>
 								<Button size="touch" variant="outline" class="@3xl:h-8" onclick={() => onchange?.({ type: 'change' })}>Change</Button>

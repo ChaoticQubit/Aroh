@@ -53,7 +53,7 @@ fn sync_blocking(app: &AppHandle, config: Config, token: String) -> Result<Synce
         let mut remote = aroh_sync::rest::PgRest::new(config, token);
         let user = c.user_id.clone();
         let moved = tauri::async_runtime::block_on(aroh_store::sync::sync_all(&mut c.conn, &mut remote, &user, &mut c.clock))?;
-        aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now())?;
+        aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone())?;
         Ok(moved)
     })?;
     if let Err(e) = notify::sync(app) {
@@ -126,7 +126,7 @@ pub async fn app_sign_in(app: AppHandle, state: State<'_, AppState>, email: Stri
     let adopted = with_core(&state, |c| {
         local::adopt(&mut c.conn, &session.user_id)?;
         c.user_id = session.user_id.clone();
-        aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now())?;
+        aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone())?;
         Ok(())
     });
     if let Err(e) = adopted {

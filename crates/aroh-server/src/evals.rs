@@ -2,6 +2,7 @@ use aroh_domain::recur;
 use aroh_domain::rows::ActionSeries;
 use chrono::{Duration, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use troupekit_agent::eval::lookup;
 use troupekit_agent::EvalRegistry;
@@ -193,17 +194,36 @@ pub fn public_sources(output: &Value, args: &[Value]) -> Result<(), String> {
 }
 
 /// Builds the eval registry every Aroh run uses: the built-in `min_items`
-/// plus the domain evals `no_overlap`, `within_availability`, `valid_plugin`
-/// and `public_sources`. Returns the registry, with no busy time bound.
+/// plus the domain evals `no_overlap`, `within_availability`, `valid_plugin`,
+/// `keeps_fixed` and `public_sources`. Returns the registry, with no busy time
+/// or fixed action bound.
 pub fn registry() -> EvalRegistry {
-    registry_with_busy(Vec::new())
+    registry_with_busy(Vec::new(), Default::default())
+}
+
+/// Rejects a move, resize or delete at `path` whose `action_id` is in `fixed`,
+/// the locked actions no agent changes (Q53). The error names the action so
+/// the repair round asks for a change of a flexible one instead.
+fn keeps_fixed(output: &Value, args: &[Value], fixed: &BTreeSet<String>) -> Result<(), String> {
+    let [path] = args else { return Err("takes (path)".to_string()) };
+    let path = path.as_str().ok_or("takes a path to a list of changes")?;
+    for change in lookup(output, path).into_iter().flat_map(|v| v.as_array().cloned().unwrap_or_else(|| vec![v.clone()])) {
+        let op = change.get("op").and_then(Value::as_str).unwrap_or("");
+        let id = change.get("action_id").and_then(Value::as_str).unwrap_or("");
+        if matches!(op, "move" | "resize" | "delete") && fixed.contains(id) {
+            let title = change.get("title").and_then(Value::as_str).unwrap_or(id);
+            return Err(format!("`{title}` is a fixed action: never move, resize or delete it; change a flexible action instead"));
+        }
+    }
+    Ok(())
 }
 
 /// Builds the registry with `busy` bound into `no_overlap`, so the items at
-/// its path also never overlap a kept device event; busy slots are never
-/// checked against each other. Returns the registry.
-pub fn registry_with_busy(busy: Vec<Slot>) -> EvalRegistry {
+/// its path also never overlap a kept device event (busy slots are never
+/// checked against each other), and the `fixed` action ids into `keeps_fixed`.
+pub fn registry_with_busy(busy: Vec<Slot>, fixed: BTreeSet<String>) -> EvalRegistry {
     let mut r = EvalRegistry::new();
+    r.register("keeps_fixed", Arc::new(move |output: &Value, args: &[Value]| keeps_fixed(output, args, &fixed))).expect("fresh name");
     r.register("public_sources", Arc::new(public_sources)).expect("fresh name");
     let overlap = move |output: &Value, args: &[Value]| {
         if args.len() != 1 {
@@ -224,6 +244,20 @@ mod tests {
 
     fn plan(items: Value) -> Value {
         json!({ "items": items })
+    }
+
+    #[test]
+    fn keeps_fixed_rejects_any_change_to_a_locked_action() {
+        let fixed: BTreeSet<String> = ["a-fixed".to_string()].into();
+        let registry = registry_with_busy(vec![], fixed);
+        let keeps = registry.get("keeps_fixed").unwrap();
+        let change = |op: &str, id: Option<&str>| json!({"op": op, "action_id": id, "title": "Dentist", "start": null, "minutes": null});
+        for op in ["move", "resize", "delete"] {
+            let err = keeps(&json!({"changes": [change(op, Some("a-fixed"))]}), &[json!("changes")]).unwrap_err();
+            assert!(err.contains("Dentist") && err.contains("fixed"), "{err}");
+        }
+        assert!(keeps(&json!({"changes": [change("move", Some("a-free")), change("create", None)]}), &[json!("changes")]).is_ok());
+        assert!(keeps(&json!({"changes": []}), &[]).is_err(), "takes (path)");
     }
 
     #[test]
@@ -284,7 +318,7 @@ mod tests {
             {"title": "Sync", "start": "2026-11-23T09:15:00", "minutes": 30}
         ]))
         .unwrap();
-        let r = registry_with_busy(busy);
+        let r = registry_with_busy(busy, Default::default());
         let f = r.get("no_overlap").unwrap();
         let clear = plan(json!([{"title": "Run", "start": "2026-11-23T07:00:00", "minutes": 30, "rrule": "FREQ=DAILY"}]));
         assert!(f(&clear, &[json!("items")]).is_ok());

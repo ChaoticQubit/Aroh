@@ -14,7 +14,6 @@ export type GoalHeader = {
 	slot: CategorySlot;
 	deadline: string | null;
 	autonomy: AutonomyLabel;
-	personas: string[];
 	lead: { unit: Unit; now: number; target?: number } | null;
 };
 

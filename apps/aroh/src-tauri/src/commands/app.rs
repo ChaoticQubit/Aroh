@@ -48,7 +48,7 @@ pub fn app_snapshot(state: State<'_, AppState>, from: String, to: String) -> Res
 /// Runs the start-up tick now, for a changed local date, and reschedules reminders.
 #[tauri::command]
 pub fn app_tick(app: AppHandle, state: State<'_, AppState>) -> Result<Tick, String> {
-    let report = with_core(&state, |c| aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now()))?;
+    let report = with_core(&state, |c| aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone()))?;
     after_write(&app);
     Ok(report)
 }
@@ -153,7 +153,7 @@ pub fn app_dev_seed(app: AppHandle, state: State<'_, AppState>) -> Result<bool, 
     }
     let loaded = with_core(&state, |c| {
         let loaded = aroh_app::sample::seed(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone())?;
-        aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now())?;
+        aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone())?;
         Ok(loaded)
     })?;
     after_write(&app);

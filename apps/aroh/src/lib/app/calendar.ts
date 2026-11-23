@@ -1,5 +1,6 @@
 import type { AllDayView, BusyView, DayKind, InboxItem } from '$lib/ui/screens/types';
 import { formatYmd } from '$lib/ui/format';
+import { joinTitles } from './views';
 import * as client from './client';
 import { follow } from './chat.svelte';
 import { engine, type EngineResult, type RunSummary, type TriageEvent, type Waiting } from './engine';
@@ -57,11 +58,6 @@ export function triageKinds(w: Waiting | undefined): Record<string, DayKind> {
 	return out;
 }
 
-/** Joins titles as "A", "A and B" or "A, B and C". */
-function list(titles: string[]): string {
-	return titles.length < 2 ? (titles[0] ?? '') : `${titles.slice(0, -1).join(', ')} and ${titles[titles.length - 1]}`;
-}
-
 /** One question card per group: name, event count and up to three titles, Keep or Ignore preselected from the suggestion. */
 export function triageCards(w: Waiting | undefined): InboxItem[] {
 	const t = triageOf(w);
@@ -69,7 +65,7 @@ export function triageCards(w: Waiting | undefined): InboxItem[] {
 	return t.groups.map((g) => {
 		const titles = [...new Set(g.events.map((k) => t.events.find((e) => e.key === k)?.title ?? '').filter(Boolean))].slice(0, SAMPLES);
 		const count = `${g.events.length} ${g.events.length === 1 ? 'event' : 'events'}`;
-		const like = titles.length ? `, like ${list(titles)}` : '';
+		const like = titles.length ? `, like ${joinTitles(titles)}` : '';
 		return {
 			id: g.name,
 			spec: {
@@ -147,16 +143,17 @@ export function busyViews(s: client.Snapshot): BusyView[] {
 
 /**
  * The snapshot's all-day blocks as chips: first and last local day in `zone`, inclusive (EventKit
- * ends a day at the next midnight or at 23:59:59), the confirmed kind and the triage suggestion
- * from `suggested`, keyed by event id. Sorted by first day, then title.
+ * ends a day at the next midnight or at 23:59:59), the confirmed kind and, until a kind is
+ * confirmed, the stored triage suggestion. Sorted by first day, then title.
  */
-export function allDayViews(s: client.Snapshot, zone: string, suggested: Record<string, DayKind> = {}): AllDayView[] {
+export function allDayViews(s: client.Snapshot, zone: string): AllDayView[] {
+	const suggested = storedSuggestions(s);
 	return (s.busy ?? [])
 		.filter((b) => b.all_day)
 		.map((b) => {
 			const start = formatYmd(b.start_at, zone);
 			const last = formatYmd(new Date(Date.parse(b.end_at) - 1000).toISOString(), zone);
-			return { id: b.id, title: b.title, start, end: last < start ? start : last, kind: b.day_kind, suggested: suggested[b.event_id] ?? null };
+			return { id: b.id, title: b.title, start, end: last < start ? start : last, kind: b.day_kind, suggested: b.day_kind ? null : (suggested[b.event_id] ?? null) };
 		})
 		.sort((a, b) => a.start.localeCompare(b.start) || a.title.localeCompare(b.title));
 }
@@ -183,4 +180,66 @@ export async function openTriage(known?: RunSummary[]): Promise<{ runId: string;
 	const view = await engine.run(open.run_id);
 	const waiting = view.ok ? view.value.waiting.find((w) => w.node === 'decide') : undefined;
 	return waiting ? { runId: open.run_id, waiting } : null;
+}
+
+/** The triage suggestions kept on this device (`day_suggestions`), by device event id; unreadable gives none. */
+function storedSuggestions(s: client.Snapshot): Record<string, DayKind> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(s.settings?.day_suggestions ?? '{}');
+	} catch {
+		return {};
+	}
+	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+	const out: Record<string, DayKind> = {};
+	for (const [id, kind] of Object.entries(parsed)) {
+		const known = KINDS.find((k) => k === kind);
+		if (known) out[id] = known;
+	}
+	return out;
+}
+
+/**
+ * The stored suggestions with the new `picks` laid over them, kept only for events that still
+ * have an all-day block with no confirmed kind in `s`, at most 300.
+ */
+export function mergeSuggestions(stored: Record<string, DayKind>, picks: Record<string, DayKind>, s: client.Snapshot): Record<string, DayKind> {
+	const open = new Set((s.busy ?? []).filter((b) => b.all_day && b.day_kind === null).map((b) => b.event_id));
+	const kept = Object.entries({ ...stored, ...picks }).filter(([id]) => open.has(id));
+	return Object.fromEntries(kept.slice(0, MAX_TRIAGE));
+}
+
+/** What `refreshSuggestions` needs, injectable for tests. */
+export type SuggestionDeps = {
+	open: () => Promise<{ runId: string; waiting: Waiting } | null>;
+	save: (value: string) => Promise<unknown>;
+	answer: (runId: string, value: unknown) => Promise<EngineResult<unknown>>;
+	finish: (runId: string) => Promise<void>;
+};
+
+/** The real calls behind `refreshSuggestions`; `known` runs spare a run list read. */
+export function deviceSuggestions(known?: RunSummary[]): SuggestionDeps {
+	return {
+		open: () => openTriage(known),
+		save: (value) => client.setSetting('day_suggestions', value),
+		answer: (runId, value) => engine.answer(runId, 'decide', value),
+		finish: finishTriage
+	};
+}
+
+/**
+ * Keeps the triage day suggestions on this device: merges the picks of the run waiting at
+ * `decide` into the stored ones, prunes confirmed or gone events and saves on a change. A run
+ * with no group (all-day events only) is answered with no decisions and followed to its end.
+ * Output: the run still waiting for the owner's group answers, or null.
+ */
+export async function refreshSuggestions(s: client.Snapshot, deps: SuggestionDeps = deviceSuggestions()): Promise<{ runId: string; waiting: Waiting } | null> {
+	const open = await deps.open();
+	const stored = storedSuggestions(s);
+	const merged = mergeSuggestions(stored, triageKinds(open?.waiting), s);
+	if (JSON.stringify(merged) !== JSON.stringify(stored)) await deps.save(JSON.stringify(merged));
+	if (!open || triageOf(open.waiting)?.groups.length !== 0) return open;
+	const answered = await deps.answer(open.runId, []);
+	if (answered.ok) await deps.finish(open.runId);
+	return null;
 }

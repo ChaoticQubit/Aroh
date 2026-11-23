@@ -460,33 +460,42 @@ async fn replan_applies_small_changes_and_asks_when_it_must() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs AROH_TEST_PG"]
-async fn locked_actions_force_approval_and_are_never_moved() {
-    let locked_id = Arc::new(Mutex::new(String::new()));
-    let id = locked_id.clone();
+async fn locked_actions_are_fixed_for_every_proposal() {
+    let ids = Arc::new(Mutex::new((String::new(), String::new())));
+    let seen = ids.clone();
     let models = FnTransport::new(move |req| {
-        let target = id.lock().unwrap().clone();
-        let change = json!([{"op": "move", "action_id": target, "title": "Easy run", "start": "2026-11-23T18:00:00", "minutes": 30}]);
-        if body_text(req).contains("You are Adaptation analyst") {
-            return sse_text(&json!({"summary": "Move it.", "size": "small", "changes": change}).to_string());
+        let body = body_text(req);
+        if !body.contains("You are Adaptation analyst") {
+            return json_reply(400, json!({}));
         }
-        json_reply(400, json!({}))
+        let (fixed, free) = seen.lock().unwrap().clone();
+        let target = if body.contains("is a fixed action") { free } else { fixed };
+        let change = json!([{"op": "move", "action_id": target, "title": "Easy run", "start": "2026-11-23T18:00:00", "minutes": 30}]);
+        sse_text(&json!({"summary": "Move it.", "size": "small", "changes": change}).to_string())
     });
     let api = api(models, offline()).await;
     let (u, t) = api.signed_up().await;
     let goal = api.goal(u, Autonomy::Auto).await;
     let locked = api.action(u, goal, "2026-11-23T06:00:00Z", true).await;
-    *locked_id.lock().unwrap() = locked.id.clone();
+    let free = api.action(u, goal, "2026-11-21T07:00:00Z", false).await;
+    *ids.lock().unwrap() = (locked.id.clone(), free.id.clone());
     let (_, started) = api.call(Method::Post, &format!("/v1/goals/{goal}/replan"), Some(&t), Some(json!({"reason": "Busy", "timezone": "Europe/Berlin"}))).await;
     let run = started["run_id"].as_str().unwrap();
     api.tick().await;
     let view = api.run(&t, run).await;
-    assert_eq!(view["waiting"][0]["data"]["proposal_record"]["touches_locked"], true, "{view}");
-    api.answer(&t, run, "approve", json!(true)).await;
-    api.tick().await;
-    let kept: DateTime<Utc> = db::query_scalar("select start_at from public.actions where id::text = $1").bind(&locked.id).fetch_one(&api.pool).await.unwrap();
-    assert_eq!(kept.to_rfc3339(), "2026-11-23T06:00:00+00:00");
-    let view = api.run(&t, run).await;
-    assert_eq!(view["status"]["status"], "done");
+    assert_eq!(view["status"]["status"], "done", "{view}");
+    let start_of = |id: String| {
+        let pool = api.pool.clone();
+        async move {
+            let start: DateTime<Utc> = db::query_scalar("select start_at from public.actions where id::text = $1").bind(id).fetch_one(&pool).await.unwrap();
+            start
+        }
+    };
+    assert_eq!(start_of(locked.id.clone()).await.to_rfc3339(), "2026-11-23T06:00:00+00:00", "a fixed action is never moved");
+    assert_eq!(start_of(free.id.clone()).await.to_rfc3339(), "2026-11-23T17:00:00+00:00", "the repair round moved a flexible action instead");
+    let diffs: Vec<Value> = db::query_scalar("select diff from public.proposals where goal_id::text = $1").bind(goal.to_string()).fetch_all(&api.pool).await.unwrap();
+    assert_eq!(diffs.len(), 1);
+    assert!(!diffs[0].to_string().contains(&locked.id), "nothing on a fixed action reaches a proposal");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -787,7 +796,7 @@ async fn triage_groups_decides_and_writes_rules() {
     let groups = view["waiting"][0]["data"]["sorted"]["groups"].as_array().unwrap().clone();
     let names: Vec<&str> = groups.iter().map(|g| g["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["Work meetings", "Noise", "Other"]);
-    assert_eq!(groups[2]["events"], json!(["e4", "e5"]));
+    assert_eq!(groups[2]["events"], json!(["e4"]), "all-day events get a day pick, never a group");
     let data = &view["waiting"][0]["data"];
     assert_eq!(data["sorted"]["days"], json!([{"event": "e5", "kind": "away"}]), "only all-day events get a kind");
     assert_eq!((data["events"][4]["all_day"].clone(), data["events"][4]["minutes"].clone()), (json!(true), json!(1440)));
@@ -803,8 +812,8 @@ async fn triage_groups_decides_and_writes_rules() {
     assert_eq!(api.run(&t, &run).await["status"]["status"], "done");
     let s = |v: &str| Some(v.to_string());
     let expected = vec![
+        (s("trip"), None, "All day".to_string(), "keep".to_string()),
         (None, s("public holiday"), "Noise".to_string(), "ignore".to_string()),
-        (s("trip"), None, "Other".to_string(), "keep".to_string()),
         (None, s("dentist"), "Other".to_string(), "keep".to_string()),
         (s("standup"), None, "Work meetings".to_string(), "keep".to_string()),
         (None, s("design review"), "Work meetings".to_string(), "keep".to_string()),
@@ -829,6 +838,29 @@ async fn triage_groups_decides_and_writes_rules() {
     assert_eq!(api.call(Method::Get, &format!("/v1/runs/{run}"), Some(&other), None).await.0, 404);
     let theirs: i64 = db::query_scalar("select count(*) from public.calendar_rules where user_id <> $1").bind(u).fetch_one(&api.pool).await.unwrap();
     assert_eq!(theirs, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn an_all_day_only_triage_has_no_group_and_writes_day_rules() {
+    let api = api(triage_models(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let mut trip = triage_event("trip", "Trip", "2026-11-26T23:00:00Z", None);
+    trip["end_at"] = json!("2026-11-29T23:00:00Z");
+    trip["all_day"] = json!(true);
+    let (status, started) = api.call(Method::Post, "/v1/calendar/triage", Some(&t), Some(json!({"timezone": "UTC", "events": [trip]}))).await;
+    assert_eq!(status, 202, "{started}");
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["data"]["sorted"]["groups"], json!([]), "{view}");
+    api.answer(&t, &run, "decide", json!([])).await;
+    api.tick().await;
+    assert_eq!(api.run(&t, &run).await["status"]["status"], "done");
+    let s = |v: &str| Some(v.to_string());
+    assert_eq!(rules(&api, u).await, vec![(s("trip"), None, "All day".to_string(), "keep".to_string())]);
+    let kind: Option<String> = db::query_scalar("select day_kind from public.calendar_rules where user_id = $1").bind(u).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(kind, None, "the kind waits for the owner's tap");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

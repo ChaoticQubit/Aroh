@@ -5,9 +5,11 @@
 	import * as client from '$lib/app/client';
 	import { follow } from '$lib/app/chat.svelte';
 	import { engine, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
-	import { decisionsFrom, finishTriage, openTriage, triageCards } from '$lib/app/calendar';
+	import { decisionsFrom, deviceSuggestions, finishTriage, refreshSuggestions, triageCards } from '$lib/app/calendar';
 	import { inboxView } from '$lib/app/views';
+	import { getClock } from '$lib/ui/clock';
 
+	const clock = getClock();
 	const s = $derived(data.snapshot);
 	let runs = $state<RunSummary[]>([]);
 	let insights = $state<Insight[]>([]);
@@ -22,9 +24,9 @@
 		await loadTriage();
 	}
 
-	/** Reads the calendar-triage run waiting at `decide`, if any, for the Calendar groups cards. */
+	/** Reads the calendar-triage run waiting at `decide` for the group cards and keeps its day suggestions. */
 	async function loadTriage() {
-		triage = await openTriage(runs);
+		triage = data.snapshot ? await refreshSuggestions(data.snapshot, deviceSuggestions(runs)) : null;
 		answers = {};
 	}
 
@@ -57,9 +59,10 @@
 		return null;
 	}
 
-	/** The dismissed insight ids still shown, plus `id`: the list stays as short as the Inbox. */
+	/** The dismissed insight ids still shown (engine insights, device notes, Busy-day and fixed-clash notes), plus `id`. */
 	function dismissedWith(id: string): string {
-		const shown = new Set([...insights, ...(s?.notes ?? [])].map((i) => i.id));
+		const ids = [...insights, ...(s?.notes ?? [])].map((i) => i.id);
+		const shown = new Set([...ids, ...(s?.busy ?? []).map((b) => b.id), ...(s?.actions ?? []).filter((a) => a.locked).map((a) => a.id)]);
 		const kept = (s?.settings.dismissed_insights ?? '').split(',').filter((x) => shown.has(x) && x !== id);
 		return [...kept, id].slice(-30).join(',');
 	}
@@ -85,5 +88,5 @@
 </script>
 
 {#if s}
-	<InboxScreen {...inboxView(s, runs, insights)} triage={triageCards(triage?.waiting)} {ondecide} />
+	<InboxScreen {...inboxView(s, runs, insights, clock.zone, clock.now)} triage={triageCards(triage?.waiting)} {ondecide} />
 {/if}

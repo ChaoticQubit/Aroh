@@ -122,7 +122,8 @@ class CalendarPlugin: Plugin {
   }
 
   /// One occurrence as the app's `DeviceEvent`: ids, calendar name, title, ISO 8601 times,
-  /// all-day flag and the RFC 5545 recurrence of its series, or null.
+  /// all-day flag, the RFC 5545 recurrence of its series or null, and whether its calendar
+  /// is a subscribed (holiday) or birthday calendar.
   private func row(_ e: EKEvent) -> [String: Any] {
     return [
       "calendar_id": e.calendar?.calendarIdentifier ?? "unknown",
@@ -133,6 +134,7 @@ class CalendarPlugin: Plugin {
       "end_at": iso.string(from: max(e.endDate, e.startDate.addingTimeInterval(60))),
       "all_day": e.isAllDay,
       "rrule": (e.recurrenceRules?.first).map { rruleText($0) } ?? NSNull(),
+      "holiday": e.calendar?.type == .subscription || e.calendar?.type == .birthday,
     ]
   }
 

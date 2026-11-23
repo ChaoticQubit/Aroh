@@ -18,7 +18,7 @@ fn seeded() -> (Connection, Hlc, String) {
     let user = local::user_id(&conn).unwrap();
     let mut clock = Hlc::new("00000000000000d2");
     assert!(sample::seed(&conn, &mut clock, &user, now(), Berlin).unwrap());
-    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &user, now(), Berlin).unwrap();
     (conn, clock, user)
 }
 
@@ -77,7 +77,7 @@ fn a_zone_change_shifts_rows_series_and_writes_one_note() {
     assert!(notes[0].body.contains("America/New_York") && notes[0].body.contains("Europe/Berlin"), "{}", notes[0].body);
     assert_eq!(follow(&conn, &mut clock, &user, now(), Some(New_York)).unwrap(), Follow::Same);
     assert_eq!(local::notes(&conn).unwrap().len(), 1);
-    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &user, now(), New_York).unwrap();
     let after = future_series_rows_per_local_day(&conn, &user, New_York);
     assert!(after.values().all(|n| *n == 1), "{after:?}");
     assert!(after.len() >= before.len() - 2);
@@ -91,9 +91,9 @@ fn flying_back_restores_the_rows_without_twins() {
     follow(&conn, &mut clock, &user, now(), Some(Berlin)).unwrap();
     let home: Vec<(String, DateTime<Utc>)> = actions(&conn, &user).into_iter().filter(|a| a.start_at >= now()).map(|a| (a.id, a.start_at)).collect();
     follow(&conn, &mut clock, &user, now(), Some(New_York)).unwrap();
-    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &user, now(), New_York).unwrap();
     follow(&conn, &mut clock, &user, now(), Some(Berlin)).unwrap();
-    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &user, now(), Berlin).unwrap();
     let back = future_series_rows_per_local_day(&conn, &user, Berlin);
     assert!(back.values().all(|n| *n == 1), "{back:?}");
     let live: Vec<(String, DateTime<Utc>)> = actions(&conn, &user).into_iter().filter(|a| a.start_at >= now()).map(|a| (a.id, a.start_at)).collect();

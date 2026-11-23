@@ -4,7 +4,7 @@ max_steps = 50
 
 [state]
 events = "list<{key: string, calendar: string, title: string, start: string, minutes: int, rrule: string?, all_day: bool}>"
-refs = "list<{key: string, event_id: string, calendar_id: string, title: string, recurring: bool}>"
+refs = "list<{key: string, event_id: string, calendar_id: string, title: string, recurring: bool, all_day: bool}>"
 triage = "{groups: list<{name: string, kind: enum(work, fitness, family, social, personal, noise), keep: bool, reason: string, events: list<string>}>, days: list<{event: string, kind: enum(reminder, busy, away)}>}"
 sorted = "{groups: list<{name: string, kind: string, keep: bool, reason: string, events: list<string>}>, days: list<{event: string, kind: string}>}"
 decisions = "list<{group: string, keep: bool}>"

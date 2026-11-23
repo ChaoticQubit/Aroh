@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ChatMessage, ComponentSpec } from '$lib/ui/contract';
 import type { CoachFields } from '$lib/ui/screens/types';
+import { formatYmd, minuteOfDay } from '$lib/ui/format';
+import type { Action } from './client';
 import { editError, type PersonaView } from './personas';
 import { deviceZone } from '$lib/ui/clock';
 
@@ -109,6 +111,24 @@ function itemLine(i: PlanItem): string {
 }
 
 /**
+ * The ids of the actions the plan items at indexes `fixed` became: same goal, no series, same
+ * title and local start (minute) in the plan's `zone`. Repeating items and items with no
+ * written action give none.
+ */
+export function fixedActionIds(actions: Action[], goalId: string, items: PlanItem[], fixed: number[], zone: string): string[] {
+	const local = (iso: string) => {
+		const m = minuteOfDay(iso, zone);
+		return `${formatYmd(iso, zone)}T${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+	};
+	return fixed.flatMap((i) => {
+		const item = items[i];
+		if (!item || item.rrule) return [];
+		const hit = actions.find((a) => a.goal_id === goalId && a.series_id === null && a.title === item.title && local(a.start_at) === item.start.slice(0, 16));
+		return hit ? [hit.id] : [];
+	});
+}
+
+/**
  * The chat messages for one run view: progress, then what the run waits for (question cards,
  * a plan to approve, a change request prompt, a replan proposal), a pause or failure line, or
  * the done line.
@@ -135,7 +155,7 @@ export function chatFromRun(view: RunView): ChatMessage[] {
 			}
 		} else if (w.node === 'approve' && w.data.plan) {
 			const plan = w.data.plan as { summary: string; items: PlanItem[] };
-			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine) });
+			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine), fixable: plan.items.map((i) => !i.rrule) });
 		} else if (w.node === 'approve' && w.data.proposal_record) {
 			const p = w.data.proposal_record as { summary: string };
 			out.push({ type: 'message', from: 'persona', name: 'Adaptation analyst', text: `${p.summary} It is in your Inbox to apply.` });

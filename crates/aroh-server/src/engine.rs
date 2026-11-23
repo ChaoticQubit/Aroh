@@ -182,11 +182,11 @@ impl From<TickReport> for TickSummary {
     }
 }
 
-/// The plan input of the owner's device calendar over `[from, until)` in `tz`: `busy` holds
-/// timed blocks plus one full local day per Busy all-day day, in start order; the second list
-/// holds the local `YYYY-MM-DD` dates of Away days. Reminders and unchosen all-day events
-/// change nothing. Deleted blocks are skipped.
-pub fn day_inputs(blocks: &[BusyBlock], tz: Tz, from: DateTime<Utc>, until: DateTime<Utc>) -> (Vec<Value>, Vec<String>) {
+/// The plan input over `[from, until)` in `tz`: `busy` holds timed blocks, one full local day
+/// per Busy all-day day and every live planned locked action of `fixed` (Q53), in start order;
+/// the second list holds the local `YYYY-MM-DD` dates of Away days. Reminders, unchosen
+/// all-day events and deleted rows change nothing.
+pub fn day_inputs(blocks: &[BusyBlock], fixed: &[Action], tz: Tz, from: DateTime<Utc>, until: DateTime<Utc>) -> (Vec<Value>, Vec<String>) {
     let mut busy: Vec<(String, Value)> = Vec::new();
     let mut away = std::collections::BTreeSet::new();
     let today = from.with_timezone(&tz).date_naive();
@@ -208,6 +208,10 @@ pub fn day_inputs(blocks: &[BusyBlock], tz: Tz, from: DateTime<Utc>, until: Date
             Some(DayKind::Away) => away.extend(days.map(|d| d.to_string())),
             Some(DayKind::Reminder) | None => {}
         }
+    }
+    for a in fixed.iter().filter(|a| a.locked && !a.deleted && a.status == ActionStatus::Planned && a.end_at > from && a.start_at < until) {
+        let start = local_text(a.start_at.with_timezone(&tz).naive_local());
+        busy.push((start.clone(), json!({"title": a.title, "start": start, "minutes": (a.end_at - a.start_at).num_minutes().clamp(1, 24 * 60)})));
     }
     busy.sort_by(|a, b| a.0.cmp(&b.0));
     (busy.into_iter().map(|(_, v)| v).collect(), away.into_iter().collect())
@@ -398,7 +402,8 @@ impl Engine {
     async fn busy(&self, user: Uuid, tz: Tz, from: DateTime<Utc>) -> Result<(Vec<Value>, Vec<String>), ServerError> {
         let until = from + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
         let blocks: Vec<BusyBlock> = list_rows::<BusyBlock>(&self.deps.pool, user, &[], false).await?;
-        Ok(day_inputs(&blocks, tz, from, until))
+        let actions: Vec<Action> = list_rows::<Action>(&self.deps.pool, user, &[], false).await?;
+        Ok(day_inputs(&blocks, &actions, tz, from, until))
     }
 
     fn goal_input(goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Value {
@@ -775,18 +780,41 @@ mod tests {
             block("Standup", "2026-11-27T08:00:00Z", "2026-11-27T08:30:00Z", false, None),
             block("Old trip", "2026-11-01T23:00:00Z", "2026-11-25T23:00:00Z", true, Some(DayKind::Away)),
         ];
-        let (busy, away) = day_inputs(&blocks, berlin, from, until);
+        let fixed = |title: &str, start: &str, status: ActionStatus, locked: bool| Action {
+            id: Uuid::now_v7().to_string(),
+            user_id: Uuid::now_v7().to_string(),
+            goal_id: Uuid::now_v7().to_string(),
+            series_id: None,
+            occurrence: None,
+            title: title.into(),
+            notes: None,
+            start_at: start.parse().unwrap(),
+            end_at: start.parse::<DateTime<Utc>>().unwrap() + Duration::minutes(60),
+            status,
+            locked,
+            done_at: None,
+            updated_at: String::new(),
+            deleted: false,
+        };
+        let actions = vec![
+            fixed("Dentist", "2026-11-27T14:00:00Z", ActionStatus::Planned, true),
+            fixed("Run", "2026-11-27T16:00:00Z", ActionStatus::Planned, false),
+            fixed("Call", "2026-11-27T17:00:00Z", ActionStatus::Done, true),
+            fixed("Later", "2026-12-20T17:00:00Z", ActionStatus::Planned, true),
+        ];
+        let (busy, away) = day_inputs(&blocks, &actions, berlin, from, until);
         assert_eq!(
             busy,
             vec![
                 json!({"title": "Conference", "start": "2026-11-27T00:00:00", "minutes": 1440}),
                 json!({"title": "Standup", "start": "2026-11-27T09:00:00", "minutes": 30}),
+                json!({"title": "Dentist", "start": "2026-11-27T15:00:00", "minutes": 60}),
                 json!({"title": "Conference", "start": "2026-11-28T00:00:00", "minutes": 1440}),
             ]
         );
         assert_eq!(away, ["2026-11-30", "2026-12-01"]);
         let mut gone = blocks.clone();
         gone.iter_mut().for_each(|b| b.deleted = true);
-        assert_eq!(day_inputs(&gone, berlin, from, until), (vec![], vec![]));
+        assert_eq!(day_inputs(&gone, &[], berlin, from, until), (vec![], vec![]));
     }
 }

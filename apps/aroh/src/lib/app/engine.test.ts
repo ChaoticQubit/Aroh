@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { chatFromRun, closeOldestQuestion, Engine, flushLogs, keyStatus, NEEDS_ENGINE, pauseMessage, route, type Answer, type Call, type RunView, type Waiting } from './engine';
+import { chatFromRun, closeOldestQuestion, Engine, fixedActionIds, flushLogs, keyStatus, NEEDS_ENGINE, pauseMessage, route, type Answer, type Call, type RunView, type Waiting } from './engine';
+import type { Action } from './client';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -35,8 +36,35 @@ describe('engine client', () => {
 		expect(cards).toHaveLength(2);
 		expect(cards[0]).toMatchObject({ spec: { kind: 'question_card', question: 'How many days a week?', input: { kind: 'number_input' } } });
 		const plan = chatFromRun(view({ status: 'waiting_human' }, [approve])).at(-1);
-		expect(plan).toEqual({ type: 'plan', title: 'Core work and a daily plank.', items: ['Core workout, 2026-11-22 07:00, 30 min'] });
+		expect(plan).toEqual({ type: 'plan', title: 'Core work and a daily plank.', items: ['Core workout, 2026-11-22 07:00, 30 min'], fixable: [true] });
 		expect(chatFromRun(view({ status: 'done' })).at(-1)).toMatchObject({ text: 'Approved. The plan is on your calendar.' });
+	});
+
+	it('finds the actions of the plan items the owner marked Fixed time', () => {
+		const item = (title: string, start: string, rrule: string | null = null) => ({ title, start, minutes: 30, rrule, notes: null });
+		const items = [item('Dentist', '2026-11-24T09:00:00'), item('Run', '2026-11-23T07:00:00', 'FREQ=DAILY'), item('Dentist', '2026-11-25T09:00:00'), item('Gone', '2026-11-26T09:00:00')];
+		const row = (id: string, title: string, start_at: string, extra: Partial<Action> = {}): Action => ({
+			id,
+			goal_id: 'g1',
+			series_id: null,
+			occurrence: null,
+			title,
+			notes: null,
+			start_at,
+			end_at: start_at,
+			status: 'planned',
+			locked: false,
+			done_at: null,
+			...extra
+		});
+		const actions = [
+			row('a1', 'Dentist', '2026-11-24T08:00:00Z'),
+			row('a2', 'Dentist', '2026-11-25T08:00:00Z'),
+			row('a3', 'Run', '2026-11-23T06:00:00Z', { series_id: 's1' }),
+			row('a4', 'Dentist', '2026-11-25T08:00:00Z', { goal_id: 'g2' })
+		];
+		expect(fixedActionIds(actions, 'g1', items, [2, 1, 3], 'Europe/Berlin')).toEqual(['a2']);
+		expect(fixedActionIds(actions, 'g1', items, [0], 'UTC'), 'local start must match in the plan zone').toEqual([]);
 	});
 
 	it('shows a clear line for budget pauses and failures', () => {

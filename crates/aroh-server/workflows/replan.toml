@@ -11,7 +11,7 @@ away_days = "list<string>"
 autonomy = "enum(ask, balanced, auto)"
 profile = "list<string>"
 proposal = "{summary: string, size: enum(small, big), changes: list<{op: enum(move, resize, create, delete), action_id: string?, title: string, start: string?, minutes: int?}>}"
-proposal_record = "{proposal_id: string, summary: string, size: enum(small, big), touches_locked: bool, changes: list<{op: enum(move, resize, create, delete), action_id: string?, title: string, before: {start_at: string, end_at: string}?, after: {start_at: string, end_at: string}?}>}"
+proposal_record = "{proposal_id: string, summary: string, size: enum(small, big), changes: list<{op: enum(move, resize, create, delete), action_id: string?, title: string, before: {start_at: string, end_at: string}?, after: {start_at: string, end_at: string}?}>}"
 approved = "bool"
 outcome = "{status: string, applied: int, skipped: int}"
 

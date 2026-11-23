@@ -20,7 +20,7 @@
 	 * events (`busy`) show in the hour grids as neutral blocks, device all-day events (`allDay`) in
 	 * an all-day row and as bars in month cells and the week strip, with the kind question for the
 	 * first unanswered one in view; tapping a chip reopens it. Tapping an action opens the edit
-	 * sheet; `onedit`, `ondelete` and `onchoose` report the changes. `initialView`, `day`, `editing`,
+	 * sheet; `onedit`, `onlock`, `ondelete` and `onchoose` report the changes. `initialView`, `day`, `editing`,
 	 * `confirming`, `selected` and `inline` (sheet drawn in place for mockups) set the opening state.
 	 */
 	let {
@@ -35,6 +35,7 @@
 		selected: selectedId = null,
 		inline = false,
 		onedit,
+		onlock,
 		ondelete,
 		onchoose
 	}: {
@@ -49,6 +50,7 @@
 		selected?: string | null;
 		inline?: boolean;
 		onedit?: (edit: ActionEdit) => void;
+		onlock?: (id: string, locked: boolean) => void;
 		ondelete?: (id: string) => void;
 		onchoose?: (pick: DayPick) => void;
 	} = $props();
@@ -177,5 +179,5 @@
 	{/if}
 </div>
 {#if open}
-	<ActionSheet action={open} {confirming} {inline} onsave={edit} ondelete={remove} onclose={() => (editing = null)} />
+	<ActionSheet action={open} {confirming} {inline} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />
 {/if}

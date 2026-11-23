@@ -8,7 +8,8 @@
 	import { goalHeader, goalView } from '$lib/app/views';
 	import { activeVersion, enablePlugin, listPlugins, type PluginVersion } from '$lib/plugins/api';
 	import { parseTree, resolve } from '$lib/plugins/resolve';
-	import type { AutonomyLabel } from '$lib/ui/screens/types';
+	import type { AutonomyLabel, CoachView } from '$lib/ui/screens/types';
+	import { loadCoaches } from '$lib/app/personas';
 
 	const DERIVED = 'derived';
 	const SHOWN_VERSIONS = 3;
@@ -17,6 +18,12 @@
 	const s = $derived(data.snapshot);
 	const goal = $derived(s?.goals.find((g) => g.id === page.params.id));
 	let plugins = $state<PluginVersion[]>([]);
+	let coaches = $state<CoachView[]>([]);
+
+	$effect(() => {
+		const id = goal?.id;
+		if (s && id) void loadCoaches(s, id).then((r) => (coaches = r.coaches));
+	});
 
 	$effect(() => {
 		const id = goal?.id;
@@ -63,7 +70,7 @@
 </script>
 
 {#if s && goal && view}
-	<GoalScreen goal={goalHeader(s, goal, clock.zone)} {view} {versions} version={shown?.id ?? DERIVED} {onautonomy} {onchat} {onversion} oncoaches={() => void goto(`/personas?goal=${goal.id}`)} />
+	<GoalScreen goal={goalHeader(s, goal, clock.zone)} {view} {versions} version={shown?.id ?? DERIVED} {coaches} {onautonomy} {onchat} {onversion} oncoaches={() => void goto(`/personas?goal=${goal.id}`)} />
 {:else if s}
 	<p class="p-4 text-sm text-muted">This goal no longer exists.</p>
 {/if}

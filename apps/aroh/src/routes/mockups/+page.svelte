@@ -31,6 +31,7 @@
 		sixpackActions,
 		sixpackChat,
 		sixpackGoals,
+		sixpackCoaches,
 		sixpackHeader,
 		sixpackInbox,
 		sixpackInboxItems,
@@ -54,7 +55,7 @@
 		{ value: 'editing', label: 'Calendar editing' }
 	];
 	const keep = () => {};
-	const EDIT = { onedit: keep, ondelete: keep, onchoose: keep, inline: true };
+	const EDIT = { onedit: keep, onlock: keep, ondelete: keep, onchoose: keep, inline: true };
 	const PIANO = 'a-2026-11-26-2000-4';
 	const CORE = 'a-2026-12-03-0700-2';
 	const EDITING: { name: string; title: string; tab: TabId; now: string; screen: Component<any>; props: Record<string, unknown> }[] = [
@@ -73,7 +74,7 @@
 		{ name: 'Today', title: 'Today', tab: 'today', screen: TodayScreen, props: { actions: plannedActions, checkIn: weightCheckIn, insight: sixpackInbox.insights[0], allDay: sixpackAllDay } },
 		{ name: 'Calendar', title: 'Calendar', tab: 'calendar', screen: CalendarScreen, props: { actions: plannedActions, categories, allDay: sixpackAllDay } },
 		{ name: 'Goals', title: 'Goals', tab: 'goals', screen: GoalsScreen, props: { goals: sixpackGoals, categories } },
-		{ name: 'Goal', title: 'Goals', tab: 'goals', screen: GoalScreen, props: { goal: sixpackHeader, view: sixpackView, versions: [{ value: 'derived', label: 'Derived' }, { value: 'p2', label: 'v2' }, { value: 'p1', label: 'v1' }], version: 'p2' } },
+		{ name: 'Goal', title: 'Goals', tab: 'goals', screen: GoalScreen, props: { goal: sixpackHeader, coaches: sixpackCoaches, view: sixpackView, versions: [{ value: 'derived', label: 'Derived' }, { value: 'p2', label: 'v2' }, { value: 'p1', label: 'v1' }], version: 'p2' } },
 		{ name: 'New goal', title: 'New goal', tab: 'goals', screen: NewGoalScreen, props: { messages: sixpackChat } },
 		{ name: 'Inbox', title: 'Inbox', tab: 'inbox', screen: InboxScreen, props: { ...sixpackInboxItems, runs: sixpackInbox.runs } },
 		{ name: 'Log', title: 'Log', tab: 'log', screen: LogScreen, props: sixpackLog },

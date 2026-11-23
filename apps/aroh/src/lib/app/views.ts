@@ -1,6 +1,6 @@
 import type { Clock } from '$lib/ui/clock';
 import type { ActionView, CategorySlot, ChangeView, ComponentSpec, Point, SpecOf, Unit, ViewSpec } from '$lib/ui/contract';
-import { daysBetween, formatDate, formatYmd, minuteOfDay, mondayOf, shiftDay } from '$lib/ui/format';
+import { daysBetween, formatDate, formatDay, formatYmd, minuteOfDay, mondayOf, shiftDay } from '$lib/ui/format';
 import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, RunView, SettingsView } from '$lib/ui/screens/types';
 import { catalog } from './catalog';
 import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerEntry, TrackerField } from './client';
@@ -130,7 +130,7 @@ function goalTrackers(s: Snapshot, goalId: string): { tracker: Tracker; field: T
 		.filter((t) => t.points.length > 0);
 }
 
-/** The header facts of `goal`: category, deadline, autonomy, personas and its lead tracker's latest value. */
+/** The header facts of `goal`: category, deadline, autonomy and its lead tracker's latest value. */
 export function goalHeader(s: Snapshot, goal: Goal, zone: string): GoalHeader {
 	const category = goalCategory(categoryViews(s), goal);
 	const lead = goalTrackers(s, goal.id)[0];
@@ -141,7 +141,6 @@ export function goalHeader(s: Snapshot, goal: Goal, zone: string): GoalHeader {
 		slot: category.slot,
 		deadline: goal.deadline ? deadlineAt(goal.deadline, zone) : null,
 		autonomy: AUTONOMY_LABEL[goal.autonomy],
-		personas: s.personas.filter((p) => p.goal_id === goal.id).map((p) => p.name),
 		lead: lead ? { unit: unitOf(lead.field.unit), now: lead.points[lead.points.length - 1].value } : null
 	};
 }
@@ -281,16 +280,66 @@ function insightItems(s: Snapshot, insights: Insight[]): InboxItem[] {
 	})).filter((i) => !dismissed.has(i.id));
 }
 
-/** The Inbox groups: open proposals, unconfirmed preferences, engine insights, and the engine runs not done. */
+/** Joins titles as "A", "A and B" or "A, B and C". */
+export function joinTitles(titles: string[]): string {
+	return titles.length < 2 ? (titles[0] ?? '') : `${titles.slice(0, -1).join(', ')} and ${titles[titles.length - 1]}`;
+}
+
+/**
+ * Neutral "Calendar" notes from the day of `now` on (local days in `zone`): one per Busy all-day
+ * block still holding planned actions, locked ones included (id = the block id), then one per
+ * locked planned action overlapping a timed busy block (id = the action id). Dismissed ones
+ * (`dismissed_insights`) are left out.
+ */
+export function busyDayInsights(s: Snapshot, zone: string, now: string): InboxItem[] {
+	const dismissed = new Set((s.settings.dismissed_insights ?? '').split(','));
+	const today = formatYmd(now, zone);
+	const planned = s.actions.filter((a) => a.status === 'planned').sort((a, b) => a.start_at.localeCompare(b.start_at));
+	const days = (s.busy ?? [])
+		.filter((b) => b.all_day && b.day_kind === 'busy' && !dismissed.has(b.id))
+		.flatMap((b) => {
+			const first = formatYmd(b.start_at, zone);
+			const lastAt = new Date(Date.parse(b.end_at) - 1000).toISOString();
+			const last = formatYmd(lastAt, zone);
+			const left = planned.filter((a) => {
+				const day = formatYmd(a.start_at, zone);
+				return day >= today && day >= first && day <= last;
+			});
+			if (!left.length) return [];
+			const days = first < last ? `${formatDay(b.start_at, zone)} to ${formatDay(lastAt, zone)}` : formatDay(b.start_at, zone);
+			const count = `${left.length} ${left.length === 1 ? 'action' : 'actions'}`;
+			const titles = left.map((a) => a.title);
+			const names = titles.length > 3 ? `${titles.slice(0, 3).join(', ')} and ${titles.length - 3} more` : joinTitles(titles);
+			const body = `${b.title} on ${days}: ${names} could not move. Move them by hand or change the day's kind.`;
+			return [{ id: b.id, spec: { kind: 'insight_card' as const, persona: 'Calendar', title: `No free day for ${count}`, body } }];
+		});
+	const timed = (s.busy ?? []).filter((b) => !b.all_day);
+	const clashes = planned
+		.filter((a) => a.locked && !dismissed.has(a.id) && formatYmd(a.start_at, zone) >= today)
+		.flatMap((a) => {
+			const hit = timed.find((b) => b.start_at < a.end_at && a.start_at < b.end_at);
+			if (!hit) return [];
+			const body = `${a.title} on ${formatDay(a.start_at, zone)} overlaps ${hit.title}. Fixed actions are never moved: move it by hand or turn off Fixed time.`;
+			return [{ id: a.id, spec: { kind: 'insight_card' as const, persona: 'Calendar', title: `Fixed action clashes: ${a.title}`, body } }];
+		});
+	return [...days, ...clashes];
+}
+
+/**
+ * The Inbox groups: open proposals, unconfirmed preferences, engine insights then Busy-day notes
+ * (local days in `zone`, from the day of `now`), and the engine runs not done.
+ */
 export function inboxView(
 	s: Snapshot,
 	runs: RunSummary[] = [],
-	insights: Insight[] = []
+	insights: Insight[] = [],
+	zone = 'UTC',
+	now = new Date().toISOString()
 ): { approvals: InboxItem[]; suggestions: InboxItem[]; insights: InboxItem[]; runs: RunView[] } {
 	return {
 		approvals: s.proposals.map((p) => ({ id: p.id, spec: { kind: 'proposal_card', persona: personaFor(s, p.goal_id), summary: p.summary, changes: changes(p) } })),
 		suggestions: s.preferences.map((f) => ({ id: f.id, spec: { kind: 'proposal_card', persona: f.source, summary: f.fact, changes: [] } })),
-		insights: insightItems(s, insights),
+		insights: [...insightItems(s, insights), ...busyDayInsights(s, zone, now)],
 		runs: openRuns(s, runs)
 	};
 }
