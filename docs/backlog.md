@@ -39,7 +39,12 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B33 | Owner, build 3 | write_plan tool | First goal's later run stopped: write_plan invalid arguments "bad cadence for quizzes score" after the plan was applied | high | closed, b339d13 + b638eb1 (prod PR #5) |
 | B34 | Owner, build 3 | Calendar status | Action checked done on Today still shows blue (planned) on the Calendar, not marked done | high | closed, 9e9056f (pod 31) |
 | B35 | Owner, build 3 | Calendar | No swipe left or right to change day or week | medium | closed, e068703 (pod 31) |
-| B36 | Owner, build 3 | intake, planner | Intake questions shallow for every goal; workout plan had no session content (exercises, sets, reps) and no nutrition guidance | high | open, pod 29 (planner notes, coach intake) |
+| B36 | Owner, build 3 | intake, planner | Intake questions shallow for every goal; workout plan had no session content (exercises, sets, reps) and no nutrition guidance | high | closed, a23d3dd |
 | B37 | Pod 33 DONE | delete goal | Kept actions take the Routines reminder setting (on) even if the deleted goal had reminders off | low | open |
 | B38 | Pod 33 DONE | storage bulk delete | DELETE /storage/v1/object/goal-files with prefixes tested only against a stub; confirm on prod | medium | open, check on build 4 |
 | B39 | Pod 31 DONE | Calendar phone week view | Swipe moves 7 days while the phone grid shows one day; next page not drawn during the drag | low | open |
+| B40 | Pod 29 DONE | troupekit http | `http::tests::times_out` fails in the full parallel run, passes alone (flaky) | low | open |
+| B41 | Pod 29 DONE | limit_choice | Choosing "Move the date" does not update the goal's target date | medium | open |
+| B42 | Pod 29 DONE | replan, record_proposal | No daily-cap check on replans and proposals, only on new plans | medium | open |
+| B43 | Pod 29 DONE | web search errors | "web search not enabled" 400 from the API surfaces raw, not as a clear message | medium | open |
+| B44 | Pod 29 DONE | coach_questions eval | Matches English keywords only | low | open |
