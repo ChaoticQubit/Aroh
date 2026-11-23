@@ -8,13 +8,15 @@
 	import { Switch } from '$lib/ui/primitives/switch';
 	import Field from '../components/Field.svelte';
 	import StatusChip from '../components/StatusChip.svelte';
+	import type { Snippet } from 'svelte';
 	import type { SettingsView } from './types';
 
 	/**
 	 * Settings: account sign-in, model provider, model and key (the key goes to the server, never
 	 * stored on the device), search providers, server URL, budgets, the run time limit, and calendar and Apple
 	 * Health access. `ontest`, `onsignin` and `onhealth` resolve to a status line; the rest report edits.
-	 * With `oncoaches`, a Coaches row opens the coach (persona) library; `onlocation` adds a Location row.
+	 * With `oncoaches`, a Coaches row opens the coach (persona) library; `onlocation` adds a Location row;
+	 * `agents` renders the new-goal agent defaults.
 	 */
 	let {
 		settings,
@@ -28,7 +30,8 @@
 		oncoaches,
 		runLimit = null,
 		onrunlimit,
-		onlocation
+		onlocation,
+		agents
 	}: {
 		settings: SettingsView;
 		onprovider?: (providerId: string, model: string) => void;
@@ -42,6 +45,7 @@
 		runLimit?: number | null;
 		onrunlimit?: (minutes: number) => void;
 		onlocation?: () => void;
+		agents?: Snippet;
 	} = $props();
 
 	const id = $props.id();
@@ -238,6 +242,14 @@
 			{/if}
 		</Card.Root>
 	</section>
+
+	{#if agents}
+		<section class="flex flex-col gap-3" aria-labelledby="{id}-agents">
+			<h2 id="{id}-agents" class="text-sm font-semibold text-fg">Agents</h2>
+			<p class="text-xs text-muted">What new goals start with. Each goal can change them in its agents sheet.</p>
+			{@render agents()}
+		</section>
+	{/if}
 
 	<section class="flex flex-col gap-3" aria-labelledby="{id}-access">
 		<h2 id="{id}-access" class="text-sm font-semibold text-fg">Access</h2>

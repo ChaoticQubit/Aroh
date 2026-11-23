@@ -626,13 +626,22 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
         let env = e6.clone();
         async move { store_plugin(&env, &a.plugin_draft, &ctx).await.map(json_output) }
     });
-    let e7 = env;
+    let e7 = env.clone();
     let propose = typed_tool(
         "propose_preference",
         "Store one unconfirmed owner preference learned from similar edits.",
         move |a: crate::learning::ProposeArgs, _ctx: ToolContext| {
             let env = e7.clone();
             async move { crate::learning::propose_preference(&env, a).await.map(json_output) }
+        },
+    );
+    let e8 = env;
+    let facts = typed_tool(
+        "save_facts",
+        "Keep lasting answers as confirmed profile facts and refresh the facts known questions came from.",
+        move |a: crate::profile::SaveFactsArgs, _ctx: ToolContext| {
+            let env = e8.clone();
+            async move { crate::profile::save_facts(&env, a).await.map(json_output) }
         },
     );
     Toolkit::new("aroh")
@@ -643,6 +652,7 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
         .with(Arc::new(entries))
         .with(Arc::new(plugin))
         .with(Arc::new(propose))
+        .with(Arc::new(facts))
 }
 
 /// Returns a naive local time as the `YYYY-MM-DDTHH:MM:SS` text plans use.

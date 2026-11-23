@@ -3,7 +3,7 @@
 use crate::local::{self, Note, PendingLog};
 use crate::Result;
 use aroh_domain::rows::{
-    Action, Budget, BusyBlock, Category, Goal, Persona, Preference, Proposal, ProposalStatus, ProviderSetting, SearchSetting, Tracker,
+    Action, Budget, BusyBlock, Category, Goal, GoalFile, Persona, Preference, Proposal, ProposalStatus, ProviderSetting, SearchSetting, Tracker,
     TrackerEntry,
 };
 use aroh_store::repo;
@@ -13,18 +13,21 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// Live rows of the local user for the screens: actions overlapping the asked range,
-/// entries logged since the asked instant, open proposals, unconfirmed preferences, the
+/// entries logged since the asked instant, open proposals, unconfirmed preferences, kept
+/// profile `facts` (confirmed, blocked topics included, newest first), the
 /// device-local notes and the zone the rows were last shifted to.
 #[derive(Debug, Clone, Serialize)]
 pub struct Snapshot {
     pub user_id: String,
     pub categories: Vec<Category>,
     pub goals: Vec<Goal>,
+    pub files: Vec<GoalFile>,
     pub actions: Vec<Action>,
     pub trackers: Vec<Tracker>,
     pub entries: Vec<TrackerEntry>,
     pub proposals: Vec<Proposal>,
     pub preferences: Vec<Preference>,
+    pub facts: Vec<Preference>,
     pub personas: Vec<Persona>,
     pub providers: Vec<ProviderSetting>,
     pub search: Vec<SearchSetting>,
@@ -54,15 +57,19 @@ pub fn snapshot(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateT
     actions.sort_by(|a, b| a.start_at.cmp(&b.start_at).then_with(|| a.id.cmp(&b.id)));
     let mut entries: Vec<TrackerEntry> = repo::list::<TrackerEntry>(conn, &mine)?.into_iter().filter(|e| e.logged_at >= since).collect();
     entries.sort_by(|a, b| b.logged_at.cmp(&a.logged_at));
+    let mut prefs: Vec<Preference> = repo::list::<Preference>(conn, &mine)?;
+    prefs.sort_by(|a, b| b.noted_at.cmp(&a.noted_at));
     Ok(Snapshot {
         user_id: user_id.to_string(),
         categories: repo::list(conn, &mine)?,
         goals: repo::list(conn, &mine)?,
+        files: repo::list::<GoalFile>(conn, &mine)?.into_iter().map(|f| GoalFile { extracted_text: None, ..f }).collect(),
         actions,
         trackers: repo::list(conn, &mine)?,
         entries,
         proposals: repo::list::<Proposal>(conn, &mine)?.into_iter().filter(|p| p.status == ProposalStatus::Proposed).collect(),
-        preferences: repo::list::<Preference>(conn, &mine)?.into_iter().filter(|p| !p.confirmed).collect(),
+        preferences: prefs.iter().filter(|p| !p.confirmed).cloned().collect(),
+        facts: prefs.into_iter().filter(|p| p.confirmed).collect(),
         personas: repo::list(conn, &mine)?,
         providers: repo::list(conn, &mine)?,
         search: repo::list(conn, &mine)?,

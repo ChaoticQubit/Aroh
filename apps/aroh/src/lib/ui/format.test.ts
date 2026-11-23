@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { daysUntil, formatDuration, formatNumber, formatTime, formatYmd, minuteOfDay, shiftDay, shiftMonth, mondayOf, daysBetween, formatDate, snap } from './format';
+import { daysUntil, formatDuration, formatNumber, formatTime, formatYmd, minuteOfDay, shiftDay, shiftMonth, mondayOf, daysBetween, formatDate, sliderRange, snap, stepNumber, typedNumber } from './format';
 
 describe('format', () => {
 	it('formats numbers with units', () => {
@@ -37,6 +37,25 @@ describe('format', () => {
 		expect(snap(5.6, 1, 0, 16)).toBe(6);
 		expect(() => snap(Number.NaN, 1)).toThrow(RangeError);
 		expect(() => snap(1, 0)).toThrow(RangeError);
+	});
+	it('a typed number is never cut to the slider bounds; the slider grows to hold it (build 2: 315 became 100)', () => {
+		expect(typedNumber(315, 1)).toBe(315);
+		expect(typedNumber(82.40000001, 0.1)).toBe(82.4);
+		expect(sliderRange(0, 100, 315)).toEqual({ min: 0, max: 315 });
+		expect(sliderRange(10, 100, 4)).toEqual({ min: 4, max: 100 });
+		expect(sliderRange(0, 100, 40)).toEqual({ min: 0, max: 100 });
+		expect(sliderRange(0, 100, null)).toEqual({ min: 0, max: 100 });
+		expect(sliderRange(0, undefined, 5)).toBeNull();
+		expect(sliderRange(undefined, 30, 5)).toBeNull();
+		expect(() => sliderRange(10, 5, null)).toThrow(RangeError);
+	});
+	it('step buttons go past the top of the range and stop at its floor', () => {
+		expect(stepNumber(315, 1, 1, 0)).toBe(316);
+		expect(stepNumber(100, 1, 1, 0)).toBe(101);
+		expect(stepNumber(0, -1, 1, 0)).toBe(0);
+		expect(stepNumber(null, 1, 1, 0)).toBe(1);
+		expect(stepNumber(null, -0.1, 0.1, undefined)).toBe(-0.1);
+		expect(stepNumber(-3, -1, 1, 0)).toBe(-3);
 	});
 	it('counts whole days to a deadline', () => {
 		expect(daysUntil('2027-02-01T00:00:00Z', '2026-11-21T00:00:00Z')).toBe(72);

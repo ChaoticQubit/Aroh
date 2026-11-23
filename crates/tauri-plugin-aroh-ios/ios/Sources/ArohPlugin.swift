@@ -57,15 +57,21 @@ class LocationSnapshotArgs: Decodable {
 /// a status line.
 class ArohPlugin: Plugin {
   private let health = HealthBridge()
+  private var pinned: NSKeyValueObservation?
 
   override func load(webview: WKWebView) {
     super.load(webview: webview)
     webview.scrollView.contentInsetAdjustmentBehavior = .never
     webview.scrollView.bounces = false
     webview.scrollView.keyboardDismissMode = .interactive
+    webview.scrollView.isScrollEnabled = false
+    pinned = webview.scrollView.observe(\.contentOffset, options: [.new]) { view, _ in
+      if view.contentOffset != .zero { view.contentOffset = .zero }
+    }
     PushBridge.shared.install()
     ReminderDelegate.shared.install()
     LocationBridge.shared.install()
+    DevKeyboard.install()
   }
 
   @objc public func health_authorize(_ invoke: Invoke) {

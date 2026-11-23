@@ -1,6 +1,6 @@
 use aroh_app::{local, remind, sample, snapshot, tick, write};
 use aroh_domain::hlc::Hlc;
-use aroh_domain::rows::{Action, ActionSeries, ActionStatus, Category, EntrySource, Goal, Proposal, ProposalStatus, ProviderSetting, Tracker, TrackerEntry};
+use aroh_domain::rows::{Action, ActionSeries, ActionStatus, Category, EntrySource, FileKind, Goal, GoalFile, IngestStatus, Preference, PreferenceOrigin, Proposal, ProposalStatus, ProviderSetting, Record, Tracker, TrackerEntry};
 use aroh_domain::remind::PlannedKind;
 use aroh_domain::schema::SYNCED;
 use aroh_store::sync::pending;
@@ -369,4 +369,133 @@ fn hosted_project_and_engine_are_the_defaults_until_the_owner_sets_others() {
     assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("http://127.0.0.1:8095"));
     local::set_setting(&conn, "server_url", " ").unwrap();
     assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("https://aroh-ten.vercel.app"));
+}
+
+fn fact(conn: &Connection, clock: &mut Hlc, user: &str, topic: Option<&str>) -> Preference {
+    let mut p = Preference {
+        id: aroh_domain::new_id(),
+        user_id: user.into(),
+        fact: "Free minutes a day: 30 min".into(),
+        source: "answer".into(),
+        noted_at: now() - Duration::days(9),
+        confirmed: true,
+        topic: topic.map(str::to_string),
+        goal_id: None,
+        origin: PreferenceOrigin::Answer,
+        blocked: false,
+        updated_at: String::new(),
+        deleted: false,
+    };
+    repo::put(conn, clock, &mut p).unwrap();
+    p
+}
+
+#[test]
+fn facts_are_edited_blocked_and_allowed_again() {
+    let (conn, mut clock, user) = seeded();
+    let p = fact(&conn, &mut clock, &user, Some("daily_minutes"));
+    let edited = write::edit_fact(&conn, &mut clock, &p.id, "  Free minutes a day: 45 min ", now()).unwrap();
+    assert_eq!((edited.fact.as_str(), edited.noted_at, edited.origin), ("Free minutes a day: 45 min", now(), PreferenceOrigin::Answer));
+    assert!(write::edit_fact(&conn, &mut clock, &p.id, "   ", now()).is_err(), "a fact is never blank");
+
+    let blocked = write::block_topic(&conn, &mut clock, &p.id).unwrap();
+    assert!(blocked.blocked && blocked.confirmed);
+    assert_eq!(blocked.fact, "Free minutes a day", "the answer is dropped, the label kept");
+    assert!(write::edit_fact(&conn, &mut clock, &p.id, "x", now()).is_err(), "a blocked topic holds no fact");
+
+    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now()).unwrap();
+    assert_eq!(snap.facts.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), vec![p.id.as_str()], "kept facts, blocked included");
+    assert!(snap.preferences.iter().all(|s| s.id != p.id), "kept facts never show as Inbox suggestions");
+
+    let untopiced = fact(&conn, &mut clock, &user, None);
+    assert!(write::block_topic(&conn, &mut clock, &untopiced.id).is_err(), "only a fact with a topic can be blocked");
+    assert!(write::allow_topic(&conn, &mut clock, &untopiced.id).is_err(), "only a blocked topic is allowed again");
+    write::allow_topic(&conn, &mut clock, &p.id).unwrap();
+    assert!(repo::get::<Preference>(&conn, &p.id).is_err(), "allowing again removes the blocked row");
+}
+
+#[test]
+fn agent_defaults_hold_an_autonomy_level_and_two_switches() {
+    let (conn, _, _) = seeded();
+    let good = r#"{"autonomy":"ask","reminders":false,"use_calendars":true}"#;
+    local::set_setting(&conn, "agent_defaults", good).unwrap();
+    assert_eq!(local::setting(&conn, "agent_defaults").unwrap().as_deref(), Some(good));
+    for bad in [r#"{"autonomy":"wild","reminders":true,"use_calendars":true}"#, r#"{"autonomy":"ask"}"#, r#"{"autonomy":"ask","reminders":true,"use_calendars":true,"x":1}"#, "nope"] {
+        assert!(local::set_setting(&conn, "agent_defaults", bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn goal_files_are_added_listed_without_text_and_removed() {
+    let (conn, mut clock, user) = seeded();
+    let goal = repo::list::<Goal>(&conn, &[]).unwrap().remove(0);
+    let read = (IngestStatus::Done, Some("Chapter one".to_string()));
+    let pdf = write::stored_file(&user, &goal.id, "Joy of X (notes).pdf", "application/pdf", 2048, read);
+    assert_eq!(pdf.kind, FileKind::Document);
+    let path = pdf.storage_path.clone().unwrap();
+    assert!(path.starts_with(&format!("goals/{}/{}-", goal.id, pdf.id)) && path.ends_with("-Joy-of-X--notes-.pdf"), "{path}");
+    let pdf = write::add_goal_file(&conn, &mut clock, pdf).unwrap();
+    let photo = write::stored_file(&user, &goal.id, "shelf.jpg", "image/jpeg", 10, (IngestStatus::Done, None));
+    assert_eq!(photo.kind, FileKind::Image);
+    write::add_goal_file(&conn, &mut clock, photo).unwrap();
+    let link = write::add_goal_link(&conn, &mut clock, &user, &goal.id, " https://example.org/joy-of-x ").unwrap();
+    assert_eq!((link.kind, link.url.as_deref(), link.ingest_status), (FileKind::Link, Some("https://example.org/joy-of-x"), IngestStatus::Pending));
+    assert!(write::add_goal_link(&conn, &mut clock, &user, &goal.id, "http://example.org").is_err());
+    let early = write::stored_file(&user, "0190f2a0-0000-7000-8000-0000000000ff", "x.txt", "text/plain", 1, (IngestStatus::Done, None));
+    let early = write::add_goal_file(&conn, &mut clock, early).unwrap();
+    write::remove_goal_file(&conn, &mut clock, &early.id).unwrap();
+    let mut gone = goal.clone();
+    gone.id = aroh_domain::new_id();
+    repo::put(&conn, &mut clock, &mut gone).unwrap();
+    repo::delete::<Goal>(&conn, &mut clock, &gone.id).unwrap();
+    let late = write::stored_file(&user, &gone.id, "x.txt", "text/plain", 1, (IngestStatus::Done, None));
+    assert!(write::add_goal_file(&conn, &mut clock, late).is_err(), "a deleted goal takes no files");
+
+    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now() - Duration::days(30)).unwrap();
+    assert_eq!(snap.files.len(), 3);
+    assert!(snap.files.iter().all(|f| f.extracted_text.is_none()), "the snapshot never carries file text");
+    assert_eq!(repo::get::<GoalFile>(&conn, &pdf.id).unwrap().extracted_text.as_deref(), Some("Chapter one"));
+    write::remove_goal_file(&conn, &mut clock, &pdf.id).unwrap();
+    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now() - Duration::days(30)).unwrap();
+    assert_eq!(snap.files.len(), 2);
+}
+
+#[test]
+fn goal_controls_are_stored_and_bad_limits_refused() {
+    let (conn, mut clock, _) = seeded();
+    let goal = repo::list::<Goal>(&conn, &[]).unwrap().remove(0);
+    let saved = write::set_goal_controls(&conn, &mut clock, &goal.id, false, false, Some(15)).unwrap();
+    assert_eq!((saved.reminders, saved.use_calendars, saved.run_limit_minutes), (false, false, Some(15)));
+    let stored: Goal = repo::get(&conn, &goal.id).unwrap();
+    assert_eq!(stored, saved);
+    assert!(write::set_goal_controls(&conn, &mut clock, &goal.id, true, true, Some(121)).is_err());
+    assert_eq!(repo::get::<Goal>(&conn, &goal.id).unwrap().run_limit_minutes, Some(15), "a refused write changes nothing");
+    assert_eq!(write::set_goal_controls(&conn, &mut clock, &goal.id, true, true, None).unwrap().run_limit_minutes, None);
+}
+
+#[test]
+fn category_guess_names_a_seeded_category_of_the_owner() {
+    let (conn, mut clock, user) = setup();
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
+    let learning: Category = repo::list::<Category>(&conn, &[("user_id", &user)]).unwrap().into_iter().find(|c| c.name == "Learning").unwrap();
+    assert_eq!(write::guess_category(&user, "Finish reading Dune", None), Some(learning.id));
+    assert_eq!(write::guess_category(&user, "Ship my side project", Some("before spring")), None);
+}
+
+#[test]
+fn new_categories_take_the_next_free_hue_or_the_owner_pick() {
+    let (conn, mut clock, user) = setup();
+    let hues = aroh_domain::category::hues();
+    let first = write::add_category(&conn, &mut clock, &user, " Reading club ", None).unwrap();
+    assert_eq!((first.name.as_str(), first.color.as_str(), first.seeded), ("Reading club", hues[0], false));
+    let second = write::add_category(&conn, &mut clock, &user, "Garden", None).unwrap();
+    assert_eq!(second.color, hues[1]);
+    assert!(write::add_category(&conn, &mut clock, &user, "reading CLUB", None).is_err(), "names are unique");
+    assert!(write::add_category(&conn, &mut clock, &user, "", None).is_err());
+    assert!(write::add_category(&conn, &mut clock, &user, "Odd", Some("#123456")).is_err(), "only the 6 hues");
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
+    assert!(write::add_category(&conn, &mut clock, &user, "Choir", None).is_err(), "past 6 the owner picks a hue");
+    let picked = write::add_category(&conn, &mut clock, &user, "Choir", Some(&hues[4].to_uppercase())).unwrap();
+    assert_eq!(picked.color, hues[4]);
+    assert_eq!(pending(&conn, Category::TABLE, &user, clock.node(), "", 50).unwrap().len(), 3);
 }

@@ -25,6 +25,9 @@ async fn env(pool: &PgPool, user: Uuid) -> ToolEnv {
         status: GoalStatus::Draft,
         autonomy: Autonomy::Balanced,
         created_at: utc(T0),
+        reminders: true,
+        use_calendars: true,
+        run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,
     };

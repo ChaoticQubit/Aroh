@@ -19,9 +19,17 @@
 	 * awaiting approval, above a composer with text and, given `voice`, a mic that dictates into the draft.
 	 * Emits `{ type: 'send', text }` (typed or a card's answer), the group's `answer`, `skip` and `submit`,
 	 * `{ type: 'approve', fixed }` (indexes of plan items set to Fixed time), `{ type: 'change' }`, or a
-	 * run's `stop` and `retry`. With `echo` false the caller adds sent messages itself.
+	 * run's `stop` and `retry`. With `echo` false the caller adds sent messages itself. With
+	 * `inline` the thread flows in the page, which is the only scroller, and the composer sticks
+	 * to the bottom of the screen (the goal card); only a new question group scrolls into view.
 	 */
-	let { messages, onchange, echo = true, voice }: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean; voice?: Speech } = $props();
+	let {
+		messages,
+		onchange,
+		echo = true,
+		voice,
+		inline = false
+	}: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean; voice?: Speech; inline?: boolean } = $props();
 
 	const id = $props.id();
 	let sent = $state<ChatMessage[]>([]);
@@ -38,7 +46,7 @@
 		const next = scrollFor(thread, seenGroup);
 		seenGroup = next.seen;
 		if (!thread.length || !list) return;
-		if (next.to === 'bottom') list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+		if (next.to === 'bottom' && !inline) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
 		else if (next.to === 'group') (list.lastElementChild as HTMLElement | null)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 	});
 
@@ -60,8 +68,8 @@
 	}
 </script>
 
-<div class="flex h-full min-h-0 flex-col">
-	<ol bind:this={list} class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" aria-label="Conversation">
+<div class="flex flex-col {inline ? '' : 'h-full min-h-0'}">
+	<ol bind:this={list} class="flex flex-col gap-3 {inline ? 'py-2' : 'min-h-0 flex-1 overflow-y-auto p-4'}" aria-label="Conversation">
 		{#each thread as m, i (i)}
 			<li class="flex flex-col {m.type === 'message' && m.from === 'owner' ? 'items-end' : 'items-stretch'}">
 				{#if m.type === 'message'}
@@ -141,7 +149,7 @@
 		{/each}
 	</ol>
 	<form
-		class="flex items-end gap-1 border-t border-border bg-bg p-2"
+		class="flex items-end gap-1 border-t border-border bg-bg p-2 {inline ? 'sticky bottom-0 z-10 -mx-4 @3xl:-mx-6' : ''}"
 		onsubmit={(e) => {
 			e.preventDefault();
 			send();

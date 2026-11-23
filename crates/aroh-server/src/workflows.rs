@@ -118,7 +118,7 @@ pub async fn snapshot(
             .iter()
             .find(|p| p.name == name && p.goal_id.is_some() && p.goal_id == goal_text)
             .or_else(|| rows.iter().find(|p| p.name == name && p.goal_id.is_none()))
-            .map(|p| p.toml.clone());
+            .map(|p| crate::personas::with_shipped_output(&name, p.toml.clone()));
         let text = match own {
             Some(t) => Some(t),
             None => {

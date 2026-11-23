@@ -3,7 +3,7 @@ use crate::error::ServerError;
 use crate::rows::{insert_derived, list_rows};
 use crate::tools::{local_text, ToolEnv};
 use aroh_domain::derived_id;
-use aroh_domain::rows::Preference;
+use aroh_domain::rows::{Preference, PreferenceOrigin};
 use chrono::{DateTime, Timelike};
 use chrono_tz::Tz;
 use schemars::JsonSchema;
@@ -200,6 +200,10 @@ pub async fn propose_preference(env: &ToolEnv, args: ProposeArgs) -> Result<Valu
         source: SOURCE.into(),
         noted_at: crate::rows::utc(env.clock.now_ms()),
         confirmed: false,
+        topic: None,
+        goal_id: None,
+        origin: PreferenceOrigin::Edit,
+        blocked: false,
         updated_at: env.hlc.stamp_after("").map_err(|e| ToolError::Failed(e.to_string()))?,
         deleted: false,
     };

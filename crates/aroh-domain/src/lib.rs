@@ -2,6 +2,7 @@
 //! the app engine and the server engine. No I/O.
 
 pub mod calendar;
+pub mod category;
 pub mod hlc;
 pub mod lww;
 pub mod recur;

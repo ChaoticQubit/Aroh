@@ -20,6 +20,7 @@
 	import LogScreen from '$lib/ui/screens/LogScreen.svelte';
 	import { setClock } from '$lib/ui/clock';
 	import ClockFrame from './ClockFrame.svelte';
+	import GoalRedesign from './goal-redesign/GoalRedesign.svelte';
 	import LocationExplainer from '$lib/ui/components/location/LocationExplainer.svelte';
 	import LockScreenNudge from '$lib/ui/components/location/LockScreenNudge.svelte';
 	import PlacesScreen from '$lib/ui/screens/PlacesScreen.svelte';
@@ -50,7 +51,7 @@
 
 	setClock({ now: mockNow, zone: mockZone });
 
-	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'location';
+	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location';
 	const VIEWS: { value: View; label: string }[] = [
 		{ value: 'tokens', label: 'Tokens' },
 		{ value: 'inputs', label: 'Inputs' },
@@ -60,6 +61,7 @@
 		{ value: 'screens-phone', label: 'Screens (phone)' },
 		{ value: 'screens-desktop', label: 'Screens (desktop)' },
 		{ value: 'editing', label: 'Calendar editing' },
+		{ value: 'goal-redesign', label: 'Goals redesign' },
 		{ value: 'location', label: 'Location' }
 	];
 	const keep = () => {};
@@ -232,6 +234,8 @@
 					</li>
 				{/each}
 			</ul>
+		{:else if view === 'goal-redesign'}
+			<GoalRedesign {inboxCount} />
 		{:else if view === 'location'}
 			<ul class="flex gap-6 overflow-x-auto pb-4">
 				{#each LOCATION as s (s.name)}

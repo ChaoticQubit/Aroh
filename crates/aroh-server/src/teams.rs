@@ -1,3 +1,4 @@
+use aroh_domain::category::{self, Topic};
 use aroh_domain::seed;
 use serde::Serialize;
 use troupekit_graph::{NodeKind, Workflow};
@@ -51,46 +52,6 @@ pub const TEAMS: [Team; 6] = [
     Team { kind: Kind::Habits, category: Some("habit"), research: RESEARCH_SLOT, plan: "habit-coach", template: "habits" },
 ];
 
-const KEYWORDS: [(Kind, &[&str]); 5] = [
-    (
-        Kind::Music,
-        &[
-            "piano", "guitar", "violin", "viola", "cello", "drum", "drums", "ukulele", "flute", "clarinet", "saxophone", "trumpet", "harp", "sing",
-            "singing", "song", "songs", "music", "musical", "instrument", "chord", "chords", "sonata", "etude", "nocturne", "concerto", "sheet music",
-        ],
-    ),
-    (
-        Kind::Finance,
-        &[
-            "save", "saving", "savings", "budget", "budgeting", "debt", "debts", "money", "invest", "investing", "investment", "retirement",
-            "emergency fund", "spend", "spending", "expenses", "income", "loan", "mortgage", "pay off", "euro", "euros", "dollar", "dollars",
-        ],
-    ),
-    (
-        Kind::Fitness,
-        &[
-            "run", "running", "5k", "10k", "marathon", "gym", "workout", "workouts", "fitness", "abs", "six pack", "muscle", "muscles", "strength",
-            "lifting", "weight", "kg", "lbs", "yoga", "swim", "swimming", "cycling", "steps", "push ups", "pull ups", "squat", "squats", "cardio",
-            "triathlon", "hiking",
-        ],
-    ),
-    (
-        Kind::Habits,
-        &[
-            "habit", "habits", "routine", "daily", "every day", "every morning", "every night", "meditate", "meditation", "journal", "journaling",
-            "floss", "quit", "quitting", "smoking", "sleep", "wake up", "drink water", "screen time", "gratitude", "streak",
-        ],
-    ),
-    (
-        Kind::Learning,
-        &[
-            "learn", "learning", "study", "studying", "course", "class", "exam", "exams", "language", "spanish", "french", "german", "italian",
-            "japanese", "chinese", "mandarin", "korean", "read", "reading", "book", "books", "certificate", "certification", "degree", "lesson",
-            "lessons", "programming", "coding", "python", "math",
-        ],
-    ),
-];
-
 /// Returns the team of `kind`.
 /// Every kind has exactly one team.
 /// Linear scan over `TEAMS`.
@@ -99,9 +60,13 @@ pub fn team(kind: Kind) -> &'static Team {
 }
 
 fn infer(text: &str) -> Option<Kind> {
-    let words: String = text.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect();
-    let padded = format!(" {} ", words.split_whitespace().collect::<Vec<_>>().join(" "));
-    KEYWORDS.iter().find(|(_, words)| words.iter().any(|w| padded.contains(&format!(" {w} ")))).map(|(k, _)| *k)
+    category::infer(text).map(|t| match t {
+        Topic::Music => Kind::Music,
+        Topic::Finance => Kind::Finance,
+        Topic::Fitness => Kind::Fitness,
+        Topic::Habits => Kind::Habits,
+        Topic::Learning => Kind::Learning,
+    })
 }
 
 /// Picks the team of a goal: the seeded category `slug` when there is one
@@ -119,6 +84,19 @@ pub fn pick(slug: Option<&str>, text: &str) -> &'static Team {
         _ => infer(text).unwrap_or(Kind::General),
     };
     team(kind)
+}
+
+/// Picks the team of `user`'s goal in `category_id` about `text`: a seeded
+/// category picks by its slug, an owner-defined one gets the general team
+/// until coaches are set (Q61), and no category picks by keywords.
+pub fn for_goal(user: Uuid, category_id: Option<&str>, text: &str) -> &'static Team {
+    match category_id {
+        None => pick(None, text),
+        Some(id) => match seeded_slug(user, id) {
+            Some(slug) => pick(Some(slug), text),
+            None => team(Kind::General),
+        },
+    }
 }
 
 /// Returns the seeded category slug whose id for `user` is `category_id`.
@@ -172,6 +150,16 @@ mod tests {
         assert_eq!(kind(Some("hobby-skill"), "Learn to paint"), Kind::General);
         assert_eq!(kind(Some("career-projects"), "Read more books"), Kind::General);
         assert_eq!(kind(None, "Unsaved draft"), Kind::General);
+    }
+
+    #[test]
+    fn a_custom_category_gets_the_general_team_until_coaches_are_set() {
+        let user = Uuid::now_v7();
+        let custom = aroh_domain::new_id();
+        assert_eq!(for_goal(user, Some(&custom), "Finish reading Dune").kind, Kind::General);
+        assert_eq!(for_goal(user, Some(&custom), "Run a 5k").kind, Kind::General);
+        assert_eq!(for_goal(user, None, "Run a 5k").kind, Kind::Fitness);
+        assert_eq!(for_goal(user, seeded_id(user, "learning").as_deref(), "Run a 5k").kind, Kind::Learning);
     }
 
     #[test]

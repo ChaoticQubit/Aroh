@@ -8,14 +8,15 @@ const ROUTINES = 'g-routines';
 function snap(): Snapshot {
 	return {
 		user_id: 'u1',
+		files: [],
 		categories: [
 			{ id: 'c-fit', name: 'Health and Fitness', color: '#000', seeded: true },
 			{ id: 'c-habit', name: 'Habit', color: '#000', seeded: true }
 		],
 		goals: [
-			{ id: 'g1', category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: null, status: 'active', autonomy: 'ask', created_at: '2026-11-01T00:00:00Z' },
-			{ id: 'g-old', category_id: 'c-fit', title: 'Old goal', context: null, deadline: null, status: 'archived', autonomy: 'ask', created_at: '2026-11-01T00:00:00Z' },
-			{ id: ROUTINES, category_id: 'c-habit', title: 'Routines', context: null, deadline: null, status: 'active', autonomy: 'ask', created_at: '1970-01-01T00:00:00Z' }
+			{ id: 'g1', category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: null, status: 'active', autonomy: 'ask', created_at: '2026-11-01T00:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null },
+			{ id: 'g-old', category_id: 'c-fit', title: 'Old goal', context: null, deadline: null, status: 'archived', autonomy: 'ask', created_at: '2026-11-01T00:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null },
+			{ id: ROUTINES, category_id: 'c-habit', title: 'Routines', context: null, deadline: null, status: 'active', autonomy: 'ask', created_at: '1970-01-01T00:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null }
 		],
 		actions: [
 			{ id: 'a1', goal_id: 'g1', series_id: 's1', occurrence: null, title: 'Strength session', notes: null, start_at: '2026-11-23T17:00:00Z', end_at: '2026-11-23T18:00:00Z', status: 'planned', locked: false, done_at: null },
@@ -25,6 +26,7 @@ function snap(): Snapshot {
 		entries: [],
 		proposals: [],
 		preferences: [],
+		facts: [],
 		personas: [],
 		providers: [],
 		search: [],

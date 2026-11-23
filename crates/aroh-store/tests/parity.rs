@@ -3,7 +3,11 @@ use aroh_store::db;
 use std::collections::BTreeMap;
 
 const POSTGRES: &str = include_str!("../../../supabase/migrations/20261121000000_rebuild.sql");
-const LATER: &[&str] = &[include_str!("../../../supabase/migrations/20261124000000_day_kind.sql")];
+const LATER: &[&str] = &[
+    include_str!("../../../supabase/migrations/20261124000000_day_kind.sql"),
+    include_str!("../../../supabase/migrations/20261127000000_goal_redesign.sql"),
+    include_str!("../../../supabase/migrations/20261127010000_goal_files_text.sql"),
+];
 const CREATED: &[&str] = &[include_str!("../../../supabase/migrations/20261126010000_places.sql")];
 
 fn added_columns(tables: &mut BTreeMap<String, Vec<String>>) {

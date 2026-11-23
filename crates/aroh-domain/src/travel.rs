@@ -2,9 +2,9 @@
 //! follow local wall time in the new zone, locked actions and busy blocks keep their real
 //! instant, and a move into a clash or into the past is not made (Q53).
 
-use crate::recur::occurrence_id;
+use crate::recur::{self, occurrence_id};
 use crate::rows::{Action, ActionSeries, ActionStatus, BusyBlock};
-use chrono::{DateTime, Duration, LocalResult, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Duration, LocalResult, NaiveDateTime, Offset, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -27,6 +27,21 @@ pub fn wall_instant(zone: Tz, local: NaiveDateTime) -> DateTime<Utc> {
     unreachable!("no zone has a gap longer than a day")
 }
 
+/// The instant the recurrence engine ([`recur::materialize`]) gives local time `local`
+/// in `zone`: as [`wall_instant`], except a time inside a gap is read with the offset
+/// before the gap, so it lands the gap's length later (02:30 on a one-hour gap is 03:30).
+/// Series occurrences use it so re-keyed rows match what every engine derives.
+pub fn rule_instant(zone: Tz, local: NaiveDateTime) -> DateTime<Utc> {
+    let first = wall_instant(zone, local);
+    if !matches!(zone.from_local_datetime(&local), LocalResult::None) {
+        return first;
+    }
+    let before = zone.offset_from_utc_datetime(&(first - Duration::seconds(1)).naive_utc()).fix();
+    let instant = Utc.from_utc_datetime(&(local - Duration::seconds(i64::from(before.local_minus_utc()))));
+    assert!(instant >= first, "a gap time never lands before the gap ends");
+    instant
+}
+
 /// What happened to one action in a shift, for the Inbox note.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", content = "with", rename_all = "snake_case")]
@@ -36,6 +51,69 @@ pub enum Outcome {
     Clash(String),
     Past,
     Taken,
+    Retimed,
+    Kept,
+}
+
+/// What [`settle`] writes: occurrence rows to tombstone and derived rows to insert
+/// (insert-or-ignore) in their place.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Settle {
+    pub tombstones: Vec<String>,
+    pub inserts: Vec<Action>,
+}
+
+/// Plans the clean-up of untouched occurrence rows (planned, unlocked, derived stamp,
+/// occurrence at or after `now`) that are not on their series' current rule, such as a
+/// row an engine materialized in the old zone and the device pulled after the shift.
+/// Each is tombstoned; with the `previous` zone its slot's derived row in the series'
+/// zone is inserted unless a live row holds it. Output: the [`Settle`], ids in id order.
+pub fn settle(previous: Option<Tz>, now: DateTime<Utc>, actions: &[Action], series: &[ActionSeries]) -> Settle {
+    assert!(actions.iter().all(|a| !a.deleted) && series.iter().all(|s| !s.deleted), "settle takes live rows");
+    let by_id: BTreeMap<&str, &ActionSeries> = series.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut held: BTreeSet<(String, DateTime<Utc>)> =
+        actions.iter().filter_map(|a| Some((a.series_id.clone()?, a.occurrence?))).collect();
+    let mut plan = Settle::default();
+    for a in actions.iter().filter(|a| a.status == ActionStatus::Planned && !a.locked && a.updated_at == crate::seed::SEED_STAMP) {
+        let (Some(id), Some(at)) = (a.series_id.as_deref(), a.occurrence) else { continue };
+        let Some(s) = by_id.get(id).copied() else { continue };
+        if at < now || !matches!(recur::is_occurrence(s, at), Ok(false)) {
+            continue;
+        }
+        plan.tombstones.push(a.id.clone());
+        let (Some(old_zone), Ok(zone)) = (previous, s.timezone.parse::<Tz>()) else { continue };
+        let target = rule_instant(zone, at.with_timezone(&old_zone).naive_local());
+        if target >= now && matches!(recur::is_occurrence(s, target), Ok(true)) && held.insert((s.id.clone(), target)) {
+            plan.inserts.push(recur::occurrence(s, target));
+        }
+    }
+    plan.tombstones.sort();
+    plan.inserts.sort_by(|a, b| a.id.cmp(&b.id));
+    assert!(plan.inserts.len() <= plan.tombstones.len());
+    plan
+}
+
+/// `series` moved to zone `to` with the same local start. A start inside a gap of `to`
+/// takes the time occurrence expansion gives it ([`rule_instant`]), and the rule then
+/// names the old hour, minute and second so later occurrences keep their wall time. Output: the moved series
+/// and whether its start changed, or `None` when the moved series does not validate.
+fn relocate(series: &ActionSeries, to: Tz) -> Option<(ActionSeries, bool)> {
+    let mut moved = ActionSeries { timezone: to.name().to_string(), ..series.clone() };
+    let local = NaiveDateTime::parse_from_str(&series.dtstart_local, recur::LOCAL_FORMAT).ok()?;
+    let start = rule_instant(to, local).with_timezone(&to).naive_local();
+    let retimed = start != local;
+    if retimed {
+        moved.dtstart_local = start.format(recur::LOCAL_FORMAT).to_string();
+        let keys: BTreeSet<String> =
+            series.rrule.split(';').filter_map(|p| p.split('=').next()).map(|k| k.trim().to_ascii_uppercase()).collect();
+        for (key, value) in [("BYHOUR", local.hour()), ("BYMINUTE", local.minute()), ("BYSECOND", local.second())] {
+            if !keys.contains(key) {
+                moved.rrule = format!("{};{key}={value}", moved.rrule.trim_end_matches(';'));
+            }
+        }
+    }
+    crate::rows::Record::validate(&moved).ok()?;
+    Some((moved, retimed))
 }
 
 /// One action named in the Inbox note: its title, the instant it now has and why.
@@ -68,13 +146,35 @@ pub fn plan_shift(from: Tz, to: Tz, now: DateTime<Utc>, actions: &[Action], seri
         return Shift::default();
     }
     let zones: BTreeMap<&str, Tz> = series.iter().filter_map(|s| s.timezone.parse().ok().map(|tz| (s.id.as_str(), tz))).collect();
-    let moving: BTreeMap<&str, Tz> = zones.iter().filter(|(_, tz)| **tz != to).map(|(id, tz)| (*id, *tz)).collect();
+    let mut shift = Shift::default();
+    let mut moving: BTreeMap<&str, Tz> = BTreeMap::new();
+    let mut kept: BTreeSet<&str> = BTreeSet::new();
+    for s in series.iter().filter(|s| zones.get(s.id.as_str()).is_some_and(|tz| *tz != to)) {
+        let old_zone = zones[s.id.as_str()];
+        match relocate(s, to) {
+            Some((moved, retimed)) => {
+                if retimed {
+                    let start = NaiveDateTime::parse_from_str(&moved.dtstart_local, recur::LOCAL_FORMAT).expect("validated by relocate");
+                    shift.lines.push(Line { title: s.title.clone(), start_at: rule_instant(to, start), outcome: Outcome::Retimed });
+                }
+                moving.insert(s.id.as_str(), old_zone);
+                shift.series.push(moved);
+            }
+            None => {
+                let start = NaiveDateTime::parse_from_str(&s.dtstart_local, recur::LOCAL_FORMAT).map(|l| rule_instant(old_zone, l));
+                shift.lines.push(Line { title: s.title.clone(), start_at: start.unwrap_or(now), outcome: Outcome::Kept });
+                kept.insert(s.id.as_str());
+            }
+        }
+    }
     let wall_zone = |a: &Action| a.series_id.as_deref().and_then(|id| zones.get(id).copied()).unwrap_or(from);
     let rekey = rekeyed(to, now, actions, &moving);
 
-    let mut shift = Shift::default();
     let mut writes: BTreeMap<String, Action> = BTreeMap::new();
     for action in actions {
+        if action.series_id.as_deref().is_some_and(|id| kept.contains(id)) {
+            continue;
+        }
         let mut row = action.clone();
         let mut changed = false;
         if let Some((id, target)) = rekey.get(action.id.as_str()) {
@@ -89,7 +189,8 @@ pub fn plan_shift(from: Tz, to: Tz, now: DateTime<Utc>, actions: &[Action], seri
         if future && action.locked {
             shift.lines.push(Line { title: action.title.clone(), start_at: action.start_at, outcome: Outcome::Fixed });
         } else if future {
-            let start = wall_instant(to, action.start_at.with_timezone(&wall_zone(action)).naive_local());
+            let place = if action.series_id.is_some() { rule_instant } else { wall_instant };
+            let start = place(to, action.start_at.with_timezone(&wall_zone(action)).naive_local());
             if start != action.start_at {
                 let end = start + (action.end_at - action.start_at);
                 let outcome = if start < now {
@@ -113,8 +214,7 @@ pub fn plan_shift(from: Tz, to: Tz, now: DateTime<Utc>, actions: &[Action], seri
     shift.tombstones = rekey.keys().filter(|id| !writes.contains_key(**id)).map(|id| id.to_string()).collect();
     shift.writes = writes.into_values().collect();
     shift.writes.sort_by(|a, b| a.start_at.cmp(&b.start_at).then_with(|| a.id.cmp(&b.id)));
-    shift.series =
-        series.iter().filter(|s| moving.contains_key(s.id.as_str())).map(|s| ActionSeries { timezone: to.name().to_string(), ..s.clone() }).collect();
+    assert!(shift.series.iter().all(|s| s.timezone == to.name()), "moved series follow the new zone");
     shift.lines.sort_by(|a, b| a.start_at.cmp(&b.start_at).then_with(|| a.title.cmp(&b.title)));
     shift
 }
@@ -122,7 +222,7 @@ pub fn plan_shift(from: Tz, to: Tz, now: DateTime<Utc>, actions: &[Action], seri
 fn new_occurrence(to: Tz, action: &Action, moving: &BTreeMap<&str, Tz>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
     let old_zone = *moving.get(action.series_id.as_deref()?)?;
     let old = action.occurrence.expect("series rows carry their occurrence");
-    Some((old, wall_instant(to, old.with_timezone(&old_zone).naive_local())))
+    Some((old, rule_instant(to, old.with_timezone(&old_zone).naive_local())))
 }
 
 fn needs_rekey(to: Tz, now: DateTime<Utc>, action: &Action, moving: &BTreeMap<&str, Tz>) -> bool {
@@ -243,6 +343,9 @@ mod tests {
         assert_eq!(wall_instant(New_York, local(2027, 3, 14, 2, 30)), utc(2027, 3, 14, 7, 0));
         assert_eq!(wall_instant(New_York, local(2026, 11, 1, 1, 30)), utc(2026, 11, 1, 5, 30));
         assert_eq!(wall_instant(Berlin, local(2027, 3, 28, 2, 15)), utc(2027, 3, 28, 1, 0));
+        assert_eq!(rule_instant(New_York, local(2027, 3, 14, 2, 30)), utc(2027, 3, 14, 7, 30));
+        assert_eq!(rule_instant(Berlin, local(2027, 3, 28, 2, 15)), utc(2027, 3, 28, 1, 15));
+        assert_eq!(rule_instant(New_York, local(2026, 11, 23, 7, 0)), utc(2026, 11, 23, 12, 0));
     }
 
     #[test]
@@ -400,6 +503,65 @@ mod tests {
         let key = |list: &[Action]| list.iter().map(|a| (a.id.clone(), a.start_at, a.occurrence)).collect::<BTreeSet<_>>();
         assert_eq!(key(&home), key(&before));
         assert_eq!(moved_series(&moved_series(&series, &out), &back).timezone, "Europe/Berlin");
+    }
+
+    #[test]
+    fn series_start_in_the_destination_gap_moves_to_the_first_valid_minute() {
+        let mut series = samples::series();
+        series.dtstart_local = "2027-03-14T02:30:00".into();
+        let now = utc(2027, 3, 10, 0, 0);
+        let before = rows(&series, now, 7);
+        assert_eq!(before.len(), 3);
+        let shift = plan_shift(Berlin, New_York, now, &before, std::slice::from_ref(&series), &[]);
+        let next = moved_series(&series, &shift);
+        assert_eq!(next.timezone, "America/New_York");
+        assert_eq!(next.dtstart_local, "2027-03-14T03:30:00");
+        assert!(crate::rows::Record::validate(&next).is_ok());
+        assert!(shift.writes.iter().all(|a| crate::rows::Record::validate(a).is_ok()));
+        let retimed = line(&shift, "Core workout");
+        assert_eq!(retimed.outcome, Outcome::Retimed);
+        assert_eq!(retimed.start_at, utc(2027, 3, 14, 7, 30));
+        let after = apply(&before, &shift);
+        let existing: BTreeSet<_> = before.iter().chain(&after).filter_map(|a| a.occurrence).collect();
+        assert!(materialize(&next, now, 7, &existing).unwrap().is_empty());
+        let wall: Vec<(u32, u32)> = after.iter().map(|a| a.start_at.with_timezone(&New_York)).map(|t| (t.hour(), t.minute())).collect();
+        assert_eq!(wall, vec![(3, 30), (2, 30), (2, 30)]);
+        assert_eq!(rows(&next, now, 7).iter().map(|a| a.start_at).collect::<Vec<_>>(), after.iter().map(|a| a.start_at).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn gap_day_occurrence_of_a_plain_series_is_rekeyed_where_materialize_puts_it() {
+        let mut series = samples::series();
+        series.dtstart_local = "2027-03-01T02:30:00".into();
+        let now = utc(2027, 3, 10, 0, 0);
+        let before = rows(&series, now, 7);
+        let shift = plan_shift(Berlin, New_York, now, &before, std::slice::from_ref(&series), &[]);
+        let next = moved_series(&series, &shift);
+        assert_eq!(next.dtstart_local, series.dtstart_local);
+        let after = apply(&before, &shift);
+        let existing: BTreeSet<_> = before.iter().chain(&after).filter_map(|a| a.occurrence).collect();
+        assert!(materialize(&next, now, 7, &existing).unwrap().is_empty());
+        assert_eq!(after.iter().map(|a| a.start_at).collect::<Vec<_>>(), rows(&next, now, 7).iter().map(|a| a.start_at).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn settle_rekeys_only_untouched_future_rows_off_the_rule() {
+        let series = samples::series();
+        let now = utc(2026, 11, 22, 20, 0);
+        let moved = ActionSeries { timezone: "America/New_York".into(), ..series.clone() };
+        let current = rows(&moved, now, 2);
+        let mut old = rows(&series, now - Duration::days(1), 5);
+        assert_eq!(settle(Some(Berlin), now, &current, std::slice::from_ref(&moved)), Settle::default());
+        old[2].locked = true;
+        old[3].updated_at = samples::STAMP.into();
+        let all: Vec<Action> = current.iter().chain(&old).cloned().collect();
+        let plan = settle(Some(Berlin), now, &all, std::slice::from_ref(&moved));
+        assert_eq!(plan.tombstones, vec![old[1].id.clone(), old[4].id.clone()]);
+        let target = wall_instant(New_York, local(2026, 11, 26, 7, 0));
+        assert_eq!(plan.inserts, vec![crate::recur::occurrence(&moved, target)]);
+        let blind = settle(None, now, &all, std::slice::from_ref(&moved));
+        assert_eq!(blind.tombstones, plan.tombstones);
+        assert!(blind.inserts.is_empty());
     }
 
     #[test]

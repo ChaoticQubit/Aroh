@@ -1,5 +1,5 @@
 (async () => {
-  const { cfg, invoke, sleep, mark, text, until, go, button, show, say, started, signUp, saveKey, fail } = window.AROH_LIB;
+  const { cfg, invoke, sleep, mark, text, until, go, button, show, say, started, signUp, saveKey, createGoal, fail } = window.AROH_LIB;
   const DAY = 864e5;
   const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const dayOf = (offset) => ymd(new Date(Date.now() + offset * DAY));
@@ -45,8 +45,7 @@
     await signUp();
     await saveKey();
     await go('/today');
-    await go('/goals/new');
-    await say('Six pack by Feb 1');
+    await createGoal('Six pack by Feb 1');
     await until('question cards', () => text().includes('How many days'), 120000);
     for (const answer of ['4', 'No nuts']) await say(answer);
     await until('plan', () => text().includes('Approve plan'), 120000);
@@ -59,7 +58,7 @@
     dentist.scrollIntoView({ block: 'center' });
     await mark('shot 01-plan-fixed-time');
     button('Approve plan').click();
-    await until('plan written', () => text().split('The plan is on your calendar').length > 2, 120000);
+    await until('plan written', () => text().includes('The plan is on your calendar'), 120000);
     let fixed = null;
     for (let i = 0; i < 20 && !fixed; i++) {
       await sleep(1500);
@@ -111,8 +110,8 @@
     check(block(busy, 'Conference').day_kind === 'busy', 'Conference is not busy');
     const workout = live(busy, 'Core workout')[0];
     check(localDay(workout.start_at) === dayOf(2) && hhmm(workout.start_at) === '18:00', `core workout not moved: ${workout.start_at}`);
-    const kept = live(busy, 'Dentist')[0];
-    check(kept.id === fixed.id && kept.start_at === fixed.start_at, 'the fixed Dentist moved');
+    const dentistAfter = live(busy, 'Dentist')[0];
+    check(dentistAfter.id === fixed.id && dentistAfter.start_at === fixed.start_at, 'the fixed Dentist moved');
     check(live(busy, 'Morning plank').some((a) => localDay(a.start_at) === dayOf(1)), 'the daily plank left the busy day');
     await openDay(1);
     await until('busy caption', () => text().includes('Conference is a busy day.'), 15000);

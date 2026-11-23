@@ -4,10 +4,12 @@
 	import * as Card from '$lib/ui/primitives/card';
 	import Render from '../Render.svelte';
 	import Persona from './Persona.svelte';
+	import StillTrue from '../goal/StillTrue.svelte';
 	import type { ChatMessage, OnChange } from '$lib/ui/contract';
 
 	/**
-	 * Every open question of a run as one card: each with its input and a Skip, a count line, and
+	 * Every open question of a run as one card: each with its input and a Skip (a question the
+	 * profile answers as "Still true?" with Yes and Edit), a count line, and
 	 * one Send answers button enabled once every question has an answer or a skip. Emits
 	 * `{ type: 'answer', id, value }`, `{ type: 'skip', id, skipped }` and `{ type: 'submit' }`.
 	 * Once submitted it lists what was sent.
@@ -41,6 +43,11 @@
 					</div>
 					{#if skipped}
 						<p class="text-sm text-muted">Skipped. The planner picks a sensible default.</p>
+					{:else if item.known}
+						{@const known = item.known}
+						<StillTrue label="Your answer" value={known.value} source={known.source} onyes={() => onchange?.({ type: 'answer', id: item.id, value: known.value })}>
+							<Render spec={item.input} onchange={(value) => onchange?.({ type: 'answer', id: item.id, value })} />
+						</StillTrue>
 					{:else}
 						<Render spec={item.input} onchange={(value) => onchange?.({ type: 'answer', id: item.id, value })} />
 					{/if}

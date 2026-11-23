@@ -140,3 +140,7 @@
 		animation: none !important;
 	}
 }
+
+:root[data-typing] [data-hide-typing] {
+	display: none;
+}

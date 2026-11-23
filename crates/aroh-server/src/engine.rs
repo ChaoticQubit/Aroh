@@ -13,7 +13,7 @@ use crate::db;
 use aroh_domain::calendar::local_days;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{
-    Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, DayKind, Goal, GoalStatus, Place, PlaceLink, Preference,
+    Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, DayKind, Goal, GoalStatus, Place, PlaceLink,
     ProviderSetting, SearchSetting, Tracker,
 };
 use aroh_domain::time::MISSED_GRACE_MIN;
@@ -40,11 +40,12 @@ const DEFAULT_LEASE_MS: i64 = 300_000;
 const PAST_DAYS: i64 = 7;
 const MAX_TEXT: usize = 4_000;
 const RUN_LIST_LIMIT: i64 = 50;
-const PROFILE_LIMIT: usize = 20;
 
 /// Body of `POST /v1/goals`: the goal to plan. Without `goal_id`, or when
 /// the server has no such goal yet, a draft goal row is created with it.
-/// `timezone` is the owner's IANA zone, used for every local time.
+/// `timezone` is the owner's IANA zone, used for every local time. The
+/// agent controls (`reminders`, `use_calendars`, `run_limit_minutes`) are
+/// optional: left out, the goal keeps the Settings defaults.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StartGoal {
@@ -56,6 +57,12 @@ pub struct StartGoal {
     #[schema(value_type = Option<String>, example = "balanced")]
     pub autonomy: Option<Autonomy>,
     pub timezone: String,
+    #[serde(default)]
+    pub reminders: Option<bool>,
+    #[serde(default)]
+    pub use_calendars: Option<bool>,
+    #[serde(default)]
+    pub run_limit_minutes: Option<i64>,
 }
 
 /// Body of `POST /v1/goals/{goal_id}/replan`: why to adapt, in the owner's
@@ -166,6 +173,11 @@ pub struct RunView {
     #[schema(value_type = Vec<Object>)]
     pub events: Vec<Value>,
     pub summary: Option<String>,
+    /// What research found (`summary`, `sources`), once written.
+    #[schema(value_type = Option<Object>)]
+    pub research: Option<Value>,
+    /// The submitted answers with their question text.
+    pub answers: Vec<crate::insights::RunAnswer>,
 }
 
 /// One row of the run list behind the Inbox: ids, workflow, lifecycle
@@ -357,14 +369,11 @@ impl Engine {
         true
     }
 
-    /// The owner's confirmed preferences, newest first, at most 20: the
-    /// user profile memory planning reads as state `profile` (Q12, Q37).
-    /// Returns the facts.
-    pub(crate) async fn profile(&self, user: Uuid) -> Result<Vec<String>, ServerError> {
-        let mut prefs: Vec<Preference> = list_rows::<Preference>(&self.deps.pool, user, &[], false).await?;
-        prefs.retain(|p| p.confirmed);
-        prefs.sort_by(|a, b| b.noted_at.cmp(&a.noted_at));
-        Ok(prefs.into_iter().take(PROFILE_LIMIT).map(|p| p.fact).collect())
+    /// The owner's confirmed facts, newest first, blocked topics left out:
+    /// the profile planning and the intake read as state `profile` (Q12, Q37,
+    /// Q62). Returns each fact with id, topic, source and date.
+    pub(crate) async fn profile(&self, user: Uuid) -> Result<Vec<crate::profile::ProfileFact>, ServerError> {
+        crate::profile::profile(&self.deps.pool, user).await
     }
 
     /// The owner's named places (Q56) as planning reads them in state `places`: each name
@@ -425,7 +434,7 @@ impl Engine {
         let events = Arc::new(EventBuffer::default());
         let io = RunIo::build(self.deps.clone(), user, goal, None, &personas, events.clone()).await?;
         let limits = self.limits(user, goal).await?;
-        let run = GraphRun::new(wf, input, limits, &io).await?.with_time_limit(self.run_limit(user).await?.ms());
+        let run = GraphRun::new(wf, input, limits, &io).await?.with_time_limit(self.limit_for(user, goal).await?.ms());
         let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name, personas };
         insert_run(&self.deps.pool, &row).await?;
         let runner = self.runner(events, io);
@@ -470,7 +479,10 @@ impl Engine {
             .collect())
     }
 
-    async fn busy(&self, user: Uuid, tz: Tz, from: DateTime<Utc>) -> Result<(Vec<Value>, Vec<String>), ServerError> {
+    async fn busy(&self, user: Uuid, goal: &Goal, tz: Tz, from: DateTime<Utc>) -> Result<(Vec<Value>, Vec<String>), ServerError> {
+        if !goal.use_calendars {
+            return Ok((Vec::new(), Vec::new()));
+        }
         let until = from + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
         let blocks: Vec<BusyBlock> = list_rows::<BusyBlock>(&self.deps.pool, user, &[], false).await?;
         let actions: Vec<Action> = list_rows::<Action>(&self.deps.pool, user, &[], false).await?;
@@ -500,7 +512,7 @@ impl Engine {
             Some(g) if !g.deleted => g,
             Some(_) => return Err(ServerError::NotFound(format!("goal {id}"))),
             None => {
-                let inferred = || teams::pick(None, &about(&req.title, req.context.as_deref())).category.and_then(|c| teams::seeded_id(user, c));
+                let inferred = || aroh_domain::category::guess(&req.title, req.context.as_deref()).and_then(|slug| teams::seeded_id(user, slug));
                 let category = req.category_id.map(|c| c.to_string()).or_else(inferred);
                 let mut g = Goal {
                     id: id.to_string(),
@@ -512,6 +524,9 @@ impl Engine {
                     status: GoalStatus::Draft,
                     autonomy: req.autonomy.unwrap_or(Autonomy::Balanced),
                     created_at: now,
+                    reminders: req.reminders.unwrap_or(true),
+                    use_calendars: req.use_calendars.unwrap_or(true),
+                    run_limit_minutes: req.run_limit_minutes,
                     updated_at: String::new(),
                     deleted: false,
                 };
@@ -523,12 +538,13 @@ impl Engine {
         input.insert("goal".into(), Self::goal_input(&goal, tz, now));
         input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
         input.insert("profile".into(), json!(self.profile(user).await?));
+        input.insert("blocked_topics".into(), json!(crate::profile::blocked_topics(&self.deps.pool, user).await?));
+        input.insert("files".into(), json!(crate::files::goal_files(&self.deps.pool, user, &goal.id).await?));
         input.insert("places".into(), json!(self.places(user).await?));
-        let (busy, away_days) = self.busy(user, tz, now).await?;
+        let (busy, away_days) = self.busy(user, &goal, tz, now).await?;
         input.insert("busy".into(), json!(busy));
         input.insert("away_days".into(), json!(away_days));
-        let slug = goal.category_id.as_deref().and_then(|c| teams::seeded_slug(user, c));
-        let team = teams::pick(slug, &about(&goal.title, goal.context.as_deref()));
+        let team = teams::for_goal(user, goal.category_id.as_deref(), &about(&goal.title, goal.context.as_deref()));
         let template = aroh_plugins::template(team.template).expect("every team template ships");
         input.insert("plugin_guide".into(), json!({"template": template, "reference": aroh_plugins::reference()}));
         let mut wf = workflows::workflow(NEW_GOAL)?;
@@ -564,7 +580,7 @@ impl Engine {
         input.insert("goal".into(), Self::goal_input(goal, tz, now));
         let from = now - Duration::days(PAST_DAYS);
         input.insert("calendar".into(), json!(self.calendar(user, tz, Some(&goal.id), from).await?));
-        let (busy, away_days) = self.busy(user, tz, now).await?;
+        let (busy, away_days) = self.busy(user, &goal, tz, now).await?;
         input.insert("busy".into(), json!(busy));
         input.insert("away_days".into(), json!(away_days));
         input.insert("reason".into(), json!(reason));
@@ -640,6 +656,23 @@ impl Engine {
         Ok(RunLimit { minutes: minutes.and_then(|m| u32::try_from(m).ok()).unwrap_or(DEFAULT_RUN_MINUTES) })
     }
 
+    /// The time limit of a run of `user` on `goal`: the goal's own limit when
+    /// it sets one, else the owner's Settings limit. Every run (new goal,
+    /// replan, triggers, retry) takes its limit from here.
+    async fn limit_for(&self, user: Uuid, goal: Option<Uuid>) -> Result<RunLimit, ServerError> {
+        let own = match goal {
+            Some(id) => get_row::<Goal>(&self.deps.pool, user, &id.to_string()).await?.and_then(|g| g.run_limit_minutes),
+            None => None,
+        };
+        match own.and_then(|m| u32::try_from(m).ok()) {
+            Some(minutes) => {
+                assert!((1..=MAX_RUN_MINUTES).contains(&minutes), "goal rows hold a valid limit");
+                Ok(RunLimit { minutes })
+            }
+            None => self.run_limit(user).await,
+        }
+    }
+
     /// Stores `user`'s run time limit for runs started or retried after.
     /// Returns the stored limit, or `BadRequest` outside 1 to 120 minutes.
     pub async fn set_run_limit(&self, user: Uuid, limit: RunLimit) -> Result<RunLimit, ServerError> {
@@ -685,7 +718,7 @@ impl Engine {
         let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
         let cp = store.latest(row.id).await?.ok_or_else(|| ServerError::NotFound(format!("run {run_id}")))?;
         let mut run = GraphRun::from_checkpoint(&cp)?;
-        run.retry(Some(self.run_limit(user).await?.ms()))?;
+        run.retry(Some(self.limit_for(user, row.goal_id).await?.ms()))?;
         store.save(run.checkpoint()).await?;
         self.queue.enqueue(row.id, self.deps.clock.now_ms()).await?;
         Ok(())
@@ -714,6 +747,7 @@ impl Engine {
             })
             .collect();
         let summary = crate::insights::run_summary(&row.workflow, run.state());
+        let (research, answers) = crate::insights::run_found(run.state());
         let events = events_after(&self.deps.pool, row.id, after_seq)
             .await?
             .into_iter()
@@ -732,6 +766,8 @@ impl Engine {
             usage: serde_json::to_value(run.usage()).expect("usage serializes"),
             events,
             summary,
+            research,
+            answers,
         })
     }
 

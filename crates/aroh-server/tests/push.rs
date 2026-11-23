@@ -51,6 +51,9 @@ async fn goal(pool: &PgPool, hlc: &ServerClock, user: Uuid) -> Goal {
         status: GoalStatus::Active,
         autonomy: Autonomy::Balanced,
         created_at: now(),
+        reminders: true,
+        use_calendars: true,
+        run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,
     };
