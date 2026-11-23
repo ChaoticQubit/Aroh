@@ -50,3 +50,8 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B44 | Pod 29 DONE | coach_questions eval | Matches English keywords only | low | open |
 | B45 | Pod 30 dataviz check | `apps/aroh/src/lib/ui/tokens/tokens.css` dark `--cat-*`, `--series-*` | Dark category and series colours fail the dataviz validator's lightness band; light order cat-1, cat-5, cat-4 passes | medium | open, foundation |
 | B46 | Pod 30 | `e2e/pod30-app.js` | One of four runs timed out waiting for the plan card on the first goal (20 s); passed on retry | low | open |
+| B47 | Gate 4 D4 | goal chat composer | With the keyboard open, the chat composer covers the focused intake answer and the can't-fit number answer | high | open, pod 35 |
+| B48 | Gate 4 D5 | Settings | Search providers "Add" and Location "Open iOS Settings" have no click handler | medium | open, pod 35 |
+| B49 | Gate 4 D1 | Calendar day and week | Overlapping blocks draw on top of each other | medium | open, pod 35 |
+| B50 | Gate 4 D6 | plan card summary | "1 days a week"; finish date has no year when it is in another year | low | open, pod 35 |
+| B51 | Gate 4 D2 | goal Next sessions | Times shown without the day, so sessions look duplicated | low | open, pod 35 |
