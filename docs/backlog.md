@@ -42,3 +42,4 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B36 | Owner, build 3 | intake, planner | Intake questions shallow for every goal; workout plan had no session content (exercises, sets, reps) and no nutrition guidance | high | open, pod 29 (planner notes, coach intake) |
 | B37 | Pod 33 DONE | delete goal | Kept actions take the Routines reminder setting (on) even if the deleted goal had reminders off | low | open |
 | B38 | Pod 33 DONE | storage bulk delete | DELETE /storage/v1/object/goal-files with prefixes tested only against a stub; confirm on prod | medium | open, check on build 4 |
+| B39 | Pod 31 DONE | Calendar phone week view | Swipe moves 7 days while the phone grid shows one day; next page not drawn during the drag | low | open |
