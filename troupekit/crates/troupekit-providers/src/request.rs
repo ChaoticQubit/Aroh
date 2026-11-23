@@ -4,8 +4,13 @@ use serde_json::Value;
 use std::collections::HashSet;
 use troupekit_core::error::ProviderError;
 use troupekit_core::event::Usage;
-use troupekit_core::message::{Message, Role};
+use troupekit_core::message::{ContentPart, Message, Role};
 use troupekit_core::tool::ToolSpec;
+
+/// What a blank tool result is sent as, since vendors reject blank text.
+/// The model still sees that its call ran and returned nothing.
+/// Used by `CompletionRequest::without_blank_text`.
+pub const NO_OUTPUT: &str = "(no output)";
 
 /// One call to a chat model: the conversation, the tools it may call and
 /// the output limits. `model` is the wire model id the caller expects,
@@ -62,6 +67,50 @@ impl CompletionRequest {
             }
         }
         Ok(())
+    }
+
+    /// Returns a copy without blank text: blank text parts are dropped, a
+    /// message left with no part is dropped, and a blank tool result reads
+    /// `(no output)` so it still answers its call. Vendors reject blank text
+    /// blocks. Returns `BadRequest` when no message is left.
+    pub fn without_blank_text(&self) -> Result<CompletionRequest, ProviderError> {
+        let mut out = self.clone();
+        out.messages = self
+            .messages
+            .iter()
+            .filter_map(|m| {
+                let parts: Vec<ContentPart> = m
+                    .parts
+                    .iter()
+                    .filter(|p| !matches!(p, ContentPart::Text { text } if text.trim().is_empty()))
+                    .cloned()
+                    .map(|p| match p {
+                        ContentPart::ToolResult {
+                            call_id,
+                            content,
+                            is_error,
+                        } if content.trim().is_empty() => ContentPart::ToolResult {
+                            call_id,
+                            content: NO_OUTPUT.into(),
+                            is_error,
+                        },
+                        other => other,
+                    })
+                    .collect();
+                (!parts.is_empty()).then(|| Message {
+                    role: m.role,
+                    parts,
+                })
+            })
+            .collect();
+        if out.messages.iter().all(|m| m.role == Role::System) {
+            return Err(bad_request("request has no message with content"));
+        }
+        assert!(
+            out.messages.iter().all(|m| !m.parts.is_empty()),
+            "kept messages have parts"
+        );
+        Ok(out)
     }
 
     /// Joins `system` and the text of every system-role message, in order,

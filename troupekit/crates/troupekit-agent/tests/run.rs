@@ -372,6 +372,31 @@ async fn schema_failure_repairs_once() {
 }
 
 #[tokio::test]
+async fn blank_reply_is_never_sent_back() {
+    let s = setup(vec![text(""), text("{\"n\": 1, \"items\": []}")], PRICE);
+    let mut run = AgentRun::new(&persona(TYPED), ask(), Limits::default(), &s.io)
+        .await
+        .unwrap();
+    assert_eq!(
+        run_to_end(&mut run, &s.io).await,
+        StepOutcome::Done(json!({"n": 1, "items": []}))
+    );
+    let seen = s.model.seen();
+    assert_eq!(seen.len(), 2);
+    let blank: Vec<&Message> = seen[1]
+        .messages
+        .iter()
+        .filter(|m| {
+            m.parts
+                .iter()
+                .any(|p| matches!(p, ContentPart::Text { text } if text.trim().is_empty()))
+        })
+        .collect();
+    assert!(blank.is_empty(), "{blank:?}");
+    assert_eq!(seen[1].messages.len(), 2);
+}
+
+#[tokio::test]
 async fn repair_then_eval_failure_fails() {
     let s = setup(
         vec![

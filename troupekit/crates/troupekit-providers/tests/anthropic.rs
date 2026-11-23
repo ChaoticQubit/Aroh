@@ -111,3 +111,64 @@ fn maps_stop_reasons() {
         );
     }
 }
+
+fn blank_blocks(body: &serde_json::Value) -> Vec<String> {
+    let mut out = Vec::new();
+    for (t, turn) in body["messages"].as_array().unwrap().iter().enumerate() {
+        for block in turn["content"].as_array().unwrap() {
+            let text = match block["type"].as_str() {
+                Some("text") => block["text"].as_str(),
+                Some("tool_result") => block["content"].as_str(),
+                _ => None,
+            };
+            if text.is_some_and(|s| s.trim().is_empty()) {
+                out.push(format!("turn {t}: {block}"));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn never_sends_a_blank_text_block() {
+    use troupekit_core::message::ContentPart;
+    let mut req = CompletionRequest::user("plan this", 10);
+    req.messages.push(Message::text(Role::Assistant, ""));
+    req.messages
+        .push(Message::text(Role::User, "Your answer failed these checks"));
+    req.messages.push(
+        Message::new(
+            Role::Assistant,
+            vec![ContentPart::Text { text: "  ".into() }, call("a", "t")],
+        )
+        .unwrap(),
+    );
+    req.messages.push(
+        Message::new(
+            Role::Tool,
+            vec![ContentPart::ToolResult {
+                call_id: "a".into(),
+                content: String::new(),
+                is_error: false,
+            }],
+        )
+        .unwrap(),
+    );
+    req.messages.push(Message::text(Role::User, "\n"));
+    let body = encode(Protocol::Anthropic, &anthropic_quirks(), "m", &req, false).unwrap();
+    assert_eq!(blank_blocks(&body), Vec::<String>::new());
+    let turns = body["messages"].as_array().unwrap();
+    assert_eq!(turns[0]["role"], "user");
+    assert_eq!(turns[0]["content"].as_array().unwrap().len(), 2);
+    assert!(turns.windows(2).all(|w| w[0]["role"] != w[1]["role"]));
+    let only_blank = CompletionRequest::user(" ", 10);
+    let err = encode(
+        Protocol::Anthropic,
+        &anthropic_quirks(),
+        "m",
+        &only_blank,
+        false,
+    )
+    .unwrap_err();
+    assert_eq!(err.kind, ProviderErrorKind::BadRequest);
+}
