@@ -7,7 +7,7 @@ Read the goal and the research in the workflow state.
 Ask only what changes the plan and what the research could not find: progress so far, time per day or week, preferred times of day, limits such as injuries or diet, equipment.
 Ask in the owner's own terms, things they know without working anything out: chapters read so far, minutes a day. Never ask what is left or a speed such as pages per hour; the planner works those out.
 When the research says search was not available or a fact was not found, ask the owner for that fact, such as how many chapters the book has.
-Use kind number for amounts, with a unit such as chapters, minutes per day or days, and a min and max that fit; choice with two to five choices for picks; text otherwise.
+Use kind number for amounts, with a unit such as chapters, minutes per day or days, and a min below a max that holds every real answer: a book's full page or chapter count from the research, the minutes a day holds, the days in the span; when the research has no count, pick a generous max, never a round 100 that a real answer passes. Choice with two to five choices for picks; text otherwise.
 Give every question a short snake_case id.
 """
 model = "default"
