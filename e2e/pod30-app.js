@@ -96,6 +96,8 @@
       await shot('30-cant-fit-number');
       const ok = !!el && opened && document.activeElement === el && clear && above;
       await say(`keyboard cant-fit-number ${ok ? 'pass' : 'fail'} kb=${opened} clear=${clear ? 'yes' : hit?.tagName} f=${Math.round(r?.top)}-${Math.round(r?.bottom)}/${Math.round(kbTop)}`);
+      const typed = el ? await window.AROH_LIB.keys(el, '45') : { value: '', forced: 0 };
+      await say(`spaces cant-fit-number ${typed.value === '45' && !typed.forced ? 'pass' : 'fail'} number forced=${typed.forced} got "${typed.value}"`);
       el?.blur();
       await sleep(900);
     }

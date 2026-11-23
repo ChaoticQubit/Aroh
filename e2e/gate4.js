@@ -262,6 +262,21 @@
     return bad;
   };
 
+  const SENTENCE = 'Two walks a day, core work at home after 6';
+  const SAMPLES = { text: SENTENCE, number: '45', url: 'https://example.org/run-plan', email: 'owner@example.com', key: 'sk-ant-api03-Ab12Cd34Ef56' };
+  const kindOf = (el) => {
+    if (el.type === 'number' || ['decimal', 'numeric'].includes(el.inputMode)) return 'number';
+    if (el.type === 'url' || el.type === 'email') return el.type;
+    if (/-(anon|key)$/.test(el.id)) return 'key';
+    return 'text';
+  };
+  const spaces = async (name, el) => {
+    const kind = kindOf(el);
+    const kept = el.value;
+    const { value: got, forced } = await L.keys(el, SAMPLES[kind]);
+    await result(`spaces-${name}`, got === SAMPLES[kind] && !forced, `${kind} forced=${forced} ${got === SAMPLES[kind] ? 'exact' : `got "${got.slice(0, 40)}"`}`);
+    if (el.value !== kept) await L.keys(el, kept);
+  };
   const kbField = async (n, name, path, find, prep) => {
     const keep = signedIn;
     await go(path === '/inbox' ? '/today' : '/inbox');
@@ -294,6 +309,7 @@
     const stayed = document.activeElement === el && window.visualViewport.height < innerHeight - 150;
     const ok = opened && stayed && clear && !tabOnKb && above && barOk && wideOk && font >= 16;
     await result(`keyboard-${name}`, ok, `kb=${opened ? Math.round(innerHeight - vv.height) : 'none'} stayed=${stayed} clear=${clear ? 'yes' : hit?.tagName} tab=${tabOnKb ? 'on' : 'off'} f=${Math.round(r.top)}-${Math.round(r.bottom)}/${Math.round(kbTop)} ${font}px`);
+    await spaces(name, el);
     el.blur();
     await sleep(900);
   };
@@ -334,6 +350,13 @@
       for (const [i, name] of names.entries()) await kbField(n++, `settings-${out ? 'out-' : ''}${name}`, '/settings', () => textFields()[i]);
     }
     signedIn = true;
+    await go('/inbox');
+    await go(`/goals/${save?.id}`);
+    await sleep(2500);
+    const given = () => [...document.querySelectorAll('main input[id*="-a-"]')].filter(visible);
+    const gs = given().length;
+    await note(`given answers ${gs}`);
+    for (let i = 0; i < gs; i++) await kbField(n++, `given-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i]);
   };
 
   const NATIVE = /^(Speak a message|Speak a log entry|Stop speaking|Photo|File|Log with a photo|Open Settings)$/;
