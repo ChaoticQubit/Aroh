@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Render from '../components/Render.svelte';
 	import QuickLog from '../components/QuickLog.svelte';
+	import type { Speech } from '$lib/app/speech.svelte';
 	import ActionList from '../components/planning/ActionList.svelte';
 	import AllDayChip from '../components/planning/AllDayChip.svelte';
 	import AllDayChoice from '../components/planning/AllDayChoice.svelte';
@@ -15,7 +16,7 @@
 	 * Today: date header, today's all-day events (a chip tap reopens its kind), the kind question
 	 * for the next unanswered all-day event, next action, check-in, today's actions, one insight and
 	 * the quick-log bar. Tapping an action opens the edit sheet (`inline` draws it in place for
-	 * mockups). `onaction` gets `{ id, status }`, `oncheckin` the answer, `onlog` the quick-log text,
+	 * mockups). `onaction` gets `{ id, status }`, `oncheckin` the answer, `onlog` the quick-log text (`voice` adds its mic),
 	 * `onedit`, `onlock`, `ondelete` and `onchoose` the calendar changes.
 	 */
 	let {
@@ -29,6 +30,7 @@
 		onaction,
 		oncheckin,
 		onlog,
+		voice,
 		onedit,
 		onlock,
 		ondelete,
@@ -44,6 +46,7 @@
 		onaction?: OnChange;
 		oncheckin?: OnChange;
 		onlog?: (text: string) => void;
+		voice?: Speech;
 		onedit?: (edit: ActionEdit) => void;
 		onlock?: (id: string, locked: boolean) => void;
 		ondelete?: (id: string) => void;
@@ -117,7 +120,7 @@
 			</div>
 		</div>
 	</div>
-	<QuickLog {onlog} />
+	<QuickLog {onlog} {voice} />
 </div>
 {#if open}
 	<ActionSheet action={open} {confirming} {inline} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />

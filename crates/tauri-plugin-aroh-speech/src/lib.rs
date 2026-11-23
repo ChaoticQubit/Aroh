@@ -36,9 +36,16 @@ fn stop() -> Result<String, SpeechError> {
     Err(UNSUPPORTED)
 }
 
-/// Builds the `aroh-speech` plugin. On iOS the `start` and `stop` commands are
-/// served by the Swift `SpeechPlugin` (on-device `SFSpeechRecognizer`); on every
-/// other target they reject with code `unsupported`.
+/// Desktop and Android stand-in for the Swift `open_settings`: always rejects with `unsupported`.
+#[cfg(not(target_os = "ios"))]
+#[tauri::command]
+fn open_settings() -> Result<(), SpeechError> {
+    Err(UNSUPPORTED)
+}
+
+/// Builds the `aroh-speech` plugin. On iOS `start`, `stop` and `open_settings` are
+/// served by the Swift `SpeechPlugin` (on-device `SFSpeechRecognizer`, partial words as
+/// `partial` events); on every other target they reject with code `unsupported`.
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     let builder = Builder::new("aroh-speech");
     #[cfg(target_os = "ios")]
@@ -47,6 +54,17 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         Ok(())
     });
     #[cfg(not(target_os = "ios"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![start, stop]);
+    let builder = builder.invoke_handler(tauri::generate_handler![start, stop, open_settings]);
     builder.build()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_default_permission_lets_the_app_hear_partial_words_and_open_settings() {
+        let default = include_str!("../permissions/default.toml");
+        for permission in ["allow-start", "allow-stop", "allow-open-settings", "allow-register-listener", "allow-remove-listener"] {
+            assert!(default.contains(&format!("\"{permission}\"")), "{permission} missing");
+        }
+    }
 }

@@ -13,6 +13,7 @@
 	import QuestionGroup from './QuestionGroup.svelte';
 	import type { ChatMessage, OnChange } from '$lib/ui/contract';
 	import { Dictation, type Speech } from '$lib/app/speech.svelte';
+	import DictationNotice from '../inputs/DictationNotice.svelte';
 	import { scrollFor } from '$lib/app/questions';
 
 	/**
@@ -149,31 +150,33 @@
 			</li>
 		{/each}
 	</ol>
-	<form
-		class="flex items-end gap-1 border-t border-border bg-bg p-2 {inline ? 'sticky bottom-0 z-10 -mx-4 @3xl:-mx-6' : ''}"
-		onsubmit={(e) => {
-			e.preventDefault();
-			send();
-		}}
-	>
-		<label for={id} class="sr-only">Message</label>
-		<textarea
-			{id}
-			rows="1"
-			placeholder="Message your personas"
-			class="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:truncate placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-			bind:value={draft}
-			onkeydown={(e) => {
-				if (e.key === 'Enter' && !e.shiftKey) {
-					e.preventDefault();
-					send();
-				}
+	<div class={inline ? 'sticky bottom-0 z-10 -mx-4 @3xl:-mx-6' : ''}>
+		{#if dictation}<DictationNotice {dictation} />{/if}
+		<form
+			class="flex items-end gap-1 border-t border-border bg-bg p-2"
+			onsubmit={(e) => {
+				e.preventDefault();
+				send();
 			}}
-		></textarea>
-		{#if dictation}
-			<Button variant={dictation.listening ? 'default' : 'ghost'} size="icon-touch" aria-label={dictation.listening ? 'Stop speaking' : 'Speak a message'} aria-pressed={dictation.listening} type="button" onclick={() => void dictation.toggle()}><Mic /></Button>
-		{/if}
-		<Button size="icon-touch" aria-label="Send" type="submit" disabled={!draft.trim()}><Send /></Button>
-	</form>
-	{#if dictation?.error}<p role="alert" class="border-t border-border bg-bg px-3 py-2 text-sm text-status-missed">{dictation.error}</p>{/if}
+		>
+			<label for={id} class="sr-only">Message</label>
+			<textarea
+				{id}
+				rows="1"
+				placeholder="Message your personas"
+				class="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:truncate placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+				bind:value={draft}
+				onkeydown={(e) => {
+					if (e.key === 'Enter' && !e.shiftKey) {
+						e.preventDefault();
+						send();
+					}
+				}}
+			></textarea>
+			{#if dictation}
+				<Button variant={dictation.listening ? 'default' : 'ghost'} size="icon-touch" aria-label={dictation.listening ? 'Stop speaking' : 'Speak a message'} aria-pressed={dictation.listening} type="button" onclick={() => void dictation.toggle()}><Mic /></Button>
+			{/if}
+			<Button size="icon-touch" aria-label="Send" type="submit" disabled={!draft.trim()}><Send /></Button>
+		</form>
+	</div>
 </div>

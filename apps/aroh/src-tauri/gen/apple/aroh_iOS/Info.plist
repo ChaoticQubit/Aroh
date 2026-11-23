@@ -54,6 +54,10 @@
 	<string>Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Aroh uses the camera so you can take a photo and attach it to a goal for its agents.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Aroh opens your photos so you can attach one to a goal. It syncs only to your account, for that goal's agents.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Aroh notices the places you visit often and asks you to name them. Visits stay on this iPhone.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

@@ -30,7 +30,7 @@ pub async fn files_available(app: AppHandle) -> Result<bool, String> {
     let state = app.state::<AppState>();
     let Ok(config) = supabase(&state) else { return Ok(false) };
     let Ok(session) = auth::valid_session(&config).await else { return Ok(false) };
-    Ok(storage::available(&config, &session.access_token).await)
+    Ok(storage::available(&config, &session.access_token, &session.user_id).await)
 }
 
 /// Attaches the file in the raw request body to a goal: reads its text off the main thread

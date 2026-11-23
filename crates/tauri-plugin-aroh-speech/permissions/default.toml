@@ -1,5 +1,5 @@
 "$schema" = "schemas/schema.json"
 
 [default]
-description = "Allows starting and stopping on-device speech recognition."
-permissions = ["allow-start", "allow-stop"]
+description = "Allows on-device speech recognition with live partial words, and opening Aroh in Settings."
+permissions = ["allow-start", "allow-stop", "allow-open-settings", "allow-register-listener", "allow-remove-listener"]

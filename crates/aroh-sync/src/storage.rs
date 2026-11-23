@@ -69,11 +69,19 @@ pub async fn remove(config: &Config, token: &str, user_id: &str, storage_paths: 
     check(response).await.map(|_| ())
 }
 
-/// Whether the project serves the `goal-files` bucket to this session, so Attach can show.
-/// Any failure, including a project without Storage, is `false`.
-pub async fn available(config: &Config, token: &str) -> bool {
-    let request = http().get(format!("{}/storage/v1/bucket/{BUCKET}", config.url)).header("apikey", &config.anon_key).bearer_auth(token);
-    matches!(request.send().await, Ok(r) if r.status().is_success())
+/// Whether the `goal-files` bucket serves `user_id`'s folder to this session, so Attach can show.
+/// Asks for a probe object's info: found, or `NoSuchKey`, means the bucket is there; a missing
+/// bucket, a refused session or any other failure is `false`. `GET /bucket/<id>` is not used:
+/// storage RLS hides bucket rows from owners, so it answers "Bucket not found" on every project.
+pub async fn available(config: &Config, token: &str, user_id: &str) -> bool {
+    let Ok(object) = object_url(config, user_id, "goals/probe") else { return false };
+    let url = object.replacen("/storage/v1/object/", "/storage/v1/object/info/authenticated/", 1);
+    let Ok(response) = http().get(url).header("apikey", &config.anon_key).bearer_auth(token).send().await else { return false };
+    if response.status().is_success() {
+        return true;
+    }
+    let body: serde_json::Value = response.json().await.unwrap_or_default();
+    body.get("code").and_then(|c| c.as_str()) == Some("NoSuchKey")
 }
 
 #[cfg(test)]
@@ -82,6 +90,10 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     async fn storage_once(status: &'static str) -> (Config, tokio::task::JoinHandle<Vec<u8>>) {
+        storage_reply(status, "{}").await
+    }
+
+    async fn storage_reply(status: &'static str, body: &'static str) -> (Config, tokio::task::JoinHandle<Vec<u8>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
         let served = tokio::spawn(async move {
@@ -102,7 +114,7 @@ mod tests {
                 }
                 seen.extend_from_slice(&chunk[..n]);
             }
-            let reply = format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}");
+            let reply = format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
             socket.write_all(reply.as_bytes()).await.unwrap();
             seen
         });
@@ -155,12 +167,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn storage_is_available_only_when_the_bucket_answers() {
+    async fn storage_is_available_when_the_owner_folder_answers() {
         let (config, served) = storage_once("200 OK").await;
-        assert!(available(&config, "t").await);
-        assert!(String::from_utf8_lossy(&served.await.unwrap()).starts_with("GET /storage/v1/bucket/goal-files HTTP/1.1"));
-        let (config, served) = storage_once("404 Not Found").await;
-        assert!(!available(&config, "t").await);
+        assert!(available(&config, "jwt-token", "u1").await);
+        let seen = String::from_utf8_lossy(&served.await.unwrap()).to_string();
+        assert!(seen.starts_with("GET /storage/v1/object/info/authenticated/goal-files/u1/goals/probe HTTP/1.1"), "{seen}");
+        assert!(seen.to_lowercase().contains("authorization: bearer jwt-token"));
+        let (config, served) = storage_reply("400 Bad Request", r#"{"statusCode":"404","error":"not_found","message":"Object not found","code":"NoSuchKey"}"#).await;
+        assert!(available(&config, "t", "u1").await);
         served.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn storage_is_unavailable_without_the_bucket_or_session() {
+        let (config, served) = storage_reply("400 Bad Request", r#"{"statusCode":"404","error":"Bucket not found","message":"Bucket not found","code":"NoSuchBucket"}"#).await;
+        assert!(!available(&config, "t", "u1").await);
+        served.await.unwrap();
+        let (config, served) = storage_reply("403 Forbidden", r#"{"statusCode":"403","error":"Unauthorized","message":"jwt expired"}"#).await;
+        assert!(!available(&config, "t", "u1").await);
+        served.await.unwrap();
+        assert!(!available(&config, "t", "").await);
     }
 }
