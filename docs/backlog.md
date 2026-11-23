@@ -40,3 +40,5 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B34 | Owner, build 3 | Calendar status | Action checked done on Today still shows blue (planned) on the Calendar, not marked done | high | open, pod 31 |
 | B35 | Owner, build 3 | Calendar | No swipe left or right to change day or week | medium | open, pod 31 |
 | B36 | Owner, build 3 | intake, planner | Intake questions shallow for every goal; workout plan had no session content (exercises, sets, reps) and no nutrition guidance | high | open, pod 29 (planner notes, coach intake) |
+| B37 | Pod 33 DONE | delete goal | Kept actions take the Routines reminder setting (on) even if the deleted goal had reminders off | low | open |
+| B38 | Pod 33 DONE | storage bulk delete | DELETE /storage/v1/object/goal-files with prefixes tested only against a stub; confirm on prod | medium | open, check on build 4 |
