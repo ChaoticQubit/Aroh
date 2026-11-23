@@ -8,6 +8,8 @@ FMT = "%Y-%m-%dT%H:%M:%S"
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "crates", "aroh-plugins", "templates", "fitness.toml")
 MUSIC = os.path.join(os.path.dirname(TEMPLATE), "music.toml")
 MUSIC_GOAL = "Clair de Lune"
+LEARNING = os.path.join(os.path.dirname(TEMPLATE), "learning.toml")
+READING_GOAL = "The Joy of X"
 
 
 def plan_times(now, room=30):
@@ -34,8 +36,8 @@ def script(now, reminder_minutes):
     meals_at = (now + datetime.timedelta(minutes=reminder_minutes)).strftime("%H:%M")
     zone = str(now.tzinfo)
     questions = {"questions": [
-        {"id": "days", "text": "How many days a week can you train?", "kind": "number", "choices": []},
-        {"id": "food", "text": "Anything you do not eat?", "kind": "text", "choices": []},
+        {"id": "days", "text": "How many days a week can you train?", "kind": "number", "choices": [], "unit": "days", "min": 1, "max": 7},
+        {"id": "food", "text": "Anything you do not eat?", "kind": "text", "choices": [], "unit": None, "min": None, "max": None},
     ]}
     research = {"summary": "Core training three to four times a week plus a calorie deficit; abs show below about 12 percent body fat.",
                 "sources": [{"title": "Core training basics", "url": "https://example.org/core"}]}
@@ -168,8 +170,8 @@ def music_rules(now):
         bundle = f.read()
     listen, practice = music_times(now)
     questions = {"questions": [
-        {"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": []},
-        {"id": "minutes", "text": "How many minutes a day can you practise?", "kind": "number", "choices": []},
+        {"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": [], "unit": None, "min": None, "max": None},
+        {"id": "minutes", "text": "How many minutes a day can you practise?", "kind": "number", "choices": [], "unit": "minutes per day", "min": 0, "max": 120},
     ]}
     research = {"summary": "Clair de Lune is an advanced intermediate piece; learn it in four sections, hands separately and slow first, then raise the tempo step by step.",
                 "sources": [{"title": "Learning Clair de Lune", "url": "https://example.org/clair-de-lune"}]}
@@ -193,6 +195,38 @@ def music_rules(now):
         {"when": ["You are Instrument teacher"], "reply": {"text": json.dumps(research)}},
         {"when": ["You are Practice coach"], "reply": {"text": json.dumps(plan)}},
         {"when": ["You are Plugin builder", MUSIC_GOAL], "reply": {"text": json.dumps({"bundle_toml": bundle})}},
+    ]
+
+
+def reading_rules(now):
+    """Script rules for the pod 25 reading flow, matched before the six-pack rules: six intake
+    questions in the owner's terms with units and ranges, the tutor's research, the practice
+    planner's daily reading until next Sunday and the learning template. Input: aware local now."""
+    with open(LEARNING, encoding="utf8") as f:
+        bundle = f.read()
+    start = (now + datetime.timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
+    questions = {"questions": [
+        {"id": "chapters_done", "text": "How many chapters of The Joy of X have you read so far?", "kind": "number", "choices": [], "unit": "chapters", "min": 0, "max": 30},
+        {"id": "daily_reading_minutes", "text": "How many minutes a day can you read?", "kind": "number", "choices": [], "unit": "minutes per day", "min": 0, "max": 180},
+        {"id": "reading_days", "text": "On how many days this week can you read?", "kind": "number", "choices": [], "unit": "days", "min": 1, "max": 7},
+        {"id": "preferred_reading_time", "text": "When do you prefer to read?", "kind": "choice", "choices": ["Morning", "Midday", "Evening", "It varies"], "unit": None, "min": None, "max": None},
+        {"id": "book_format", "text": "What format are you reading the book in?", "kind": "choice", "choices": ["Print book", "E-reader", "Audiobook"], "unit": None, "min": None, "max": None},
+        {"id": "busy_days_limits", "text": "Any days this week you cannot read?", "kind": "text", "choices": [], "unit": None, "min": None, "max": None},
+    ]}
+    research = {"summary": "The Joy of X by Steven Strogatz has 30 short chapters of about 10 pages each; two to three chapters a day finish it in a week.",
+                "sources": [{"title": "The Joy of X, publisher page", "url": "https://example.org/joy-of-x"}]}
+    plan = {
+        "summary": "Read three chapters each evening until Sunday. You skipped some questions, so evenings at 20:00 are the default.",
+        "timezone": str(now.tzinfo),
+        "items": [{"title": "Read The Joy of X, three chapters", "start": start.strftime(FMT), "minutes": 30, "rrule": "FREQ=DAILY", "notes": None}],
+        "trackers": [{"name": "Chapters read", "fields": [{"key": "chapters", "label": "Chapters", "kind": "number", "unit": "count"}],
+                      "cadence": {"freq": "daily", "weekdays": [], "at": "21:00"}, "rules": None}],
+    }
+    return [
+        {"when": ["You are Intake interviewer", READING_GOAL], "reply": {"text": json.dumps(questions)}},
+        {"when": ["You are Tutor"], "reply": {"text": json.dumps(research)}},
+        {"when": ["You are Practice planner"], "reply": {"text": json.dumps(plan)}},
+        {"when": ["You are Plugin builder", READING_GOAL], "reply": {"text": json.dumps({"bundle_toml": bundle})}},
     ]
 
 
@@ -276,6 +310,9 @@ def main():
             json.dump(pod20_seed(now), f)
     if music:
         data["rules"] = data["rules"][:1] + music_rules(now) + data["rules"][1:]
+        assert len(data["rules"]) == 11
+    if flow == "pod25.js":
+        data["rules"] = data["rules"][:1] + reading_rules(now) + data["rules"][1:]
         assert len(data["rules"]) == 11
     with open(path, "w", encoding="utf8") as f:
         json.dump(data, f)

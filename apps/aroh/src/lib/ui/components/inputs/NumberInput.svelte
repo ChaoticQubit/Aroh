@@ -29,7 +29,7 @@
 		<Button variant="outline" size="icon-touch" aria-label="Decrease {spec.label}" onclick={() => set((value ?? spec.min ?? 0) - spec.step)}>
 			<Minus />
 		</Button>
-		<div class="relative flex-1">
+		<div class="flex min-w-0 flex-1 items-center gap-2">
 			<Input
 				{id}
 				type="number"
@@ -38,14 +38,14 @@
 				min={spec.min}
 				max={spec.max}
 				placeholder="Enter"
-				class="h-11 pr-12 text-right text-lg tabular-nums"
+				class="h-11 min-w-0 flex-1 text-right text-lg tabular-nums"
 				value={value ?? ''}
 				oninput={(e) => {
 					const text = e.currentTarget.value;
 					set(text === '' ? null : Number(text));
 				}}
 			/>
-			<span class="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted">{spec.unit}</span>
+			{#if spec.unit}<span class="max-w-28 shrink-0 text-sm text-muted">{spec.unit}</span>{/if}
 		</div>
 		<Button variant="outline" size="icon-touch" aria-label="Increase {spec.label}" onclick={() => set((value ?? spec.min ?? 0) + spec.step)}>
 			<Plus />

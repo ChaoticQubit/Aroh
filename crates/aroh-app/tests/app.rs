@@ -41,10 +41,14 @@ fn settings_are_whitelisted_and_validated() {
     local::set_setting(&conn, "server_url", "https://engine.example.com").unwrap();
     assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("https://engine.example.com"));
     local::set_setting(&conn, "server_url", "").unwrap();
-    assert_eq!(local::setting(&conn, "server_url").unwrap(), None);
+    assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("https://aroh-ten.vercel.app"));
+    assert_eq!(local::setting(&conn, "goal_budget_usd").unwrap(), None);
     assert!(local::set_setting(&conn, "server_url", "http://engine.example.com").is_err());
     assert!(local::set_setting(&conn, "user_id", "x").is_err());
     assert!(local::set_setting(&conn, "calendars", "maybe").is_err());
+    assert!(local::set_setting(&conn, "setup_done", "maybe").is_err());
+    local::set_setting(&conn, "setup_done", "true").unwrap();
+    assert_eq!(local::setting(&conn, "setup_done").unwrap().as_deref(), Some("true"));
     assert!(local::set_setting(&conn, "goal_budget_usd", "-1").is_err());
     local::set_setting(&conn, "goal_budget_usd", "8").unwrap();
 }
@@ -345,5 +349,24 @@ fn supabase_settings_validate() {
     local::set_setting(&conn, "supabase_anon_key", "eyJhbGciOiJIUzI1NiJ9.e30.signature").unwrap();
     assert!(local::set_setting(&conn, "supabase_url", "http://evil.example.com").is_err());
     assert!(local::set_setting(&conn, "supabase_anon_key", "short").is_err());
-    assert_eq!(local::settings(&conn).unwrap().len(), 2);
+    assert_eq!(local::settings(&conn).unwrap().len(), 3);
+}
+
+#[test]
+fn hosted_project_and_engine_are_the_defaults_until_the_owner_sets_others() {
+    let (conn, _, _) = setup();
+    let defaults = [
+        ("supabase_url", "https://dgxkjlgsxxejpapsdzjd.supabase.co"),
+        ("supabase_anon_key", "sb_publishable_cD0WV69uaKlGDnnRWrGjrQ_cw1civNB"),
+        ("server_url", "https://aroh-ten.vercel.app"),
+    ];
+    for (name, value) in defaults {
+        assert_eq!(local::setting(&conn, name).unwrap().as_deref(), Some(value), "{name}");
+        assert_eq!(local::settings(&conn).unwrap().get(name).map(String::as_str), Some(value), "{name}");
+        local::set_setting(&conn, name, value).unwrap();
+    }
+    local::set_setting(&conn, "server_url", "http://127.0.0.1:8095").unwrap();
+    assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("http://127.0.0.1:8095"));
+    local::set_setting(&conn, "server_url", " ").unwrap();
+    assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("https://aroh-ten.vercel.app"));
 }

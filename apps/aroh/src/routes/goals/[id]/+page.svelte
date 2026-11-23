@@ -6,6 +6,7 @@
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { goalHeader, goalView } from '$lib/app/views';
+	import { engine } from '$lib/app/engine';
 	import { activeVersion, enablePlugin, listPlugins, type PluginVersion } from '$lib/plugins/api';
 	import { parseTree, resolve } from '$lib/plugins/resolve';
 	import type { AutonomyLabel, CoachView } from '$lib/ui/screens/types';
@@ -18,7 +19,18 @@
 	const s = $derived(data.snapshot);
 	const goal = $derived(s?.goals.find((g) => g.id === page.params.id));
 	let plugins = $state<PluginVersion[]>([]);
+	let chatStatus = $state<string | null>(null);
 	let coaches = $state<CoachView[]>([]);
+
+	$effect(() => {
+		const id = page.params.id;
+		if (!id) return;
+		void engine.runs({ goalId: id, state: 'waiting_human' }).then(async (r) => {
+			const waits = r.ok ? await engine.waits(r.value) : {};
+			const label = r.ok ? r.value.map((x) => waits[x.run_id]).find(Boolean) : undefined;
+			chatStatus = label ? `Waiting for you: ${label}. Open the chat to answer.` : null;
+		});
+	});
 
 	$effect(() => {
 		const id = goal?.id;
@@ -70,7 +82,7 @@
 </script>
 
 {#if s && goal && view}
-	<GoalScreen goal={goalHeader(s, goal, clock.zone)} {view} {versions} version={shown?.id ?? DERIVED} {coaches} {onautonomy} {onchat} {onversion} oncoaches={() => void goto(`/personas?goal=${goal.id}`)} />
+	<GoalScreen goal={goalHeader(s, goal, clock.zone)} {view} {chatStatus} {versions} version={shown?.id ?? DERIVED} {coaches} {onautonomy} {onchat} {onversion} oncoaches={() => void goto(`/personas?goal=${goal.id}`)} />
 {:else if s}
 	<p class="p-4 text-sm text-muted">This goal no longer exists.</p>
 {/if}

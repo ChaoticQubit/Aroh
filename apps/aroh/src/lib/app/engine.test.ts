@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { chatFromRun, closeOldestQuestion, Engine, fixedActionIds, flushLogs, keyStatus, NEEDS_ENGINE, pauseMessage, route, type Answer, type Call, type RunView, type Waiting } from './engine';
+import { chatFromRun, Engine, fixedActionIds, flushLogs, keyStatus, NEEDS_ENGINE, pauseMessage, route, waitLabel, type Answer, type Call, type RunView, type Waiting } from './engine';
 import type { Action } from './client';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
@@ -32,9 +32,11 @@ describe('engine client', () => {
 	it('maps a run view to chat messages', () => {
 		const asking = chatFromRun(view({ status: 'waiting_human' }, [questions]));
 		expect(asking[0]).toEqual({ type: 'progress', lines: [{ text: 'Reading your goal', done: true }, { text: 'Researching how to reach it', done: false }] });
-		const cards = asking.filter((m) => m.type === 'card');
-		expect(cards).toHaveLength(2);
-		expect(cards[0]).toMatchObject({ spec: { kind: 'question_card', question: 'How many days a week?', input: { kind: 'number_input' } } });
+		expect(asking.filter((m) => m.type === 'card')).toHaveLength(0);
+		expect(waitLabel(view({ status: 'waiting_human' }, [questions]))).toBe('2 questions to answer');
+		expect(waitLabel(view({ status: 'waiting_human' }, [approve]))).toBe('Plan to approve');
+		expect(waitLabel(view({ status: 'waiting_human' }, [{ node: 'change', ask: 'question', prompt: null, data: {} }]))).toBe('What to change in the plan');
+		expect(waitLabel(view({ status: 'running' }))).toBeNull();
 		const plan = chatFromRun(view({ status: 'waiting_human' }, [approve])).at(-1);
 		expect(plan).toEqual({ type: 'plan', title: 'Core work and a daily plank.', items: ['Core workout, 2026-11-22 07:00, 30 min'], fixable: [true] });
 		expect(chatFromRun(view({ status: 'done' })).at(-1)).toMatchObject({ text: 'Approved. The plan is on your calendar.' });
@@ -76,19 +78,10 @@ describe('engine client', () => {
 	});
 
 	it('routes chat text to the waiting node or a replan', () => {
-		expect(route(undefined, [], 'I missed today')).toEqual({ kind: 'replan', reason: 'I missed today' });
-		expect(route(questions, [], '4')).toEqual({ kind: 'hold', held: ['4'] });
-		expect(route(questions, ['4'], 'no nuts')).toEqual({
-			kind: 'answer',
-			node: 'questions',
-			answer: [
-				{ id: 'days', answer: '4' },
-				{ id: 'food', answer: 'no nuts' }
-			],
-			held: []
-		});
-		expect(route(approve, [], 'Mornings only')).toEqual({ kind: 'answer', node: 'approve', answer: false, held: ['Mornings only'] });
-		expect(route({ node: 'change', ask: 'question', prompt: null, data: {} }, [], 'Mornings only')).toEqual({ kind: 'answer', node: 'change', answer: 'Mornings only', held: [] });
+		expect(route(undefined, 'I missed today')).toEqual({ kind: 'replan', reason: 'I missed today' });
+		expect(route(questions, '4')).toEqual({ kind: 'questions' });
+		expect(route(approve, 'Mornings only')).toEqual({ kind: 'answer', node: 'approve', answer: false, change: 'Mornings only' });
+		expect(route({ node: 'change', ask: 'question', prompt: null, data: {} }, 'Mornings only')).toEqual({ kind: 'answer', node: 'change', answer: 'Mornings only' });
 	});
 
 	it('sendChat answers the waiting run, else starts a replan', async () => {
@@ -105,9 +98,9 @@ describe('engine client', () => {
 			return answers[`${method} ${path}`] ?? { status: 404, body: { error: { code: 'not_found', message: 'no such route' } } };
 		};
 		const e = new Engine(call);
-		await expect(e.sendChat('g1', 'Evenings please')).resolves.toEqual({ ok: true, value: { run_id: 'r1', held: ['Evenings please'] } });
+		await expect(e.sendChat('g1', 'Evenings please')).resolves.toEqual({ ok: true, value: { run_id: 'r1', change: 'Evenings please' } });
 		expect(sent.find(([m, p]) => m === 'POST' && p === '/v1/runs/r1/answers')?.[2]).toEqual({ node: 'approve', answer: false });
-		await expect(e.sendChat('g2', 'I missed today')).resolves.toEqual({ ok: true, value: { run_id: 'r2', held: [] } });
+		await expect(e.sendChat('g2', 'I missed today')).resolves.toEqual({ ok: true, value: { run_id: 'r2' } });
 		expect(sent.at(-1)?.[2]).toMatchObject({ reason: 'I missed today' });
 		await expect(e.answer('nope', 'approve', true)).resolves.toEqual({ ok: false, reason: 'error', message: 'no such route' });
 	});
@@ -189,16 +182,31 @@ describe('engine client', () => {
 	});
 });
 
-describe('typed answers', () => {
-	it('close the oldest open question card, one per message', () => {
-		const thread = chatFromRun(view({ status: 'waiting_human' }, [questions]));
-		const open = (m: ReturnType<typeof chatFromRun>) => m.filter((x) => x.type === 'card' && x.spec.kind === 'question_card' && !x.answered).length;
-		expect(open(thread)).toBe(2);
-		const once = closeOldestQuestion(thread);
-		expect(open(once)).toBe(1);
-		const first = once.find((x) => x.type === 'card' && x.spec.kind === 'question_card');
-		expect(first?.type === 'card' && first.spec.kind === 'question_card' && first.answered).toBe(true);
-		expect(open(closeOldestQuestion(once))).toBe(0);
-		expect(closeOldestQuestion(closeOldestQuestion(once))).toEqual(closeOldestQuestion(once));
+
+describe('run limits (Q60)', () => {
+	it('a working run shows its running step, cost so far and a Stop', () => {
+		const working = { ...view({ status: 'running' }), usage: { cost_usd_micros: 12_345 } };
+		expect(chatFromRun(working).at(-1)).toEqual({ type: 'working', step: 'Researching how to reach it', cost: '$0.01' });
+	});
+
+	it('a run stopped at its time limit says after how long, with Retry; a cancelled one says stopped', () => {
+		const limit = { status: 'failed' as const, error: 'time limit of 300000 ms reached', reason: { kind: 'time_limit', limit_ms: 300_000 } };
+		expect(chatFromRun(view(limit)).at(-1)).toEqual({ type: 'stopped', text: 'Stopped after 5 min.', retry: true });
+		const cancelled = { status: 'failed' as const, error: 'cancelled by the owner', reason: { kind: 'cancelled' } };
+		expect(chatFromRun(view(cancelled)).at(-1)).toEqual({ type: 'stopped', text: 'Stopped. Nothing more runs or is spent.', retry: true });
+		expect(chatFromRun(view({ status: 'failed', error: 'no key' })).at(-1)).toMatchObject({ type: 'message', text: 'The run stopped: no key.' });
+	});
+
+	it('cancels, retries and reads and saves the run time limit', async () => {
+		const sent: string[] = [];
+		const e = new Engine(async (method, path, body) => {
+			sent.push(`${method} ${path} ${JSON.stringify(body ?? null)}`);
+			return { status: 200, body: path.endsWith('run-limit') ? { minutes: 5 } : { run_id: 'r1' } };
+		});
+		await expect(e.cancel('r1')).resolves.toMatchObject({ ok: true });
+		await expect(e.retry('r1')).resolves.toMatchObject({ ok: true });
+		await expect(e.runLimit()).resolves.toEqual({ ok: true, value: { minutes: 5 } });
+		await e.setRunLimit(8);
+		expect(sent).toEqual(['POST /v1/runs/r1/cancel null', 'POST /v1/runs/r1/retry null', 'GET /v1/settings/run-limit null', 'PUT /v1/settings/run-limit {"minutes":8}']);
 	});
 });

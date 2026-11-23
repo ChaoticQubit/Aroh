@@ -21,7 +21,7 @@ export type GoalHeader = {
 export type InboxItem = { id: string; spec: ComponentSpec };
 
 /** One agent run in progress, as the Inbox lists it. */
-export type RunView = { persona: string; title: string; step: string; progress: number };
+export type RunView = { persona: string; title: string; step: string; progress: number; href?: string };
 
 /** One model provider of the Settings dropdown. */
 export type ProviderView = { id: string; name: string; protocol: string; models: string[]; keySet: boolean; last4: string | null; selfHosted: boolean };

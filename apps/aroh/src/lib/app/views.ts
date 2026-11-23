@@ -248,9 +248,11 @@ const RUN_STATE: Record<string, string> = {
 
 /**
  * Runs not done, newest first, one per goal and workflow, titled by workflow and goal. Progress is
- * coarse by state: 0 queued, 50 working, 100 stopped at a wait, a pause or a failure.
+ * coarse by state: 0 queued, 50 working, 100 stopped at a wait, a pause or a failure. A run that
+ * waits for the owner says what for (`waits`, by run id, such as "3 questions to answer") and
+ * links to its goal's chat.
  */
-function openRuns(s: Snapshot, runs: RunSummary[]): RunView[] {
+function openRuns(s: Snapshot, runs: RunSummary[], waits: Record<string, string>): RunView[] {
 	const seen = new Set<string>();
 	const out: RunView[] = [];
 	for (const r of runs) {
@@ -260,7 +262,10 @@ function openRuns(s: Snapshot, runs: RunSummary[]): RunView[] {
 		const goal = s.goals.find((g) => g.id === r.goal_id);
 		const kind = WORKFLOW[r.workflow] ?? { title: r.workflow, persona: 'Aroh' };
 		const progress = r.state === 'queued' ? 0 : r.state === 'running' || r.state === 'checkpointed' ? 50 : 100;
-		out.push({ persona: kind.persona, title: goal ? `${kind.title}: ${goal.title}` : `${kind.title} (${r.run_id.slice(0, 8)})`, step: RUN_STATE[r.state] ?? r.state, progress });
+		const wait = r.state === 'waiting_human' ? waits[r.run_id] : undefined;
+		const step = wait ? `Waiting for you: ${wait}` : (RUN_STATE[r.state] ?? r.state);
+		const href = r.state === 'waiting_human' && r.goal_id ? `/goals/${r.goal_id}/chat` : undefined;
+		out.push({ persona: kind.persona, title: goal ? `${kind.title}: ${goal.title}` : `${kind.title} (${r.run_id.slice(0, 8)})`, step, progress, ...(href ? { href } : {}) });
 	}
 	return out;
 }
@@ -327,20 +332,22 @@ export function busyDayInsights(s: Snapshot, zone: string, now: string): InboxIt
 
 /**
  * The Inbox groups: open proposals, unconfirmed preferences, engine insights then Busy-day notes
- * (local days in `zone`, from the day of `now`), and the engine runs not done.
+ * (local days in `zone`, from the day of `now`), and the engine runs not done, each with what it
+ * waits for from `waits` (by run id).
  */
 export function inboxView(
 	s: Snapshot,
 	runs: RunSummary[] = [],
 	insights: Insight[] = [],
 	zone = 'UTC',
-	now = new Date().toISOString()
+	now = new Date().toISOString(),
+	waits: Record<string, string> = {}
 ): { approvals: InboxItem[]; suggestions: InboxItem[]; insights: InboxItem[]; runs: RunView[] } {
 	return {
 		approvals: s.proposals.map((p) => ({ id: p.id, spec: { kind: 'proposal_card', persona: personaFor(s, p.goal_id), summary: p.summary, changes: changes(p) } })),
 		suggestions: s.preferences.map((f) => ({ id: f.id, spec: { kind: 'proposal_card', persona: f.source, summary: f.fact, changes: [] } })),
 		insights: [...insightItems(s, insights), ...busyDayInsights(s, zone, now)],
-		runs: openRuns(s, runs)
+		runs: openRuns(s, runs, waits)
 	};
 }
 

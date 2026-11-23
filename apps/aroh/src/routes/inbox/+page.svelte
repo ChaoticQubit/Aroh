@@ -13,14 +13,16 @@
 	const s = $derived(data.snapshot);
 	let runs = $state<RunSummary[]>([]);
 	let insights = $state<Insight[]>([]);
+	let waits = $state<Record<string, string>>({});
 	let triage = $state<{ runId: string; waiting: Waiting } | null>(null);
 	let answers: Record<string, unknown> = {};
 
-	/** Reads the engine's newest runs and insights; offline leaves both lists empty. */
+	/** Reads the engine's newest runs, what the waiting ones wait for, and insights; offline leaves all empty. */
 	async function loadRuns() {
 		const [r, i] = await Promise.all([engine.runs(), engine.insights()]);
 		runs = r.ok ? r.value : [];
 		insights = i.ok ? i.value : [];
+		waits = await engine.waits(runs);
 		await loadTriage();
 	}
 
@@ -88,5 +90,5 @@
 </script>
 
 {#if s}
-	<InboxScreen {...inboxView(s, runs, insights, clock.zone, clock.now)} triage={triageCards(triage?.waiting)} {ondecide} />
+	<InboxScreen {...inboxView(s, runs, insights, clock.zone, clock.now, waits)} triage={triageCards(triage?.waiting)} {ondecide} />
 {/if}

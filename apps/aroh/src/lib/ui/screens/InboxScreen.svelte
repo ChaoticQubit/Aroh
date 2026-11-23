@@ -58,7 +58,11 @@
 						</div>
 						<p class="text-sm font-medium">{run.title}</p>
 						<Progress class="[&>[data-slot=progress-indicator]]:bg-status-planned" value={run.progress} aria-label="{run.title}, {run.progress} percent" />
-						<p class="text-xs text-muted">{run.step}</p>
+						{#if run.href}
+							<a href={run.href} class="flex min-h-11 items-center text-sm font-medium text-fg underline underline-offset-4">{run.step}</a>
+						{:else}
+							<p class="text-xs text-muted">{run.step}</p>
+						{/if}
 					</div>
 				{/each}
 			</Card.Root>

@@ -148,6 +148,15 @@ describe('views', () => {
 		expect(inboxView(s, [], [insight, { ...insight, id: 'i2' }]).insights.map((i) => i.id)).toEqual(['i2']);
 	});
 
+	it('says what a waiting run waits for and links to its goal chat, even for a goal not on this device', () => {
+		const run = (run_id: string, goal_id: string | null, state: string) => ({ run_id, goal_id, workflow: 'new-goal', state, created_at: '', updated_at: '' });
+		const { runs } = inboxView(fixture(), [run('r1', 'g-not-synced', 'waiting_human'), run('r2', null, 'running')], [], 'UTC', '2026-11-26T08:00:00Z', { r1: '3 questions to answer' });
+		expect(runs).toEqual([
+			{ persona: 'Goal planner', title: 'Planning a new goal (r1)', step: 'Waiting for you: 3 questions to answer', progress: 100, href: '/goals/g-not-synced/chat' },
+			{ persona: 'Goal planner', title: 'Planning a new goal (r2)', step: 'Working', progress: 50 }
+		]);
+	});
+
 	it('shows device notes as insight cards before engine insights and hides dismissed ones', () => {
 		const s = fixture();
 		const note = (id: string) => ({ id, title: 'Time zone changed', body: 'Now in America/New_York, was Europe/Berlin.', created_at: '2026-11-26T06:00:00Z' });

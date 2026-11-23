@@ -14,7 +14,16 @@ const ACCOUNT: &str = "account";
 const PENDING: &str = "pending_logs";
 
 /// Settings the owner may write, all stored as text.
-pub const SETTINGS: [&str; 8] = ["server_url", "goal_budget_usd", "calendars", "health", "supabase_url", "supabase_anon_key", "dismissed_insights", "day_suggestions"];
+pub const SETTINGS: [&str; 9] = ["server_url", "goal_budget_usd", "calendars", "health", "supabase_url", "supabase_anon_key", "dismissed_insights", "setup_done", "day_suggestions"];
+
+/// The hosted Supabase project and engine, used while the owner's setting is empty.
+/// The one place these values live; Settings still edits them, and clearing one returns here.
+/// The anon key is a publishable key, safe to ship in the app.
+pub const DEFAULTS: [(&str, &str); 3] = [
+    ("supabase_url", "https://dgxkjlgsxxejpapsdzjd.supabase.co"),
+    ("supabase_anon_key", "sb_publishable_cD0WV69uaKlGDnnRWrGjrQ_cw1civNB"),
+    ("server_url", "https://aroh-ten.vercel.app"),
+];
 
 /// Most insight ids `dismissed_insights` holds: the Inbox shows the 30 newest insights.
 pub const MAX_DISMISSED: usize = 30;
@@ -50,14 +59,15 @@ pub fn user_id(conn: &Connection) -> Result<String> {
     Ok(id)
 }
 
-/// Reads one owner setting; `None` when unset or cleared.
+/// Reads one owner setting; when unset or cleared, its entry in [`DEFAULTS`] or `None`.
 /// `name` must be one of [`SETTINGS`].
 pub fn setting(conn: &Connection, name: &str) -> Result<Option<String>> {
     assert!(SETTINGS.contains(&name), "unknown setting {name}");
-    Ok(get_state(conn, &key(name))?.filter(|v| !v.is_empty()))
+    let stored = get_state(conn, &key(name))?.filter(|v| !v.is_empty());
+    Ok(stored.or_else(|| DEFAULTS.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string())))
 }
 
-/// Every owner setting that has a value, keyed by name.
+/// Every owner setting that has a value or a default, keyed by name.
 pub fn settings(conn: &Connection) -> Result<BTreeMap<String, String>> {
     let mut out = BTreeMap::new();
     for name in SETTINGS {

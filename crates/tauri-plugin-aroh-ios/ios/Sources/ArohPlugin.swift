@@ -31,6 +31,9 @@ class ArohPlugin: Plugin {
 
   override func load(webview: WKWebView) {
     super.load(webview: webview)
+    webview.scrollView.contentInsetAdjustmentBehavior = .never
+    webview.scrollView.bounces = false
+    webview.scrollView.keyboardDismissMode = .interactive
     PushBridge.shared.install()
     ReminderDelegate.shared.install()
   }

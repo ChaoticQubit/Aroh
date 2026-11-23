@@ -21,4 +21,4 @@ futures-util.workspace = true
 [dev-dependencies]
 aroh-domain = { workspace = true, features = ["samples"] }
 rusqlite.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net", "io-util"] }

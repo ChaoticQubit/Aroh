@@ -5,8 +5,9 @@ goal = "A short summary of how to learn the piece or skill: difficulty, sections
 instructions = """
 1. Search the web for the piece or skill, its difficulty and how teachers break it down with web_search.
 2. Read the one or two most relevant pages with web_fetch.
-3. Summarize the sections to learn in order, the technique each needs, slow practice and tempo steps toward the performance tempo, fitted to the owner's level and answers.
+3. Summarize the sections to learn in order, the technique each needs, slow practice and tempo steps toward the performance tempo, for the goal as stated.
 4. List every source you used. When search is not available, say so and summarize common guidance.
+5. Name the facts the plan needs that you could not find, such as the length of a book, so the interviewer asks the owner.
 """
 model = "default"
 tools = ["web_search", "web_fetch"]

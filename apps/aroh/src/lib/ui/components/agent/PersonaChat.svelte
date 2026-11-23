@@ -2,7 +2,6 @@
 	import CircleCheck from '@lucide/svelte/icons/circle-check';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Mic from '@lucide/svelte/icons/mic';
-	import Paperclip from '@lucide/svelte/icons/paperclip';
 	import Send from '@lucide/svelte/icons/send';
 	import { Button } from '$lib/ui/primitives/button';
 	import * as Card from '$lib/ui/primitives/card';
@@ -10,26 +9,37 @@
 	import Render from '../Render.svelte';
 	import Persona from './Persona.svelte';
 	import QuestionCard from './QuestionCard.svelte';
+	import QuestionGroup from './QuestionGroup.svelte';
 	import type { ChatMessage, OnChange } from '$lib/ui/contract';
+	import { Dictation, type Speech } from '$lib/app/speech.svelte';
+	import { scrollFor } from '$lib/app/questions';
 
 	/**
-	 * Owner and persona thread with inline cards, research progress and a plan awaiting approval,
-	 * above a composer with text, attach and mic. Emits `{ type: 'send', text }` (typed or a card's
-	 * answer), `{ type: 'approve', fixed }` (indexes of plan items switched to Fixed time) or
-	 * `{ type: 'change' }`. With `echo` false the caller adds sent messages itself.
+	 * Owner and persona thread with inline cards, a question group, research progress and a plan
+	 * awaiting approval, above a composer with text and, given `voice`, a mic that dictates into the draft.
+	 * Emits `{ type: 'send', text }` (typed or a card's answer), the group's `answer`, `skip` and `submit`,
+	 * `{ type: 'approve', fixed }` (indexes of plan items set to Fixed time), `{ type: 'change' }`, or a
+	 * run's `stop` and `retry`. With `echo` false the caller adds sent messages itself.
 	 */
-	let { messages, onchange, echo = true }: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean } = $props();
+	let { messages, onchange, echo = true, voice }: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean; voice?: Speech } = $props();
 
 	const id = $props.id();
 	let sent = $state<ChatMessage[]>([]);
 	let draft = $state('');
 	let approved = $state(false);
+	const dictation = $derived(voice ? new Dictation(voice, (text) => (draft = text)) : null);
 	let fixed = $state<number[]>([]);
 	const thread = $derived([...messages, ...sent]);
 	let list = $state<HTMLOListElement>();
 
+	let seenGroup: string | null = null;
+
 	$effect(() => {
-		if (thread.length && list) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+		const next = scrollFor(thread, seenGroup);
+		seenGroup = next.seen;
+		if (!thread.length || !list) return;
+		if (next.to === 'bottom') list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+		else if (next.to === 'group') (list.lastElementChild as HTMLElement | null)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 	});
 
 	/** Sends a card's answer like typed text; an empty answer is ignored. */
@@ -65,10 +75,12 @@
 					{/if}
 				{:else if m.type === 'card'}
 					{#if m.spec.kind === 'question_card'}
-						<QuestionCard spec={m.spec} answered={m.answered} onchange={(v) => answer(v)} />
+						<QuestionCard spec={m.spec} onchange={(v) => answer(v)} />
 					{:else}
 						<Render spec={m.spec} onchange={(v) => answer(v)} />
 					{/if}
+				{:else if m.type === 'questions'}
+					<QuestionGroup group={m} {onchange} />
 				{:else if m.type === 'progress'}
 					<div class="flex flex-col gap-1.5 border-l-2 border-border py-1 pl-3" role="status" aria-label="Research progress">
 						{#each m.lines as line (line.text)}
@@ -77,6 +89,17 @@
 								{line.text}
 							</p>
 						{/each}
+					</div>
+				{:else if m.type === 'working'}
+					<div class="flex items-center gap-3 rounded-sm border border-border bg-surface px-3 py-2" role="status">
+						<LoaderCircle class="size-4 shrink-0 animate-spin text-status-planned" />
+						<p class="min-w-0 flex-1 text-sm text-fg">{m.step ?? 'Working'}<span class="block text-xs text-muted tabular-nums">{m.cost} spent so far</span></p>
+						<Button size="touch" variant="outline" onclick={() => onchange?.({ type: 'stop' })}>Stop</Button>
+					</div>
+				{:else if m.type === 'stopped'}
+					<div class="flex items-center gap-3 rounded-sm border border-border bg-surface px-3 py-2" role="status">
+						<p class="min-w-0 flex-1 text-sm text-fg">{m.text}</p>
+						{#if m.retry}<Button size="touch" variant="outline" onclick={() => onchange?.({ type: 'retry' })}>Retry</Button>{/if}
 					</div>
 				{:else if m.type === 'plan'}
 					<Card.Root size="sm" class="gap-3 px-4">
@@ -124,7 +147,6 @@
 			send();
 		}}
 	>
-		<Button variant="ghost" size="icon-touch" aria-label="Attach a file" type="button"><Paperclip /></Button>
 		<label for={id} class="sr-only">Message</label>
 		<textarea
 			{id}
@@ -139,7 +161,10 @@
 				}
 			}}
 		></textarea>
-		<Button variant="ghost" size="icon-touch" aria-label="Speak a message" type="button"><Mic /></Button>
+		{#if dictation}
+			<Button variant={dictation.listening ? 'default' : 'ghost'} size="icon-touch" aria-label={dictation.listening ? 'Stop speaking' : 'Speak a message'} aria-pressed={dictation.listening} type="button" onclick={() => void dictation.toggle()}><Mic /></Button>
+		{/if}
 		<Button size="icon-touch" aria-label="Send" type="submit" disabled={!draft.trim()}><Send /></Button>
 	</form>
+	{#if dictation?.error}<p role="alert" class="border-t border-border bg-bg px-3 py-2 text-sm text-status-missed">{dictation.error}</p>{/if}
 </div>

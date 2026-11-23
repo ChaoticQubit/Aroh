@@ -10,7 +10,8 @@ use troupekit_core::event::{EventBody, PauseReason};
 use troupekit_core::message::{Message, Role};
 use troupekit_graph::testing::{text_reply, FnModel, FnTool};
 use troupekit_graph::{
-    Ask, Conditions, GraphError, GraphOutcome, GraphRun, GraphStatus, SimpleGraphIo, Workflow,
+    Ask, Conditions, GraphError, GraphOutcome, GraphRun, GraphStatus, SimpleGraphIo, Stop,
+    Workflow,
 };
 use troupekit_providers::{CompletionRequest, CompletionResponse, Delta, Model, Price};
 use troupekit_tools::{ToolOutput, ToolRegistry};
@@ -1018,4 +1019,44 @@ async fn paused_run_survives_checkpoint() {
         drive(&mut again, &f.io).await,
         GraphOutcome::Done(_)
     ));
+}
+
+#[tokio::test]
+async fn a_stopped_run_takes_no_step_until_retried_and_old_checkpoints_still_load() {
+    let (f, _) = linear();
+    let mut run = GraphRun::new(wf(LINEAR), input(&[("goal", json!("g"))]), Limits::default(), &f.io)
+        .await
+        .unwrap()
+        .with_time_limit(60_000);
+    assert_eq!(run.step(&f.io).await, GraphOutcome::Continue);
+    run.add_active_ms(59_999);
+    assert!(!run.over_time());
+    run.add_active_ms(1);
+    assert!(run.over_time());
+    let before = run.steps();
+    run.stop(Stop::TimeLimit { limit_ms: 60_000 }).unwrap();
+    assert_eq!(run.steps(), before + 1, "a stop is a durable change");
+    assert!(matches!(run.status(), GraphStatus::Failed { .. }));
+    assert_eq!(run.stopped(), Some(&Stop::TimeLimit { limit_ms: 60_000 }));
+    let events = f.sink.events().len();
+    assert!(matches!(run.step(&f.io).await, GraphOutcome::Failed(_)), "a stopped run never steps");
+    assert_eq!(f.sink.events().len(), events, "and calls no model");
+    let restored = GraphRun::from_checkpoint(&run.checkpoint()).unwrap();
+    assert_eq!(restored.stopped(), run.stopped());
+    assert_eq!(restored.active_ms(), 60_000);
+
+    run.retry(Some(120_000)).unwrap();
+    assert_eq!((run.status(), run.stopped(), run.active_ms(), run.over_time()), (&GraphStatus::Queued, None, 0, false));
+    let GraphOutcome::Done(_) = drive(&mut run, &f.io).await else {
+        panic!("a retried run continues where it stopped");
+    };
+    assert!(run.retry(None).is_err(), "only a stopped run retries");
+    assert!(run.stop(Stop::Cancelled).is_err(), "a finished run does not stop");
+
+    let mut old = GraphRun::new(wf(LINEAR), input(&[("goal", json!("g"))]), Limits::default(), &f.io).await.unwrap().checkpoint();
+    for key in ["time_limit_ms", "active_ms", "stopped"] {
+        old.state.as_object_mut().unwrap().remove(key);
+    }
+    let old = GraphRun::from_checkpoint(&old).unwrap();
+    assert_eq!((old.active_ms(), old.stopped(), old.over_time()), (0, None, false));
 }

@@ -35,6 +35,25 @@ pub enum GraphStatus {
     Failed { error: String },
 }
 
+/// Why a run was stopped from outside a step: it used up its active-work
+/// time limit, or its owner cancelled it. A stopped run is `failed` and
+/// takes no step until `GraphRun::retry`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Stop {
+    TimeLimit { limit_ms: u64 },
+    Cancelled,
+}
+
+impl Stop {
+    fn error(&self) -> String {
+        match self {
+            Stop::TimeLimit { limit_ms } => format!("time limit of {limit_ms} ms of active work reached"),
+            Stop::Cancelled => "cancelled".into(),
+        }
+    }
+}
+
 /// What one `step` did. `Continue`: step again now. `RetryAt`: a transient
 /// failure; step again at `at_ms`. `Waiting`, `Done` and `Failed` repeat on
 /// every further step until a resume or budget raise.
@@ -124,6 +143,12 @@ pub struct GraphRun {
     retries: u32,
     seq: u64,
     steps: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    time_limit_ms: Option<u64>,
+    #[serde(default)]
+    active_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    stopped: Option<Stop>,
 }
 
 impl GraphRun {
@@ -190,7 +215,82 @@ impl GraphRun {
             retries: 0,
             seq: 0,
             steps: 0,
+            time_limit_ms: None,
+            active_ms: 0,
+            stopped: None,
         })
+    }
+
+    /// Sets the active-work time limit: the run stops once its steps have
+    /// taken `limit_ms` in total; time spent waiting never counts.
+    /// Returns the run. Call it before the first step.
+    pub fn with_time_limit(mut self, limit_ms: u64) -> GraphRun {
+        assert!(limit_ms > 0, "a time limit allows some work");
+        self.time_limit_ms = Some(limit_ms);
+        self
+    }
+
+    /// Adds `ms` of active work, as the host measured one step.
+    /// The host saves it with that step's checkpoint.
+    /// Saturates instead of overflowing.
+    pub fn add_active_ms(&mut self, ms: u64) {
+        self.active_ms = self.active_ms.saturating_add(ms);
+    }
+
+    /// Returns the active work so far, in milliseconds.
+    /// Only time spent inside steps counts.
+    /// Zero for runs saved before time was tracked.
+    pub fn active_ms(&self) -> u64 {
+        self.active_ms
+    }
+
+    /// Returns the active-work time limit, if the run has one.
+    /// Set at start or on retry.
+    /// None means no limit.
+    pub fn time_limit_ms(&self) -> Option<u64> {
+        self.time_limit_ms
+    }
+
+    /// Whether the run has used up its active-work time limit.
+    /// Always false without a limit.
+    /// The host checks it before every step.
+    pub fn over_time(&self) -> bool {
+        self.time_limit_ms.is_some_and(|limit| self.active_ms >= limit)
+    }
+
+    /// Returns why the run was stopped, while it is stopped.
+    /// None for runs that run, wait, finished or failed on their own.
+    /// Cleared by `retry`.
+    pub fn stopped(&self) -> Option<&Stop> {
+        self.stopped.as_ref()
+    }
+
+    /// Stops the run for `why`: it becomes `failed` and takes no step until
+    /// `retry`, so it calls no model. A durable change for the next save.
+    /// Returns `Resume` when the run is already finished.
+    pub fn stop(&mut self, why: Stop) -> Result<(), GraphError> {
+        if matches!(self.status, GraphStatus::Done | GraphStatus::Failed { .. }) {
+            return Err(GraphError::Resume("the run is finished".into()));
+        }
+        self.status = GraphStatus::Failed { error: why.error() };
+        self.stopped = Some(why);
+        self.steps += 1;
+        Ok(())
+    }
+
+    /// Continues a stopped run where it stopped, with active time back at
+    /// zero and `time_limit_ms` as its new limit, and queues it.
+    /// Returns `Resume` when the run is not stopped.
+    pub fn retry(&mut self, time_limit_ms: Option<u64>) -> Result<(), GraphError> {
+        if self.stopped.is_none() {
+            return Err(GraphError::Resume("only a stopped run can be retried".into()));
+        }
+        assert!(matches!(self.status, GraphStatus::Failed { .. }), "a stopped run is failed");
+        self.stopped = None;
+        self.active_ms = 0;
+        self.time_limit_ms = time_limit_ms;
+        self.queue();
+        Ok(())
     }
 
     /// Restores a run from `cp`. Returns `Checkpoint` when the state does

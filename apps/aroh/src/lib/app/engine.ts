@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ChatMessage, ComponentSpec } from '$lib/ui/contract';
+import type { ChatMessage } from '$lib/ui/contract';
 import type { CoachFields } from '$lib/ui/screens/types';
 import { formatYmd, minuteOfDay } from '$lib/ui/format';
 import type { Action } from './client';
@@ -24,8 +24,8 @@ export type KeyInfo = { setting_id: string; vendor: string; last4: string; updat
 /** One run of `GET /v1/runs`; `personas` are the slugs of the coaches its snapshot holds. */
 export type RunSummary = { run_id: string; goal_id: string | null; workflow: string; state: string; created_at: string; updated_at: string; personas?: string[] };
 
-/** One intake question of the new-goal run. */
-export type Question = { id: string; text: string; kind: 'text' | 'number' | 'choice'; choices: string[] };
+/** One intake question of the new-goal run. Number questions may carry a unit and slider bounds; runs from before units have none. */
+export type Question = { id: string; text: string; kind: 'text' | 'number' | 'choice'; choices: string[]; unit?: string | null; min?: number | null; max?: number | null };
 
 /** One planned item of a plan proposal, in the plan's local time. */
 export type PlanItem = { title: string; start: string; minutes: number; rrule: string | null; notes: string | null };
@@ -36,7 +36,7 @@ export type Waiting = { node: string; ask: 'approval' | 'question'; prompt: stri
 /** A run's lifecycle status, tagged by `status`; pauses carry their reason. */
 export type RunStatus = {
 	status: 'queued' | 'running' | 'checkpointed' | 'waiting_human' | 'waiting_budget' | 'done' | 'failed';
-	reason?: { kind: string; limit?: string; node?: string };
+	reason?: { kind: string; limit?: string; node?: string; limit_ms?: number };
 	error?: string;
 };
 
@@ -44,7 +44,7 @@ export type RunStatus = {
 export type RunEvent = { seq: number; at_ms: number; body: { type: string; step?: string; error?: string; name?: string } };
 
 /** A run as `GET /v1/runs/{id}` returns it; `summary` is the proposal and its outcome when there is one. */
-export type RunView = { run_id: string; goal_id: string | null; workflow: string; status: RunStatus; waiting: Waiting[]; events: RunEvent[]; summary?: string | null };
+export type RunView = { run_id: string; goal_id: string | null; workflow: string; status: RunStatus; waiting: Waiting[]; events: RunEvent[]; summary?: string | null; usage?: { cost_usd_micros?: number } };
 
 /** One insight of `GET /v1/insights`: what the engine noticed and did without being asked. */
 export type Insight = { id: string; goal_id: string | null; run_id: string | null; source: string; title: string; body: string; state: string | null; created_at: string };
@@ -85,6 +85,22 @@ export function pauseMessage(status: RunStatus): string | null {
 	return null;
 }
 
+/**
+ * The owner-facing line for a run its time limit or its owner stopped ("Stopped after 5 min."),
+ * or null when the run was not stopped that way. Both can be retried.
+ */
+export function stopMessage(status: RunStatus): string | null {
+	if (status.status !== 'failed') return null;
+	if (status.reason?.kind === 'time_limit') return `Stopped after ${Math.max(1, Math.round((status.reason.limit_ms ?? 0) / 60_000))} min.`;
+	if (status.reason?.kind === 'cancelled') return 'Stopped. Nothing more runs or is spent.';
+	return null;
+}
+
+/** A spend in micro-dollars as dollars and cents, "$0.01"; zero when unknown. */
+export function formatCost(micros: number | undefined): string {
+	return `$${((micros ?? 0) / 1_000_000).toFixed(2)}`;
+}
+
 /** Progress lines from run events: one per step, done once the step finished. */
 export function progressLines(events: RunEvent[]): { text: string; done: boolean }[] {
 	const lines = new Map<string, boolean>();
@@ -111,6 +127,22 @@ function itemLine(i: PlanItem): string {
 }
 
 /**
+ * What a waiting run needs from the owner, as the Inbox and the goal show it: "3 questions to
+ * answer", "Plan to approve", "Change to approve" or "What to change in the plan". Null when the
+ * run waits for nothing.
+ */
+export function waitLabel(view: RunView): string | null {
+	const w = view.waiting[0];
+	if (view.status.status !== 'waiting_human' || !w) return null;
+	const n = questionsOf(w).length;
+	if (n) return n === 1 ? '1 question to answer' : `${n} questions to answer`;
+	if (w.node === 'approve' && w.data.plan) return 'Plan to approve';
+	if (w.node === 'approve') return 'Change to approve';
+	if (w.node === 'change') return 'What to change in the plan';
+	return w.prompt ?? 'Your answer';
+}
+
+/**
  * The ids of the actions the plan items at indexes `fixed` became: same goal, no series, same
  * title and local start (minute) in the plan's `zone`. Repeating items and items with no
  * written action give none.
@@ -129,37 +161,30 @@ export function fixedActionIds(actions: Action[], goalId: string, items: PlanIte
 }
 
 /**
- * The chat messages for one run view: progress, then what the run waits for (question cards,
- * a plan to approve, a change request prompt, a replan proposal), a pause or failure line, or
- * the done line.
+ * The chat messages for one run view: progress, then what the run waits for (a plan to approve,
+ * a change request prompt, a replan proposal), a pause or failure line, or the done line. Open
+ * questions are not messages here: the chat renders them as one group (see `questions.ts`).
  */
 export function chatFromRun(view: RunView): ChatMessage[] {
 	const out: ChatMessage[] = [];
 	const lines = progressLines(view.events);
 	if (lines.length) out.push({ type: 'progress', lines });
+	const stop = stopMessage(view.status);
+	if (stop) return [...out, { type: 'stopped', text: stop, retry: true }];
+	if (ACTIVE.includes(view.status.status)) {
+		return [...out, { type: 'working', step: lines.findLast((l) => !l.done)?.text ?? null, cost: formatCost(view.usage?.cost_usd_micros) }];
+	}
 	const pause = pauseMessage(view.status);
 	if (pause) return [...out, { type: 'message', from: 'persona', name: 'Aroh', text: pause }];
 	const w = view.waiting[0];
 	if (view.status.status === 'waiting_human' && w) {
-		const questions = questionsOf(w);
-		if (questions.length) {
-			out.push({ type: 'message', from: 'persona', name: 'Intake interviewer', text: w.prompt ?? 'Answer these so the plan fits you.' });
-			for (const q of questions) {
-				const input: ComponentSpec =
-					q.kind === 'number'
-						? { kind: 'number_input', label: 'Your answer', unit: 'count', value: null, step: 1 }
-						: q.kind === 'choice'
-							? { kind: 'choice', label: 'Your answer', options: q.choices, multi: false, value: [] }
-							: { kind: 'note', label: 'Your answer', placeholder: 'Type your answer below', value: '' };
-				out.push({ type: 'card', spec: { kind: 'question_card', persona: 'Intake interviewer', question: q.text, input } });
-			}
-		} else if (w.node === 'approve' && w.data.plan) {
+		if (w.node === 'approve' && w.data.plan) {
 			const plan = w.data.plan as { summary: string; items: PlanItem[] };
 			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine), fixable: plan.items.map((i) => !i.rrule) });
 		} else if (w.node === 'approve' && w.data.proposal_record) {
 			const p = w.data.proposal_record as { summary: string };
 			out.push({ type: 'message', from: 'persona', name: 'Adaptation analyst', text: `${p.summary} It is in your Inbox to apply.` });
-		} else {
+		} else if (!questionsOf(w).length) {
 			out.push({ type: 'message', from: 'persona', name: 'Aroh', text: w.prompt ?? 'Your answer is needed.' });
 		}
 	}
@@ -170,39 +195,21 @@ export function chatFromRun(view: RunView): ChatMessage[] {
 	return out;
 }
 
-/**
- * Marks the oldest open question card of `messages` answered, since each owner message answers
- * the next question in order (see `route`). Returns a new array; unchanged when no card is open.
- */
-export function closeOldestQuestion(messages: ChatMessage[]): ChatMessage[] {
-	const i = messages.findIndex((m) => m.type === 'card' && m.spec.kind === 'question_card' && !m.answered);
-	if (i < 0) return messages;
-	return messages.map((m, j) => (j === i && m.type === 'card' && m.spec.kind === 'question_card' ? { ...m, answered: true } : m));
-}
-
 /** What one chat message does to a goal's runs, as `route` decides it. */
-export type Route =
-	| { kind: 'answer'; node: string; answer: unknown; held: string[] }
-	| { kind: 'hold'; held: string[] }
-	| { kind: 'replan'; reason: string };
+export type Route = { kind: 'answer'; node: string; answer: unknown; change?: string } | { kind: 'questions' } | { kind: 'replan'; reason: string };
 
 /**
  * Routes owner text for a goal: with no waiting node it starts a replan with the text as its
- * reason. At `questions` each message answers the next question; after the last one every held
- * answer is posted in question order. At `change` the text is the change. At `approve` the text
- * rejects the plan and is held for the `change` node that follows.
+ * reason. At `questions` the text belongs in the open question group, so nothing is posted. At
+ * `change` the text is the change. At `approve` the text rejects the plan and is the change the
+ * `change` node that follows gets.
  */
-export function route(waiting: Waiting | undefined, held: string[], text: string): Route {
+export function route(waiting: Waiting | undefined, text: string): Route {
 	if (!waiting) return { kind: 'replan', reason: text };
-	const questions = questionsOf(waiting);
-	if (questions.length) {
-		const answers = [...held, text];
-		if (answers.length < questions.length) return { kind: 'hold', held: answers };
-		return { kind: 'answer', node: 'questions', answer: questions.map((q, i) => ({ id: q.id, answer: answers[i] })), held: [] };
-	}
-	if (waiting.node === 'change') return { kind: 'answer', node: 'change', answer: text, held: [] };
-	if (waiting.node === 'approve') return { kind: 'answer', node: 'approve', answer: false, held: [text] };
-	return { kind: 'answer', node: waiting.node, answer: text, held: [] };
+	if (questionsOf(waiting).length) return { kind: 'questions' };
+	if (waiting.node === 'change') return { kind: 'answer', node: 'change', answer: text };
+	if (waiting.node === 'approve') return { kind: 'answer', node: 'approve', answer: false, change: text };
+	return { kind: 'answer', node: waiting.node, answer: text };
 }
 
 /** Key status per vendor: the last 4 of the key stored for that vendor's provider row, or null. */
@@ -285,9 +292,41 @@ export class Engine {
 		return this.request('GET', `/v1/runs${q ? `?${q}` : ''}`);
 	}
 
+	/** What each `waiting_human` run of `runs` waits for (`waitLabel`), by run id; unread runs are left out. */
+	async waits(runs: RunSummary[]): Promise<Record<string, string>> {
+		const waiting = runs.filter((r) => r.state === 'waiting_human');
+		const views = await Promise.all(waiting.map((r) => this.run(r.run_id)));
+		const out: Record<string, string> = {};
+		views.forEach((v, i) => {
+			const label = v.ok ? waitLabel(v.value) : null;
+			if (label) out[waiting[i].run_id] = label;
+		});
+		return out;
+	}
+
 	/** Lists the 30 newest insights, optionally of one goal. */
 	insights(goalId?: string): Promise<EngineResult<Insight[]>> {
 		return this.request('GET', `/v1/insights${goalId ? `?goal_id=${goalId}` : ''}`);
+	}
+
+	/** Stops a run now: nothing more runs or is spent until `retry`. Stopping a finished run is a no-op. */
+	cancel(runId: string): Promise<EngineResult<{ run_id: string }>> {
+		return this.request('POST', `/v1/runs/${runId}/cancel`);
+	}
+
+	/** Continues a stopped run where it stopped, with a fresh time limit. */
+	retry(runId: string): Promise<EngineResult<{ run_id: string }>> {
+		return this.request('POST', `/v1/runs/${runId}/retry`);
+	}
+
+	/** Reads the owner's run time limit: minutes of active work per run. */
+	runLimit(): Promise<EngineResult<{ minutes: number }>> {
+		return this.request('GET', '/v1/settings/run-limit');
+	}
+
+	/** Saves the owner's run time limit, 1 to 120 minutes, for runs started or retried after. */
+	setRunLimit(minutes: number): Promise<EngineResult<{ minutes: number }>> {
+		return this.request('PUT', '/v1/settings/run-limit', { minutes });
 	}
 
 	/** Answers a run's human node. */
@@ -301,10 +340,11 @@ export class Engine {
 	}
 
 	/**
-	 * Sends owner text for a goal: answers the goal's waiting run (see `route`) or starts a replan.
-	 * Returns the run it went to and the answers still held for the next node.
+	 * Sends owner text for a goal (see `route`): answers the goal's waiting run or starts a replan.
+	 * Returns the run it went to, the change text to hand the `change` node next, and whether the
+	 * run waits at questions, where the text fills the question group instead.
 	 */
-	async sendChat(goalId: string, text: string, held: string[] = []): Promise<EngineResult<{ run_id: string | null; held: string[] }>> {
+	async sendChat(goalId: string, text: string): Promise<EngineResult<{ run_id: string | null; change?: string; questions?: boolean }>> {
 		const waitingRuns = await this.runs({ goalId, state: 'waiting_human' });
 		if (!waitingRuns.ok) return waitingRuns;
 		const runId = waitingRuns.value[0]?.run_id;
@@ -314,14 +354,14 @@ export class Engine {
 			if (!view.ok) return view;
 			waiting = view.value.waiting[0];
 		}
-		const r = route(waiting, held, text);
-		if (r.kind === 'hold') return { ok: true, value: { run_id: runId ?? null, held: r.held } };
+		const r = route(waiting, text);
+		if (r.kind === 'questions') return { ok: true, value: { run_id: runId!, questions: true } };
 		if (r.kind === 'replan') {
 			const started = await this.replan(goalId, r.reason);
-			return started.ok ? { ok: true, value: { run_id: started.value.run_id, held: [] } } : started;
+			return started.ok ? { ok: true, value: { run_id: started.value.run_id } } : started;
 		}
 		const answered = await this.answer(runId!, r.node, r.answer);
-		return answered.ok ? { ok: true, value: { run_id: runId!, held: r.held } } : answered;
+		return answered.ok ? { ok: true, value: { run_id: runId!, change: r.change } } : answered;
 	}
 
 	/** Starts a calendar-triage run for unmatched device events (at most 300, one per series). */
