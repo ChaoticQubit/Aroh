@@ -5,6 +5,7 @@
 	import Plus from '@lucide/svelte/icons/plus';
 	import Lock from '@lucide/svelte/icons/lock';
 	import { Button } from '$lib/ui/primitives/button';
+	import { Switch } from '$lib/ui/primitives/switch';
 	import StatusChip from '../StatusChip.svelte';
 	import { getClock } from '$lib/ui/clock';
 	import { formatDay, formatDuration, formatTime } from '$lib/ui/format';
@@ -13,21 +14,31 @@
 
 	/**
 	 * Body of the action edit sheet: move the day and start time, change the duration in 15 minute
-	 * steps, save, or delete after a confirm step. Emits `onsave` with `{ id, start, end }`,
-	 * `ondelete` with the id and `onclose` on cancel. `confirming` opens on the delete confirm.
+	 * steps, toggle Fixed time, save, or delete after a confirm step. Emits `onsave` with
+	 * `{ id, start, end }`, `onlock` with the id and the new Fixed time, `ondelete` with the id and
+	 * `onclose` on cancel. `confirming` opens on the delete confirm.
 	 */
 	let {
 		action,
 		confirming = false,
 		onsave,
+		onlock,
 		ondelete,
 		onclose
-	}: { action: ActionView; confirming?: boolean; onsave?: (edit: ActionEdit) => void; ondelete?: (id: string) => void; onclose?: () => void } = $props();
+	}: {
+		action: ActionView;
+		confirming?: boolean;
+		onsave?: (edit: ActionEdit) => void;
+		onlock?: (id: string, locked: boolean) => void;
+		ondelete?: (id: string) => void;
+		onclose?: () => void;
+	} = $props();
 
 	const { zone } = getClock();
 	const STEP = 15;
 	const MINUTE_MS = 60_000;
 	const titleId = $props.id();
+	let fixed = $derived(action.locked);
 	let start = $derived(Date.parse(action.start));
 	let minutes = $derived(Math.round((Date.parse(action.end) - Date.parse(action.start)) / MINUTE_MS));
 	let asking = $derived(confirming);
@@ -51,7 +62,7 @@
 		<div class="flex items-center gap-2">
 			<span class="size-2.5 shrink-0 rounded-full" style="background: var(--cat-{action.category})" aria-hidden="true"></span>
 			<h2 id={titleId} class="truncate text-lg font-semibold">{action.title}</h2>
-			{#if action.locked}<Lock class="size-4 shrink-0 text-muted" aria-label="Locked" />{/if}
+			{#if fixed}<Lock class="size-4 shrink-0 text-muted" aria-label="Fixed time" />{/if}
 			{#if action.status === 'missed'}<StatusChip tone="missed" label="Missed" />{/if}
 		</div>
 		<p class="truncate text-sm text-muted">{action.goalTitle}</p>
@@ -73,6 +84,17 @@
 			</div>
 		{/each}
 	</dl>
+	<label class="flex min-h-12 cursor-pointer items-center gap-3" for="{titleId}-fixed">
+		<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Fixed time</span><span class="text-xs text-muted">Agents and Busy days never move it.</span></span>
+		<Switch
+			id="{titleId}-fixed"
+			checked={fixed}
+			onCheckedChange={(v) => {
+				fixed = v;
+				onlock?.(action.id, v);
+			}}
+		/>
+	</label>
 	<p class="text-sm text-muted tabular-nums">
 		{formatTime(startIso, zone)} - {formatTime(endIso, zone)}{#if changed}<span class="text-fg"> · was {formatTime(action.start, zone)} - {formatTime(action.end, zone)}</span>{/if}
 	</p>

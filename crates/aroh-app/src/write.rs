@@ -3,10 +3,11 @@
 
 use crate::local::{self, MAX_LOG_CHARS};
 use crate::{invalid, Result};
-use aroh_domain::calendar::{day_rule, local_days};
+use aroh_domain::calendar::{day_rule, local_days, DAY_GROUP};
 use aroh_domain::hlc::Hlc;
+use aroh_domain::recur::{self, DEFAULT_WINDOW_DAYS};
 use aroh_domain::rows::{
-    validate_entry, Action, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, CalendarRule, DayKind, EntrySource, FieldKind, Goal,
+    validate_entry, Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, CalendarRule, DayKind, EntrySource, FieldKind, Goal,
     Preference, Proposal, ProposalStatus, ProviderSetting, Tracker, TrackerEntry,
 };
 use aroh_store::repo;
@@ -274,10 +275,23 @@ pub fn edit_action(conn: &Connection, clock: &mut Hlc, id: &str, span: Option<(D
     Ok(action)
 }
 
+/// The owner's Fixed time switch on action `id`: sets `locked` and keeps the
+/// time as it is. A fixed action is never moved by agents or the Busy-day
+/// sweep (Q53). Output: the stored row; a deleted action is refused.
+pub fn set_locked(conn: &Connection, clock: &mut Hlc, id: &str, locked: bool) -> Result<Action> {
+    let mut action: Action = repo::get(conn, id)?;
+    if action.deleted {
+        return Err(invalid("action was deleted"));
+    }
+    if action.locked != locked {
+        action.locked = locked;
+        repo::put(conn, clock, &mut action)?;
+    }
+    Ok(action)
+}
+
 /// Days ahead a Busy day's action may move to.
 pub const BUSY_MOVE_DAYS: i64 = 14;
-
-const DEFAULT_DAY_GROUP: &str = "All day";
 
 /// What confirming an all-day event's kind did: the rule written, how many of the event's
 /// blocks carry the kind now, the actions moved off a Busy day and the titles of those
@@ -298,16 +312,46 @@ fn busy_days(blocks: &[BusyBlock], zone: Tz) -> BTreeSet<NaiveDate> {
     blocks.iter().filter(|b| b.all_day && b.day_kind == Some(DayKind::Busy)).flat_map(|b| local_days(b.start_at, b.end_at, zone)).collect()
 }
 
-fn move_off(conn: &Connection, clock: &mut Hlc, user_id: &str, days: &BTreeSet<NaiveDate>, zone: Tz) -> Result<(Vec<Action>, Vec<String>)> {
+fn midnight_utc(date: NaiveDate) -> DateTime<Utc> {
+    Utc.from_utc_datetime(&date.and_time(chrono::NaiveTime::MIN))
+}
+
+fn series_ahead(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<(String, (DateTime<Utc>, DateTime<Utc>))>> {
+    assert!(from < to, "the look-ahead is not empty");
+    let mut out = Vec::new();
+    for series in repo::list::<ActionSeries>(conn, &[("user_id", user_id)])? {
+        let stored = repo::occurrences(conn, &series.id)?;
+        let mut at = from;
+        while at < to {
+            out.extend(recur::materialize(&series, at, DEFAULT_WINDOW_DAYS, &stored)?.into_iter().map(|a| (a.id, (a.start_at, a.end_at))));
+            at += chrono::Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
+        }
+    }
+    Ok(out)
+}
+
+/// Keeps planned, unlocked actions of `user_id` off Busy days from `today` on (local days in
+/// `zone`): each moves to the same local time on the next of the following 14 days that is no
+/// Busy day and overlaps no action, timed busy block or coming occurrence of a series. Locked,
+/// done and past actions stay. Opens no transaction. Output: the moved actions and the titles
+/// of those with no free day, which stay where they are.
+pub fn keep_off_busy_days(conn: &Connection, clock: &mut Hlc, user_id: &str, today: NaiveDate, zone: Tz) -> Result<(Vec<Action>, Vec<String>)> {
     let blocks: Vec<BusyBlock> = repo::list(conn, &[("user_id", user_id)])?;
     let blocked = busy_days(&blocks, zone);
-    assert!(days.is_subset(&blocked), "the event's days are Busy days");
+    let day_of = |a: &Action| a.start_at.with_timezone(&zone).date_naive();
     let mut actions: Vec<Action> = repo::list(conn, &[("user_id", user_id)])?;
     actions.sort_by(|a, b| a.start_at.cmp(&b.start_at).then_with(|| a.id.cmp(&b.id)));
+    let stays_off = |a: &Action| a.status == ActionStatus::Planned && !a.locked && day_of(a) >= today && blocked.contains(&day_of(a));
+    let Some(last) = actions.iter().filter(|a| stays_off(a)).map(day_of).max() else {
+        return Ok((Vec::new(), Vec::new()));
+    };
     let mut taken: Vec<(String, (DateTime<Utc>, DateTime<Utc>))> = actions.iter().map(|a| (a.id.clone(), (a.start_at, a.end_at))).collect();
     taken.extend(blocks.iter().filter(|b| !b.all_day).map(|b| (b.id.clone(), (b.start_at, b.end_at))));
+    let horizon = midnight_utc(last + chrono::Duration::days(BUSY_MOVE_DAYS + 3));
+    taken.extend(series_ahead(conn, user_id, midnight_utc(today - chrono::Duration::days(1)), horizon)?);
     let (mut moved, mut stuck) = (Vec::new(), Vec::new());
-    for mut action in actions.into_iter().filter(|a| a.status == ActionStatus::Planned && days.contains(&a.start_at.with_timezone(&zone).date_naive())) {
+    let candidates: Vec<Action> = actions.iter().filter(|a| stays_off(a)).cloned().collect();
+    for mut action in candidates {
         let local = action.start_at.with_timezone(&zone);
         let length = action.end_at - action.start_at;
         let slot = (1..=BUSY_MOVE_DAYS).find_map(|ahead| {
@@ -317,6 +361,7 @@ fn move_off(conn: &Connection, clock: &mut Hlc, user_id: &str, days: &BTreeSet<N
             }
             let start = zone.from_local_datetime(&date.and_time(local.time())).earliest()?.with_timezone(&Utc);
             let span = (start, start + length);
+            assert!(span.1 <= horizon, "the look-ahead covers every day a move may land on");
             (!taken.iter().any(|(id, other)| *id != action.id && overlaps(span, *other))).then_some(span)
         });
         match slot {
@@ -335,10 +380,10 @@ fn move_off(conn: &Connection, clock: &mut Hlc, user_id: &str, days: &BTreeSet<N
 
 /// Confirms the kind of the all-day event behind busy block `block_id` in one transaction:
 /// writes the event's series rule with `kind` (keeping an existing rule's group), sets the
-/// kind on every block of the event, and for `Busy` moves each planned action of its local
-/// days (in `zone`) to the same time on the next day that is no Busy day and has no overlap.
+/// kind on every block of the event, then keeps actions off every Busy day from `today` on
+/// with [`keep_off_busy_days`] (local days in `zone`).
 /// Errors with `Invalid` for a timed or another user's block, `NotFound` for a gone one.
-pub fn set_day_kind(conn: &Connection, clock: &mut Hlc, user_id: &str, block_id: &str, kind: DayKind, zone: Tz) -> Result<DaySet> {
+pub fn set_day_kind(conn: &Connection, clock: &mut Hlc, user_id: &str, block_id: &str, kind: DayKind, today: NaiveDate, zone: Tz) -> Result<DaySet> {
     let block: BusyBlock = repo::get(conn, block_id)?;
     if block.user_id != user_id {
         return Err(invalid("block belongs to another user"));
@@ -347,16 +392,14 @@ pub fn set_day_kind(conn: &Connection, clock: &mut Hlc, user_id: &str, block_id:
         return Err(invalid("only all-day events have a kind"));
     }
     let tx = conn.unchecked_transaction()?;
-    let group = block.group_name.clone().unwrap_or_else(|| DEFAULT_DAY_GROUP.to_string());
+    let group = block.group_name.clone().unwrap_or_else(|| DAY_GROUP.to_string());
     let mut rule = day_rule(user_id, &block.calendar_id, &block.event_id, &block.title, &group, kind);
     if let Some(old) = repo::list::<CalendarRule>(&tx, &[("id", rule.id.as_str())])?.into_iter().next() {
         rule = CalendarRule { day_kind: Some(kind), ..old };
     }
     repo::put(&tx, clock, &mut rule)?;
     let event: Vec<BusyBlock> = repo::list(&tx, &[("user_id", user_id), ("calendar_id", block.calendar_id.as_str()), ("event_id", block.event_id.as_str())])?;
-    let mut days = BTreeSet::new();
     for mut b in event.iter().filter(|b| b.all_day).cloned() {
-        days.extend(local_days(b.start_at, b.end_at, zone));
         if b.day_kind != Some(kind) {
             b.day_kind = Some(kind);
             repo::put(&tx, clock, &mut b)?;
@@ -364,7 +407,7 @@ pub fn set_day_kind(conn: &Connection, clock: &mut Hlc, user_id: &str, block_id:
     }
     let blocks = event.iter().filter(|b| b.all_day).count();
     assert!(blocks >= 1, "the chosen block is one of the event's blocks");
-    let (moved, stuck) = if kind == DayKind::Busy { move_off(&tx, clock, user_id, &days, zone)? } else { (Vec::new(), Vec::new()) };
+    let (moved, stuck) = keep_off_busy_days(&tx, clock, user_id, today, zone)?;
     tx.commit()?;
     Ok(DaySet { rule, blocks, moved, stuck })
 }

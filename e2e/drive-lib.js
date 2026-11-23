@@ -66,7 +66,20 @@ window.AROH_LIB = (() => {
     button('Send').click();
     await sleep(1500);
   };
+  const useLocalStack = async () => {
+    const local = { supabase_url: cfg.supabaseUrl, supabase_anon_key: cfg.anonKey, server_url: cfg.engineUrl };
+    for (const [name, value] of Object.entries(local)) if (value) await invoke('app_set_setting', { name, value });
+  };
+  const skipSetup = async () => {
+    for (let step = 0; step < 3 && text().includes('Skip for now'); step++) {
+      button('Skip for now').click();
+      await sleep(500);
+    }
+  };
   const started = async () => {
+    await useLocalStack();
+    await until('app or setup rendered', () => text().includes('Skip for now') || (text().includes('Calendar') && text().includes('Inbox')), 120000);
+    await skipSetup();
     await until('app rendered', () => text().includes('Calendar') && text().includes('Inbox'), 120000);
     await sleep(3000);
     await invoke('app_dev_mark', { mark: 'start' });
@@ -104,6 +117,7 @@ window.AROH_LIB = (() => {
     await until('question cards', () => text().includes(goal.asks), 120000);
     if (shots.questions) await mark(shots.questions);
     for (const answer of goal.answers) await say(answer);
+    button('Send answers').click();
     await until('plan', () => text().includes('Approve plan') && text().includes(goal.plan), planMs);
     if (shots.plan) await mark(shots.plan);
     button('Approve plan').click();
@@ -115,5 +129,5 @@ window.AROH_LIB = (() => {
     await invoke('app_dev_mark', { mark: `fail ${String(e.message ?? e).replace(/[^\x20-\x7e]/g, '?').slice(0, 70)}` }).catch(() => {});
     await mark('shot 99-failure');
   };
-  return { cfg, invoke, sleep, mark, text, until, go, field, type, button, show, openTomorrow, say, started, signUp, saveKey, planGoal, fail };
+  return { cfg, invoke, sleep, mark, text, until, go, field, type, button, show, openTomorrow, say, started, signUp, saveKey, planGoal, fail, useLocalStack, skipSetup };
 })();

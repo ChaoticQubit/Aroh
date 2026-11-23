@@ -9,7 +9,7 @@ use troupekit_agent::Limits;
 use troupekit_core::error::CoreError;
 use troupekit_core::ids::RunId;
 use troupekit_core::store::CheckpointStore;
-use troupekit_graph::{GraphIo, GraphOutcome, GraphRun};
+use troupekit_graph::{GraphIo, GraphOutcome, GraphRun, Stop};
 
 const DEFAULT_LEASE_MS: i64 = 300_000;
 const STORE_RETRY_MS: i64 = 1_000;
@@ -121,8 +121,9 @@ impl Runner {
         Ok(())
     }
 
-    /// Processes one claimed `lease`: load, step, save when the step moved,
-    /// then queue the outcome. A save conflict returns `Lost`; store errors
+    /// Processes one claimed `lease`: load, step (timed as active work, or
+    /// stopped instead once over its time limit), save when it moved, then
+    /// queue the outcome. A save conflict returns `Lost`; store errors
     /// reschedule the job after one second and return the error.
     pub async fn process(&self, lease: &Lease) -> Result<Processed, HostError> {
         let cp = match self.checkpoints.latest(lease.run_id).await {
@@ -141,7 +142,16 @@ impl Runner {
             }
         };
         let before = run.steps();
-        let outcome = run.step(self.io.as_ref()).await;
+        let outcome = if run.over_time() {
+            let limit_ms = run.time_limit_ms().expect("only a limited run is over time");
+            let _finished = run.stop(Stop::TimeLimit { limit_ms });
+            run.step(self.io.as_ref()).await
+        } else {
+            let started = self.now();
+            let outcome = run.step(self.io.as_ref()).await;
+            run.add_active_ms(u64::try_from(self.now() - started).unwrap_or(0));
+            outcome
+        };
         let moved = run.steps() != before;
         if moved {
             match self.checkpoints.save(run.checkpoint()).await {

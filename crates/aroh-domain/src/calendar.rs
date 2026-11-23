@@ -19,7 +19,8 @@ pub const MAX_RRULE: usize = 500;
 
 /// One occurrence of a device calendar event as the app reads it from EventKit.
 /// `event_id` is shared by every occurrence of a recurring event; `rrule` is its
-/// RFC 5545 recurrence text, or `None` for a one-off event.
+/// RFC 5545 recurrence text, or `None` for a one-off event. `holiday` marks events of a
+/// subscribed (holiday) or birthday calendar; it reads as false when missing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeviceEvent {
@@ -31,6 +32,8 @@ pub struct DeviceEvent {
     pub end_at: DateTime<Utc>,
     pub all_day: bool,
     pub rrule: Option<String>,
+    #[serde(default)]
+    pub holiday: bool,
 }
 
 fn check_len(field: &'static str, text: &str, min: usize, max: usize) -> Result<()> {
@@ -135,6 +138,9 @@ pub fn rules_for(user_id: &str, group: &str, decision: RuleDecision, members: &[
     out
 }
 
+/// Group of the rules all-day events get from a chip tap or from triage.
+pub const DAY_GROUP: &str = "All day";
+
 /// Most local days one all-day block spans; longer blocks are cut.
 pub const MAX_ALL_DAY_DAYS: usize = 62;
 
@@ -164,8 +170,8 @@ pub fn day_rule(user_id: &str, calendar_id: &str, event_id: &str, title: &str, g
 
 /// The busy block `event` becomes under `rule`: id derived from the user, the calendar, the
 /// event and its start, so re-imports collapse; title cut to 500 characters. A timed event
-/// needs a keep rule; an all-day event may have none and takes its rule's day kind.
-/// Unstamped: the store stamps it on write.
+/// needs a keep rule; an all-day event may have none and takes its rule's day kind, or
+/// Reminder when it comes from a holiday or birthday calendar. Unstamped.
 pub fn busy_block(user_id: &str, event: &DeviceEvent, rule: Option<&CalendarRule>) -> BusyBlock {
     assert!(event.all_day || rule.is_some_and(|r| r.decision == RuleDecision::Keep), "only kept or all-day events become busy time");
     let start_ms = event.start_at.timestamp_millis();
@@ -180,7 +186,7 @@ pub fn busy_block(user_id: &str, event: &DeviceEvent, rule: Option<&CalendarRule
         end_at: event.end_at,
         all_day: event.all_day,
         group_name: rule.map(|r| r.group_name.clone()),
-        day_kind: if event.all_day { rule.and_then(|r| r.day_kind) } else { None },
+        day_kind: if event.all_day { rule.and_then(|r| r.day_kind).or(event.holiday.then_some(DayKind::Reminder)) } else { None },
         updated_at: String::new(),
         deleted: false,
     }
@@ -205,6 +211,7 @@ mod tests {
             end_at: start + chrono::Duration::minutes(30),
             all_day: false,
             rrule: None,
+            holiday: false,
         }
     }
 
@@ -301,6 +308,30 @@ mod tests {
         assert_eq!(busy_block(USER, &trip, None).group_name, None);
         let timed = busy_block(USER, &event("home", "trip-1", "Trip", 9), Some(&rule));
         assert_eq!(timed.day_kind, None, "timed events never carry a day kind");
+    }
+
+    #[test]
+    fn holiday_all_day_events_default_to_reminder_until_a_rule_says_otherwise() {
+        let mut feast = event("holidays", "xmas", "Christmas", 0);
+        (feast.all_day, feast.holiday) = (true, true);
+        assert_eq!(busy_block(USER, &feast, None).day_kind, Some(DayKind::Reminder));
+        let busy = day_rule(USER, "holidays", "xmas", "Christmas", DAY_GROUP, DayKind::Busy);
+        assert_eq!(busy_block(USER, &feast, Some(&busy)).day_kind, Some(DayKind::Busy), "the owner's rule wins");
+        let mut plain = feast.clone();
+        plain.holiday = false;
+        assert_eq!(busy_block(USER, &plain, None).day_kind, None);
+        let mut timed = event("holidays", "party", "Party", 9);
+        timed.holiday = true;
+        let keep = &rules_for(USER, "Social", RuleDecision::Keep, &[source("holidays", "party", "Party", false)])[0];
+        assert_eq!(busy_block(USER, &timed, Some(keep)).day_kind, None, "timed holiday events are unchanged");
+    }
+
+    #[test]
+    fn a_missing_holiday_field_reads_as_false() {
+        let json = serde_json::json!({"calendar_id": "c", "calendar": "C", "event_id": "e", "title": "t",
+            "start_at": "2026-11-23T09:00:00Z", "end_at": "2026-11-23T10:00:00Z", "all_day": false, "rrule": null});
+        let e: DeviceEvent = serde_json::from_value(json).unwrap();
+        assert!(!e.holiday);
     }
 
     #[test]

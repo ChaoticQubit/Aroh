@@ -1,5 +1,6 @@
 import type { CategoryView, CoachGroup, CoachView } from '$lib/ui/screens/types';
-import type { Persona as PersonaRow } from './client';
+import type { Persona as PersonaRow, Snapshot } from './client';
+import { engine, type EngineResult } from './engine';
 
 /** The kind of goal a team serves, as the engine lists it on a persona. */
 export type TeamKind = 'general' | 'fitness' | 'learning' | 'music' | 'finance' | 'habits';
@@ -41,6 +42,24 @@ export function coachesOn(views: PersonaView[], rows: PersonaRow[], runs: { pers
 	const known = views.filter((v) => names.has(v.name));
 	const unknown = [...names].filter((n) => !views.some((v) => v.name === n));
 	return [...known, ...unknown.map((name): CoachView => ({ name, display_name: name, role: '', instructions: '', guardrails: [], locked: [], source: 'builtin' }))];
+}
+
+/** The engine reads `loadCoaches` makes, injectable for tests. */
+export type CoachDeps = {
+	personas: () => Promise<EngineResult<PersonaView[]>>;
+	runs: (filter: { goalId?: string }) => Promise<EngineResult<{ personas?: string[] }[]>>;
+};
+
+/**
+ * The persona library and, for goal `goalId`, the coaches that worked on it (`coachesOn` over the
+ * snapshot's persona rows and the goal's runs). Offline lists the rows only, with the engine's
+ * message as `status`; no goal gives no coaches.
+ */
+export async function loadCoaches(s: Snapshot, goalId: string | null, deps: CoachDeps = engine): Promise<{ views: PersonaView[]; coaches: CoachView[]; status: string | null }> {
+	const [library, runs] = await Promise.all([deps.personas(), goalId ? deps.runs({ goalId }) : null]);
+	const views = library.ok ? library.value : [];
+	const coaches = goalId ? coachesOn(views, s.personas, runs?.ok ? runs.value : [], goalId) : [];
+	return { views, coaches, status: library.ok ? null : library.message };
 }
 
 /**

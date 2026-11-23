@@ -1,5 +1,5 @@
 use crate::auth::{Service, UserId, Verifier};
-use crate::engine::{Answer, Engine, KeyTest, RunSummary, RunView, SetKey, StartGoal, StartReplan, Started, SubmitLog, TickSummary, Waiting};
+use crate::engine::{Answer, Engine, KeyTest, RunLimit, RunSummary, RunView, SetKey, StartGoal, StartReplan, Started, SubmitLog, TickSummary, Waiting};
 use crate::error::{ErrorBody, ErrorDetail, ServerError};
 use crate::insights::{self, Insight};
 use crate::personas::{EditPersona, Origin, PersonaView};
@@ -214,6 +214,36 @@ async fn answer(
     Ok((StatusCode::ACCEPTED, Json(Accepted { run_id })))
 }
 
+#[utoipa::path(post, path = "/v1/runs/{run_id}/cancel", tag = "runs", security(("bearer" = [])),
+    params(("run_id" = Uuid, Path)),
+    responses((status = 202, description = "Stopped, or already finished", body = Accepted), (status = 404, body = ErrorBody)))]
+async fn cancel_run(State(s): State<AppState>, UserId(user): UserId, Path(run_id): Path<Uuid>) -> Result<(StatusCode, Json<Accepted>), ServerError> {
+    s.engine.cancel(user, run_id).await?;
+    Ok((StatusCode::ACCEPTED, Json(Accepted { run_id })))
+}
+
+#[utoipa::path(post, path = "/v1/runs/{run_id}/retry", tag = "runs", security(("bearer" = [])),
+    params(("run_id" = Uuid, Path)),
+    responses((status = 202, body = Accepted), (status = 404, body = ErrorBody), (status = 409, description = "the run is not stopped", body = ErrorBody)))]
+async fn retry_run(State(s): State<AppState>, UserId(user): UserId, Path(run_id): Path<Uuid>) -> Result<(StatusCode, Json<Accepted>), ServerError> {
+    s.engine.retry(user, run_id).await?;
+    Ok((StatusCode::ACCEPTED, Json(Accepted { run_id })))
+}
+
+#[utoipa::path(get, path = "/v1/settings/run-limit", tag = "runs", security(("bearer" = [])),
+    responses((status = 200, body = RunLimit)))]
+async fn get_run_limit(State(s): State<AppState>, UserId(user): UserId) -> Result<Json<RunLimit>, ServerError> {
+    Ok(Json(s.engine.run_limit(user).await?))
+}
+
+#[utoipa::path(put, path = "/v1/settings/run-limit", tag = "runs", security(("bearer" = [])),
+    request_body = RunLimit,
+    responses((status = 200, body = RunLimit), (status = 400, description = "minutes outside 1 to 120", body = ErrorBody)))]
+async fn set_run_limit(State(s): State<AppState>, UserId(user): UserId, json: Result<Json<RunLimit>, JsonRejection>) -> Result<Json<RunLimit>, ServerError> {
+    let req = body(json, true)?;
+    Ok(Json(s.engine.set_run_limit(user, req).await?))
+}
+
 #[utoipa::path(get, path = "/v1/insights", tag = "insights", security(("bearer" = [])),
     params(InsightsQuery),
     responses((status = 200, description = "What the engine noticed and did without being asked, newest first", body = [Insight])))]
@@ -381,10 +411,10 @@ impl Modify for Bearer {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
-    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, start_triage, list_runs, get_run, answer, tick, enqueue_hook, register_device, unregister_device, push_tick,
+    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, start_triage, list_runs, get_run, answer, cancel_run, retry_run, get_run_limit, set_run_limit, tick, enqueue_hook, register_device, unregister_device, push_tick,
         list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review, set_timezone,
         list_personas, copy_persona, edit_persona),
-    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
+    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, RunLimit, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
         SavePlugin, PluginView, Insight, ReviewSchedule, SetReview, SetTimezone, TimezoneSet,
         EditPersona, PersonaView, Origin, Kind)),
     modifiers(&Bearer)
@@ -414,6 +444,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/runs", get(list_runs))
         .route("/v1/runs/{run_id}", get(get_run))
         .route("/v1/runs/{run_id}/answers", post(answer))
+        .route("/v1/runs/{run_id}/cancel", post(cancel_run))
+        .route("/v1/runs/{run_id}/retry", post(retry_run))
+        .route("/v1/settings/run-limit", get(get_run_limit).put(set_run_limit))
         .route("/v1/tick", post(tick))
         .route("/v1/hooks/enqueue", post(enqueue_hook))
         .route("/v1/goals/{goal_id}/plugins", get(list_plugins).put(save_plugin))

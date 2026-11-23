@@ -398,6 +398,62 @@ async fn three_similar_edits_produce_a_preference_proposal() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs AROH_TEST_PG"]
+async fn planning_sees_named_places_with_links_and_never_coordinates() {
+    use aroh_domain::rows::{ActionSeries, Place, PlaceLink, PlaceSource};
+    let w = world(json!(null)).await;
+    let goal = w.goal(Autonomy::Ask).await;
+    let workout = w.action(goal, "2026-11-27T09:00:00Z").await;
+    *w.analyst.lock().unwrap() = move_reply(&workout.id);
+    let mut series = ActionSeries {
+        id: Uuid::now_v7().to_string(),
+        user_id: w.user.to_string(),
+        goal_id: goal.to_string(),
+        title: "Strength session".into(),
+        notes: None,
+        rrule: "FREQ=WEEKLY;BYDAY=MO".into(),
+        dtstart_local: "2026-11-23T18:00:00".into(),
+        timezone: "Europe/Berlin".into(),
+        duration_minutes: 60,
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&w.pool, &w.hlc, w.user, &mut series).await.unwrap();
+    let mut place = Place {
+        id: Uuid::now_v7().to_string(),
+        user_id: w.user.to_string(),
+        name: "Iron Works Gym".into(),
+        address: Some("1200 Market St".into()),
+        lat_e6: 37_771_234,
+        lon_e6: -122_415_678,
+        radius_m: 150,
+        source: PlaceSource::Prompt,
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&w.pool, &w.hlc, w.user, &mut place).await.unwrap();
+    for series_id in [None, Some(series.id.clone())] {
+        let mut link = PlaceLink { id: Uuid::now_v7().to_string(), user_id: w.user.to_string(), place_id: place.id.clone(), goal_id: goal.to_string(), series_id, updated_at: String::new(), deleted: false };
+        put_row(&w.pool, &w.hlc, w.user, &mut link).await.unwrap();
+    }
+    let mut gone = Place { id: Uuid::now_v7().to_string(), name: "Old pool".into(), deleted: true, ..place.clone() };
+    put_row(&w.pool, &w.hlc, w.user, &mut gone).await.unwrap();
+
+    w.engine
+        .start_replan(w.user, goal, StartReplan { reason: "Busy week.".into(), timezone: "Europe/Berlin".into() })
+        .await
+        .unwrap();
+    w.tick().await;
+    let analyst = w.seen.lock().unwrap().iter().rev().find(|b| b.contains("You are Adaptation analyst")).cloned().unwrap();
+    assert!(analyst.contains("places") && analyst.contains("Iron Works Gym"), "named places reach planning");
+    assert!(analyst.contains("Six pack by Feb 1") && analyst.contains("Strength session"), "with linked goals and routines");
+    assert!(!analyst.contains("Old pool"), "deleted places stay out");
+    for secret in ["37771234", "122415678", "37.771", "122.415", "1200 Market"] {
+        assert!(!analyst.contains(secret), "no coordinates or address reach the model: {secret}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
 async fn timezone_moves_every_review_of_the_owner() {
     let w = world(json!(null)).await;
     let first = w.goal(Autonomy::Ask).await;

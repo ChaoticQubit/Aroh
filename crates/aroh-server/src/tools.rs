@@ -299,15 +299,14 @@ pub struct Change {
     pub after: Option<Span>,
 }
 
-/// A recorded proposal: its row id, summary, size, whether it touches a
-/// locked action, and its changes. The `proposal_record` state key of the
-/// replan workflow, read by the autonomy gate and the approval card.
+/// A recorded proposal: its row id, summary, size and its changes, none on a
+/// locked action. The `proposal_record` state key of the replan workflow,
+/// read by the autonomy gate and the approval card.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProposalRecord {
     pub proposal_id: String,
     pub summary: String,
     pub size: String,
-    pub touches_locked: bool,
     pub changes: Vec<Change>,
 }
 
@@ -331,6 +330,16 @@ async fn goal_action(env: &ToolEnv, id: Option<&str>) -> Result<Action, ToolErro
     }
 }
 
+/// The goal action a move, resize or delete names, refused with `InvalidArgs`
+/// when it is locked: a fixed action is never changed by an agent (Q53).
+async fn flexible_action(env: &ToolEnv, id: Option<&str>) -> Result<Action, ToolError> {
+    let a = goal_action(env, id).await?;
+    if a.locked {
+        return Err(ToolError::InvalidArgs(format!("`{}` is a fixed action: never move, resize or delete it", a.title)));
+    }
+    Ok(a)
+}
+
 fn span_of(a: &Action) -> Span {
     Span { start_at: a.start_at, end_at: a.end_at }
 }
@@ -341,7 +350,6 @@ async fn record_proposal(env: &ToolEnv, args: RecordArgs, ctx: &ToolContext) -> 
     let size: ProposalSize = serde_json::from_value(json!(args.proposal.size))
         .map_err(|_| ToolError::InvalidArgs("size must be small or big".into()))?;
     let mut changes = Vec::with_capacity(args.proposal.changes.len());
-    let mut touches_locked = false;
     for c in &args.proposal.changes {
         let after = || -> Result<Span, ToolError> {
             let (Some(start), Some(minutes)) = (c.start.as_deref(), c.minutes) else {
@@ -355,13 +363,11 @@ async fn record_proposal(env: &ToolEnv, args: RecordArgs, ctx: &ToolContext) -> 
         };
         let (action_id, before, after) = match c.op.as_str() {
             "move" | "resize" => {
-                let a = goal_action(env, c.action_id.as_deref()).await?;
-                touches_locked |= a.locked;
+                let a = flexible_action(env, c.action_id.as_deref()).await?;
                 (Some(a.id.clone()), Some(span_of(&a)), Some(after()?))
             }
             "delete" => {
-                let a = goal_action(env, c.action_id.as_deref()).await?;
-                touches_locked |= a.locked;
+                let a = flexible_action(env, c.action_id.as_deref()).await?;
                 (Some(a.id.clone()), Some(span_of(&a)), None)
             }
             "create" => (None, None, Some(after()?)),
@@ -370,7 +376,7 @@ async fn record_proposal(env: &ToolEnv, args: RecordArgs, ctx: &ToolContext) -> 
         changes.push(Change { op: c.op.clone(), action_id, title: c.title.clone(), before, after });
     }
     if changes.is_empty() {
-        let record = ProposalRecord { proposal_id: String::new(), summary: args.proposal.summary, size: args.proposal.size, touches_locked, changes };
+        let record = ProposalRecord { proposal_id: String::new(), summary: args.proposal.summary, size: args.proposal.size, changes };
         return Ok(serde_json::to_value(record).expect("records serialize"));
     }
     let mut row = Proposal {
@@ -392,7 +398,6 @@ async fn record_proposal(env: &ToolEnv, args: RecordArgs, ctx: &ToolContext) -> 
         proposal_id: row.id,
         summary: args.proposal.summary,
         size: args.proposal.size,
-        touches_locked,
         changes,
     };
     Ok(serde_json::to_value(record).expect("records serialize"))

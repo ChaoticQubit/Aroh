@@ -13,7 +13,8 @@ use crate::db;
 use aroh_domain::calendar::local_days;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{
-    Action, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, DayKind, Goal, GoalStatus, Preference, ProviderSetting, SearchSetting, Tracker,
+    Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, DayKind, Goal, GoalStatus, Place, PlaceLink, Preference,
+    ProviderSetting, SearchSetting, Tracker,
 };
 use aroh_domain::time::MISSED_GRACE_MIN;
 use crate::triggers;
@@ -28,7 +29,7 @@ use troupekit_agent::{Limits, PeriodLimit};
 use troupekit_core::ids::RunId;
 use troupekit_core::secret::Secret;
 use troupekit_core::store::CheckpointStore;
-use troupekit_graph::{Ask, GraphRun, Workflow};
+use troupekit_graph::{Ask, GraphRun, Stop, Workflow};
 use troupekit_host::{JobQueue, Lease, Processed, Runner, TickOptions, TickReport, WorkOptions};
 use troupekit_providers::CompletionRequest;
 use utoipa::ToSchema;
@@ -93,14 +94,39 @@ pub struct SetKey {
 }
 
 /// Body of `POST /v1/runs/{run_id}/answers`: the human node and its answer.
-/// Approval nodes take a bool, `questions` takes `[{id, answer}]`, and
-/// `change` takes a string.
+/// Approval nodes take a bool, `questions` takes `[{id, answer}]` with
+/// `answer` a string, or null for a skipped question, and `change` a string.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Answer {
     pub node: String,
     #[schema(value_type = Object)]
     pub answer: Value,
+}
+
+/// The owner's run time limit: minutes of active work a run may take
+/// before it stops, 1 to 120; time waiting for the owner never counts.
+/// Five minutes until the owner sets one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunLimit {
+    pub minutes: u32,
+}
+
+/// Run time limit for owners who never set one, in minutes.
+pub const DEFAULT_RUN_MINUTES: u32 = 5;
+
+/// Most minutes of active work an owner may give one run.
+pub const MAX_RUN_MINUTES: u32 = 120;
+
+/// Tries a stop makes when another worker saves the run at the same time.
+const STOP_TRIES: usize = 3;
+
+impl RunLimit {
+    /// The limit in milliseconds of active work, as a run carries it.
+    fn ms(self) -> u64 {
+        u64::from(self.minutes) * 60_000
+    }
 }
 
 /// What a start returns: the goal (none for a log) and the new run.
@@ -182,11 +208,32 @@ impl From<TickReport> for TickSummary {
     }
 }
 
-/// The plan input of the owner's device calendar over `[from, until)` in `tz`: `busy` holds
-/// timed blocks plus one full local day per Busy all-day day, in start order; the second list
-/// holds the local `YYYY-MM-DD` dates of Away days. Reminders and unchosen all-day events
-/// change nothing. Deleted blocks are skipped.
-pub fn day_inputs(blocks: &[BusyBlock], tz: Tz, from: DateTime<Utc>, until: DateTime<Utc>) -> (Vec<Value>, Vec<String>) {
+/// A `questions` answer with its skips (`answer: null`) written as the text
+/// `skipped`, for runs whose workflow snapshot predates skippable questions.
+/// Returns None when nothing was skipped, so the original refusal stands.
+fn legacy_skips(answer: &Answer) -> Option<Value> {
+    let items = answer.answer.as_array().filter(|_| answer.node == "questions")?;
+    if !items.iter().any(|a| a.get("answer").is_some_and(Value::is_null)) {
+        return None;
+    }
+    let mapped = items
+        .iter()
+        .map(|a| {
+            let mut a = a.clone();
+            if let Some(slot) = a.get_mut("answer").filter(|v| v.is_null()) {
+                *slot = Value::String("skipped".into());
+            }
+            a
+        })
+        .collect();
+    Some(Value::Array(mapped))
+}
+
+/// The plan input over `[from, until)` in `tz`: `busy` holds timed blocks, one full local day
+/// per Busy all-day day and every live planned locked action of `fixed` (Q53), in start order;
+/// the second list holds the local `YYYY-MM-DD` dates of Away days. Reminders, unchosen
+/// all-day events and deleted rows change nothing.
+pub fn day_inputs(blocks: &[BusyBlock], fixed: &[Action], tz: Tz, from: DateTime<Utc>, until: DateTime<Utc>) -> (Vec<Value>, Vec<String>) {
     let mut busy: Vec<(String, Value)> = Vec::new();
     let mut away = std::collections::BTreeSet::new();
     let today = from.with_timezone(&tz).date_naive();
@@ -208,6 +255,10 @@ pub fn day_inputs(blocks: &[BusyBlock], tz: Tz, from: DateTime<Utc>, until: Date
             Some(DayKind::Away) => away.extend(days.map(|d| d.to_string())),
             Some(DayKind::Reminder) | None => {}
         }
+    }
+    for a in fixed.iter().filter(|a| a.locked && !a.deleted && a.status == ActionStatus::Planned && a.end_at > from && a.start_at < until) {
+        let start = local_text(a.start_at.with_timezone(&tz).naive_local());
+        busy.push((start.clone(), json!({"title": a.title, "start": start, "minutes": (a.end_at - a.start_at).num_minutes().clamp(1, 24 * 60)})));
     }
     busy.sort_by(|a, b| a.0.cmp(&b.0));
     (busy.into_iter().map(|(_, v)| v).collect(), away.into_iter().collect())
@@ -316,6 +367,30 @@ impl Engine {
         Ok(prefs.into_iter().take(PROFILE_LIMIT).map(|p| p.fact).collect())
     }
 
+    /// The owner's named places (Q56) as planning reads them in state `places`: each name
+    /// with the titles of its linked goals and routines, never coordinates or addresses.
+    /// Raw visits never reach the server. Returns one entry per live place, in id order.
+    pub(crate) async fn places(&self, user: Uuid) -> Result<Vec<Value>, ServerError> {
+        let places: Vec<Place> = list_rows::<Place>(&self.deps.pool, user, &[], false).await?;
+        if places.is_empty() {
+            return Ok(Vec::new());
+        }
+        let links: Vec<PlaceLink> = list_rows::<PlaceLink>(&self.deps.pool, user, &[], false).await?;
+        let goals: Vec<Goal> = list_rows::<Goal>(&self.deps.pool, user, &[], false).await?;
+        let series: Vec<ActionSeries> = list_rows::<ActionSeries>(&self.deps.pool, user, &[], false).await?;
+        Ok(places
+            .iter()
+            .map(|p| {
+                let mine: Vec<&PlaceLink> = links.iter().filter(|l| l.place_id == p.id).collect();
+                let mut goal_titles: Vec<&str> = mine.iter().filter_map(|l| goals.iter().find(|g| g.id == l.goal_id)).map(|g| g.title.as_str()).collect();
+                goal_titles.sort_unstable();
+                goal_titles.dedup();
+                let routines: Vec<&str> = mine.iter().filter_map(|l| l.series_id.as_deref()).filter_map(|s| series.iter().find(|x| x.id == s)).map(|s| s.title.as_str()).collect();
+                json!({"name": p.name, "goals": goal_titles, "routines": routines})
+            })
+            .collect())
+    }
+
     async fn limits(&self, user: Uuid, goal: Option<Uuid>) -> Result<Limits, ServerError> {
         let budgets = list_rows::<Budget>(&self.deps.pool, user, &[], false).await?;
         let goal_text = goal.map(|g| g.to_string());
@@ -350,7 +425,7 @@ impl Engine {
         let events = Arc::new(EventBuffer::default());
         let io = RunIo::build(self.deps.clone(), user, goal, None, &personas, events.clone()).await?;
         let limits = self.limits(user, goal).await?;
-        let run = GraphRun::new(wf, input, limits, &io).await?;
+        let run = GraphRun::new(wf, input, limits, &io).await?.with_time_limit(self.run_limit(user).await?.ms());
         let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name, personas };
         insert_run(&self.deps.pool, &row).await?;
         let runner = self.runner(events, io);
@@ -398,7 +473,8 @@ impl Engine {
     async fn busy(&self, user: Uuid, tz: Tz, from: DateTime<Utc>) -> Result<(Vec<Value>, Vec<String>), ServerError> {
         let until = from + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
         let blocks: Vec<BusyBlock> = list_rows::<BusyBlock>(&self.deps.pool, user, &[], false).await?;
-        Ok(day_inputs(&blocks, tz, from, until))
+        let actions: Vec<Action> = list_rows::<Action>(&self.deps.pool, user, &[], false).await?;
+        Ok(day_inputs(&blocks, &actions, tz, from, until))
     }
 
     fn goal_input(goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Value {
@@ -447,6 +523,7 @@ impl Engine {
         input.insert("goal".into(), Self::goal_input(&goal, tz, now));
         input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
         input.insert("profile".into(), json!(self.profile(user).await?));
+        input.insert("places".into(), json!(self.places(user).await?));
         let (busy, away_days) = self.busy(user, tz, now).await?;
         input.insert("busy".into(), json!(busy));
         input.insert("away_days".into(), json!(away_days));
@@ -493,6 +570,7 @@ impl Engine {
         input.insert("reason".into(), json!(reason));
         input.insert("autonomy".into(), serde_json::to_value(goal.autonomy).expect("autonomy serializes"));
         input.insert("profile".into(), json!(self.profile(user).await?));
+        input.insert("places".into(), json!(self.places(user).await?));
         let run = self.start(user, Some(goal_id), REPLAN, input).await?;
         triggers::claim_status_events(&self.deps.pool, user, goal_id, run, now).await?;
         Ok(run)
@@ -545,7 +623,69 @@ impl Engine {
         let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
         let cp = store.latest(row.id).await?.ok_or_else(|| ServerError::NotFound(format!("run {run_id}")))?;
         let mut run = GraphRun::from_checkpoint(&cp)?;
-        run.resume(&answer.node, answer.answer)?;
+        if let Err(e) = run.resume(&answer.node, answer.answer.clone()) {
+            let Some(legacy) = legacy_skips(&answer) else { return Err(e.into()) };
+            run.resume(&answer.node, legacy)?;
+        }
+        store.save(run.checkpoint()).await?;
+        self.queue.enqueue(row.id, self.deps.clock.now_ms()).await?;
+        Ok(())
+    }
+
+    /// Reads `user`'s run time limit, the default when none is stored.
+    /// Returns the limit.
+    /// Errors only when the database does.
+    pub async fn run_limit(&self, user: Uuid) -> Result<RunLimit, ServerError> {
+        let minutes: Option<i32> = db::query_scalar("select minutes from public.run_limits where user_id = $1").bind(user).fetch_optional(&self.deps.pool).await?;
+        Ok(RunLimit { minutes: minutes.and_then(|m| u32::try_from(m).ok()).unwrap_or(DEFAULT_RUN_MINUTES) })
+    }
+
+    /// Stores `user`'s run time limit for runs started or retried after.
+    /// Returns the stored limit, or `BadRequest` outside 1 to 120 minutes.
+    pub async fn set_run_limit(&self, user: Uuid, limit: RunLimit) -> Result<RunLimit, ServerError> {
+        if !(1..=MAX_RUN_MINUTES).contains(&limit.minutes) {
+            return Err(ServerError::BadRequest(format!("minutes: 1 to {MAX_RUN_MINUTES}")));
+        }
+        db::query(
+            "insert into public.run_limits (user_id, minutes, updated_at) values ($1, $2, now())
+             on conflict (user_id) do update set minutes = excluded.minutes, updated_at = excluded.updated_at",
+        )
+        .bind(user)
+        .bind(i32::try_from(limit.minutes).expect("at most 120"))
+        .execute(&self.deps.pool)
+        .await?;
+        Ok(limit)
+    }
+
+    /// Stops `user`'s run `run_id` now: it fails as cancelled and calls no
+    /// model until retried. A finished run is left as it is, so stopping
+    /// twice is fine. Returns `NotFound` for another user's run.
+    pub async fn cancel(&self, user: Uuid, run_id: Uuid) -> Result<(), ServerError> {
+        let row = run_row_for(&self.deps.pool, user, RunId(run_id)).await?;
+        let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
+        for _ in 0..STOP_TRIES {
+            let cp = store.latest(row.id).await?.ok_or_else(|| ServerError::NotFound(format!("run {run_id}")))?;
+            let mut run = GraphRun::from_checkpoint(&cp)?;
+            if run.stop(Stop::Cancelled).is_err() {
+                return Ok(());
+            }
+            match store.save(run.checkpoint()).await {
+                Err(troupekit_core::error::CoreError::Conflict { .. }) => continue,
+                saved => return Ok(saved?),
+            }
+        }
+        Err(ServerError::Conflict("the run kept moving; try again".into()))
+    }
+
+    /// Continues `user`'s stopped run `run_id` where it stopped, with the
+    /// user's current time limit and no active time used, and queues it.
+    /// Returns `Conflict` for a run that is not stopped.
+    pub async fn retry(&self, user: Uuid, run_id: Uuid) -> Result<(), ServerError> {
+        let row = run_row_for(&self.deps.pool, user, RunId(run_id)).await?;
+        let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
+        let cp = store.latest(row.id).await?.ok_or_else(|| ServerError::NotFound(format!("run {run_id}")))?;
+        let mut run = GraphRun::from_checkpoint(&cp)?;
+        run.retry(Some(self.run_limit(user).await?.ms()))?;
         store.save(run.checkpoint()).await?;
         self.queue.enqueue(row.id, self.deps.clock.now_ms()).await?;
         Ok(())
@@ -579,11 +719,15 @@ impl Engine {
             .into_iter()
             .map(|e| serde_json::to_value(e).expect("events serialize"))
             .collect();
+        let mut status = serde_json::to_value(run.status()).expect("statuses serialize");
+        if let Some(stop) = run.stopped() {
+            status["reason"] = serde_json::to_value(stop).expect("stops serialize");
+        }
         Ok(RunView {
             run_id,
             goal_id: row.goal_id,
             workflow: row.workflow,
-            status: serde_json::to_value(run.status()).expect("statuses serialize"),
+            status,
             waiting,
             usage: serde_json::to_value(run.usage()).expect("usage serializes"),
             events,
@@ -775,18 +919,41 @@ mod tests {
             block("Standup", "2026-11-27T08:00:00Z", "2026-11-27T08:30:00Z", false, None),
             block("Old trip", "2026-11-01T23:00:00Z", "2026-11-25T23:00:00Z", true, Some(DayKind::Away)),
         ];
-        let (busy, away) = day_inputs(&blocks, berlin, from, until);
+        let fixed = |title: &str, start: &str, status: ActionStatus, locked: bool| Action {
+            id: Uuid::now_v7().to_string(),
+            user_id: Uuid::now_v7().to_string(),
+            goal_id: Uuid::now_v7().to_string(),
+            series_id: None,
+            occurrence: None,
+            title: title.into(),
+            notes: None,
+            start_at: start.parse().unwrap(),
+            end_at: start.parse::<DateTime<Utc>>().unwrap() + Duration::minutes(60),
+            status,
+            locked,
+            done_at: None,
+            updated_at: String::new(),
+            deleted: false,
+        };
+        let actions = vec![
+            fixed("Dentist", "2026-11-27T14:00:00Z", ActionStatus::Planned, true),
+            fixed("Run", "2026-11-27T16:00:00Z", ActionStatus::Planned, false),
+            fixed("Call", "2026-11-27T17:00:00Z", ActionStatus::Done, true),
+            fixed("Later", "2026-12-20T17:00:00Z", ActionStatus::Planned, true),
+        ];
+        let (busy, away) = day_inputs(&blocks, &actions, berlin, from, until);
         assert_eq!(
             busy,
             vec![
                 json!({"title": "Conference", "start": "2026-11-27T00:00:00", "minutes": 1440}),
                 json!({"title": "Standup", "start": "2026-11-27T09:00:00", "minutes": 30}),
+                json!({"title": "Dentist", "start": "2026-11-27T15:00:00", "minutes": 60}),
                 json!({"title": "Conference", "start": "2026-11-28T00:00:00", "minutes": 1440}),
             ]
         );
         assert_eq!(away, ["2026-11-30", "2026-12-01"]);
         let mut gone = blocks.clone();
         gone.iter_mut().for_each(|b| b.deleted = true);
-        assert_eq!(day_inputs(&gone, berlin, from, until), (vec![], vec![]));
+        assert_eq!(day_inputs(&gone, &[], berlin, from, until), (vec![], vec![]));
     }
 }

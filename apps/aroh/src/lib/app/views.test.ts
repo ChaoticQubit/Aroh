@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Snapshot } from './client';
 import { formatDay } from '$lib/ui/format';
-import { actionViews, checkInData, dueCheckIns, goalHeader, goalView, inboxView } from './views';
+import { actionViews, busyDayInsights, checkInData, dueCheckIns, goalHeader, goalView, inboxView } from './views';
 
 const zone = 'UTC';
 const goalId = 'g1';
@@ -89,11 +89,72 @@ describe('views', () => {
 		]);
 	});
 
+	it('lists actions still on a Busy day from today on, one card per Busy block', () => {
+		const s = fixture();
+		const act = (id: string, title: string, start: string, extra: Partial<Snapshot['actions'][number]> = {}) => ({ ...s.actions[0], id, title, start_at: start, end_at: start.replace(':00:00Z', ':30:00Z'), ...extra });
+		s.actions = [
+			act('a1', 'Run', '2026-11-28T09:00:00Z'),
+			act('a2', 'Dentist', '2026-11-28T15:00:00Z', { locked: true }),
+			act('a3', 'Stretch', '2026-11-28T07:00:00Z', { status: 'done' }),
+			act('a4', 'Swim', '2026-11-29T09:00:00Z'),
+			act('a5', 'Piano', '2026-11-29T20:00:00Z'),
+			act('a6', 'Read', '2026-11-29T21:00:00Z'),
+			act('a7', 'Walk', '2026-11-24T09:00:00Z'),
+			act('a8', 'Yoga', '2026-11-30T09:00:00Z')
+		];
+		const allDay = (id: string, title: string, start: string, end: string, day_kind: 'busy' | 'away' | null) => ({ id, calendar_id: 'c', event_id: id, title, start_at: start, end_at: end, all_day: true, group_name: null, day_kind });
+		s.busy = [
+			allDay('0190f2a0-0000-7000-8000-0000000000b1', 'Conference', '2026-11-28T00:00:00Z', '2026-11-30T00:00:00Z', 'busy'),
+			allDay('0190f2a0-0000-7000-8000-0000000000b2', 'Old fair', '2026-11-24T00:00:00Z', '2026-11-25T00:00:00Z', 'busy'),
+			allDay('0190f2a0-0000-7000-8000-0000000000b3', 'Trip', '2026-11-30T00:00:00Z', '2026-12-01T00:00:00Z', 'away')
+		];
+		const cards = busyDayInsights(s, zone, '2026-11-26T08:00:00Z');
+		expect(cards).toEqual([
+			{
+				id: '0190f2a0-0000-7000-8000-0000000000b1',
+				spec: {
+					kind: 'insight_card',
+					persona: 'Calendar',
+					title: 'No free day for 5 actions',
+					body: 'Conference on Sat 28 Nov to Sun 29 Nov: Run, Dentist, Swim and 2 more could not move. Move them by hand or change the day\'s kind.'
+				}
+			}
+		]);
+		expect(inboxView(s, [], [], zone, '2026-11-26T08:00:00Z').insights.map((i) => i.id)).toEqual(['0190f2a0-0000-7000-8000-0000000000b1']);
+		s.settings.dismissed_insights = '0190f2a0-0000-7000-8000-0000000000b1';
+		expect(busyDayInsights(s, zone, '2026-11-26T08:00:00Z')).toEqual([]);
+	});
+
+	it('notes a fixed action that clashes with busy time instead of moving it', () => {
+		const s = fixture();
+		s.actions = [
+			{ ...s.actions[0], id: '0190f2a0-0000-7000-8000-0000000000a1', title: 'Dentist', start_at: '2026-11-27T09:00:00Z', end_at: '2026-11-27T10:00:00Z', locked: true },
+			{ ...s.actions[0], id: 'a2', title: 'Run', start_at: '2026-11-27T09:30:00Z', end_at: '2026-11-27T10:00:00Z', locked: false },
+			{ ...s.actions[0], id: 'a3', title: 'Call', start_at: '2026-11-27T12:00:00Z', end_at: '2026-11-27T13:00:00Z', locked: true }
+		];
+		s.busy = [{ id: 'b1', calendar_id: 'c', event_id: 'standup', title: 'Standup', start_at: '2026-11-27T09:45:00Z', end_at: '2026-11-27T10:15:00Z', all_day: false, group_name: 'Work', day_kind: null }];
+		expect(busyDayInsights(s, zone, '2026-11-26T08:00:00Z')).toEqual([
+			{
+				id: '0190f2a0-0000-7000-8000-0000000000a1',
+				spec: { kind: 'insight_card', persona: 'Calendar', title: 'Fixed action clashes: Dentist', body: 'Dentist on Fri 27 Nov overlaps Standup. Fixed actions are never moved: move it by hand or turn off Fixed time.' }
+			}
+		]);
+	});
+
 	it('hides insights the owner dismissed on this device', () => {
 		const s = fixture();
 		s.settings.dismissed_insights = 'i1';
 		const insight = { id: 'i1', goal_id: null, run_id: null, source: 'review', title: 'Weekly review', body: 'On track.', state: 'done', created_at: '2026-11-26T06:00:00Z' };
 		expect(inboxView(s, [], [insight, { ...insight, id: 'i2' }]).insights.map((i) => i.id)).toEqual(['i2']);
+	});
+
+	it('says what a waiting run waits for and links to its goal chat, even for a goal not on this device', () => {
+		const run = (run_id: string, goal_id: string | null, state: string) => ({ run_id, goal_id, workflow: 'new-goal', state, created_at: '', updated_at: '' });
+		const { runs } = inboxView(fixture(), [run('r1', 'g-not-synced', 'waiting_human'), run('r2', null, 'running')], [], 'UTC', '2026-11-26T08:00:00Z', { r1: '3 questions to answer' });
+		expect(runs).toEqual([
+			{ persona: 'Goal planner', title: 'Planning a new goal (r1)', step: 'Waiting for you: 3 questions to answer', progress: 100, href: '/goals/g-not-synced/chat' },
+			{ persona: 'Goal planner', title: 'Planning a new goal (r2)', step: 'Working', progress: 50 }
+		]);
 	});
 
 	it('shows device notes as insight cards before engine insights and hides dismissed ones', () => {

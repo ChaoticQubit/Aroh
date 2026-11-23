@@ -35,7 +35,7 @@ export type ChangeView = {
 
 /** Renderer-neutral component spec: the shape plugin view trees use. */
 export type ComponentSpec =
-	| { kind: 'number_input'; label: string; unit: Unit; value: number | null; step: number; min?: number; max?: number }
+	| { kind: 'number_input'; label: string; unit: string; value: number | null; step: number; min?: number; max?: number }
 	| { kind: 'rating'; label: string; min: number; max: number; value: number | null }
 	| { kind: 'choice'; label: string; options: string[]; multi: boolean; value: string[] }
 	| { kind: 'note'; label: string; placeholder: string; value: string }
@@ -66,12 +66,27 @@ export type SpecOf<K extends ComponentSpec['kind']> = Extract<ComponentSpec, { k
 /** The change callback every component accepts: the new value, shaped per kind. */
 export type OnChange = (value: unknown) => void;
 
-/** One entry of a persona chat thread: a message, an inline card, research progress or a plan summary. */
+/** One entry of a persona chat thread: a message, an inline card, research progress, a working or stopped run, or a plan summary. */
 export type ChatMessage =
 	| { type: 'message'; from: 'owner' | 'persona'; name: string; text: string }
-	| { type: 'card'; spec: ComponentSpec; answered?: boolean }
+	| { type: 'card'; spec: ComponentSpec }
 	| { type: 'progress'; lines: { text: string; done: boolean }[] }
-	| { type: 'plan'; title: string; items: string[] };
+	| { type: 'plan'; title: string; items: string[]; fixable?: boolean[] }
+	| { type: 'working'; step: string | null; cost: string }
+	| { type: 'stopped'; text: string; retry: boolean }
+	| {
+			type: 'questions';
+			persona: string;
+			prompt: string;
+			items: { id: string; text: string; input: ComponentSpec }[];
+			values: Record<string, string>;
+			skipped: string[];
+			missing: string[];
+			status: string;
+			submitted: boolean;
+			sending: boolean;
+			error: string | null;
+	  };
 
 /** A plugin view: a titled column of component specs, phone first. */
 export type ViewSpec = { title: string; sections: { title: string; items: ComponentSpec[] }[] };

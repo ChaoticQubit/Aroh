@@ -38,6 +38,12 @@ insert into public.budgets (id, user_id, scope, limit_usd_micros, updated_at)
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', 'user_month', 5000000, '1763683200001-0000-aaaaaaaaaaaaaaaa');
 insert into public.usage (id, user_id, vendor, model, input_tokens, output_tokens, cost_usd_micros, occurred_at, updated_at)
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', 'anthropic', 'claude-opus', 10, 5, 42, now(), '1763683200001-0000-aaaaaaaaaaaaaaaa');
+insert into public.places (id, user_id, name, address, lat_e6, lon_e6, radius_m, source, updated_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', 'Gym', '1 Main St', 37776000, -122417000, 150, 'prompt', '1763683200001-0000-aaaaaaaaaaaaaaaa');
+insert into public.place_links (id, user_id, place_id, goal_id, updated_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', gen_random_uuid(), '0190f2a0-0000-7000-8000-000000000091', '1763683200001-0000-aaaaaaaaaaaaaaaa');
+insert into public.run_limits (user_id, minutes, updated_at)
+  values ('00000000-0000-0000-0000-00000000000a', 30, now());
 insert into public.jobs (id, user_id, kind)
   values ('0190f2a0-0000-7000-8000-0000000000a1', '00000000-0000-0000-0000-00000000000a', 'setup');
 insert into public.runs (id, user_id, job_id, goal_id, workflow, state)
@@ -78,8 +84,8 @@ declare
 begin
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p');
-  if n <> 31 then
-    raise exception 'expected 31 public tables, found %', n;
+  if n <> 34 then
+    raise exception 'expected 34 public tables, found %', n;
   end if;
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity;
@@ -180,7 +186,7 @@ declare
 begin
   foreach t in array array['categories', 'goals', 'goal_links', 'goal_files', 'personas', 'plugins', 'trackers',
     'tracker_entries', 'action_series', 'actions', 'proposals', 'preferences', 'busy_blocks', 'calendar_rules',
-    'provider_settings', 'search_settings', 'budgets', 'usage', 'jobs', 'runs', 'run_events'] loop
+    'provider_settings', 'search_settings', 'budgets', 'usage', 'jobs', 'runs', 'run_events', 'places', 'place_links'] loop
     execute format('select count(*) from public.%I', t) into n;
     if n <> 1 then
       raise exception 'A must see its one row of %, saw %', t, n;

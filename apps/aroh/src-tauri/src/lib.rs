@@ -63,7 +63,7 @@ fn on_start_or_resume(app: &tauri::AppHandle) {
     if let Err(e) = commands::with_core(&state, |c| aroh_app::travel::follow(&c.conn, &mut c.clock, &c.user_id, Utc::now(), device_zone())) {
         eprintln!("aroh: time zone not followed: {e}");
     }
-    if let Err(e) = commands::with_core(&state, |c| aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now())) {
+    if let Err(e) = commands::with_core(&state, |c| aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone())) {
         eprintln!("aroh: tick failed: {e}");
     }
     if let Err(e) = notify::sync(app) {
@@ -71,6 +71,7 @@ fn on_start_or_resume(app: &tauri::AppHandle) {
     }
     commands::engine::sync_if_signed_in(app);
     commands::health::import_if_enabled(app);
+    commands::location::drain_if_enabled(app);
 }
 
 /// Debug builds only: three seconds after start, evaluates the JavaScript file at
@@ -140,7 +141,22 @@ pub fn run() {
             commands::calendar_import::app_calendar_import,
             commands::calendar_import::app_set_day_kind,
             commands::learning::app_edit_action,
+            commands::learning::app_set_locked,
             realtime::app_realtime_up,
+            commands::location::app_location_enable,
+            commands::location::app_location_disable,
+            commands::location::app_location_setting,
+            commands::location::app_location_view,
+            commands::location::app_location_decide_prompt,
+            commands::location::app_location_unignore,
+            commands::location::app_location_search,
+            commands::location::app_location_snapshot,
+            commands::location::app_location_add_place,
+            commands::location::app_location_link,
+            commands::location::app_location_delete_place,
+            commands::location::app_location_decide_pattern,
+            commands::location::app_location_clear,
+            commands::location::app_dev_location_seed,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

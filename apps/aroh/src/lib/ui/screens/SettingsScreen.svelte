@@ -12,9 +12,9 @@
 
 	/**
 	 * Settings: account sign-in, model provider, model and key (the key goes to the server, never
-	 * stored on the device), search providers, server URL, monthly budgets, and calendar and Apple
+	 * stored on the device), search providers, server URL, budgets, the run time limit, and calendar and Apple
 	 * Health access. `ontest`, `onsignin` and `onhealth` resolve to a status line; the rest report edits.
-	 * With `oncoaches`, a Coaches row opens the coach (persona) library.
+	 * With `oncoaches`, a Coaches row opens the coach (persona) library; `onlocation` adds a Location row.
 	 */
 	let {
 		settings,
@@ -25,7 +25,10 @@
 		onsignin,
 		onsignout,
 		onhealth,
-		oncoaches
+		oncoaches,
+		runLimit = null,
+		onrunlimit,
+		onlocation
 	}: {
 		settings: SettingsView;
 		onprovider?: (providerId: string, model: string) => void;
@@ -36,6 +39,9 @@
 		onsignout?: () => void;
 		onhealth?: (on: boolean) => Promise<string>;
 		oncoaches?: () => void;
+		runLimit?: number | null;
+		onrunlimit?: (minutes: number) => void;
+		onlocation?: () => void;
 	} = $props();
 
 	const id = $props.id();
@@ -85,6 +91,12 @@
 		key = '';
 	}
 
+	/** Saves a whole number of minutes from 1 to 120 through `onrunlimit`; other input is ignored. */
+	function minutes(text: string) {
+		const n = Math.round(Number(text));
+		if (Number.isFinite(n) && n >= 1 && n <= 120) onrunlimit?.(n);
+	}
+
 	/** Parses a dollar input: empty is null, anything else a non-negative number or null. */
 	function dollars(text: string): number | null {
 		const n = Number(text);
@@ -97,10 +109,10 @@
 		<h2 id="{id}-account" class="text-sm font-semibold text-fg">Account</h2>
 		<Card.Root size="sm" class="gap-4 px-4">
 			<Field label="Project URL" id="{id}-sburl">
-				<Input id="{id}-sburl" type="url" inputmode="url" placeholder="https://your-project.supabase.co" value={settings.account.supabaseUrl} onchange={(e) => onsetting?.('supabase_url', e.currentTarget.value.trim())} class="{input} text-sm" />
+				<Input id="{id}-sburl" type="url" inputmode="url" placeholder="https://your-project.supabase.co" value={settings.account.supabaseUrl} onchange={(e) => onsetting?.('supabase_url', e.currentTarget.value.trim())} class="{input} text-lg" />
 			</Field>
 			<Field label="Anon key" id="{id}-anon">
-				<Input id="{id}-anon" autocomplete="off" placeholder="Public anon key" value={settings.account.anonKey} onchange={(e) => onsetting?.('supabase_anon_key', e.currentTarget.value.trim())} class="{input} text-sm" />
+				<Input id="{id}-anon" autocomplete="off" placeholder="Public anon key" value={settings.account.anonKey} onchange={(e) => onsetting?.('supabase_anon_key', e.currentTarget.value.trim())} class="{input} text-lg" />
 			</Field>
 			{#if settings.account.email}
 				<div class="flex flex-wrap items-center gap-3">
@@ -111,10 +123,10 @@
 			{:else}
 				<div class="grid gap-4 @md:grid-cols-2">
 					<Field label="Email" id="{id}-email">
-						<Input id="{id}-email" type="email" inputmode="email" autocomplete="username" class="{input} text-sm" bind:value={email} />
+						<Input id="{id}-email" type="email" inputmode="email" autocomplete="username" class="{input} text-lg" bind:value={email} />
 					</Field>
 					<Field label="Password" id="{id}-password">
-						<Input id="{id}-password" type="password" autocomplete="current-password" class="{input} text-sm" bind:value={password} />
+						<Input id="{id}-password" type="password" autocomplete="current-password" class="{input} text-lg" bind:value={password} />
 					</Field>
 				</div>
 				<div class="flex flex-wrap items-center gap-3">
@@ -125,6 +137,18 @@
 			{#if accountStatus}<p class="text-sm text-muted" role="status">{accountStatus}</p>{/if}
 		</Card.Root>
 	</section>
+
+	{#if onlocation}
+		<section class="flex flex-col gap-3" aria-labelledby="{id}-location">
+			<h2 id="{id}-location" class="text-sm font-semibold text-fg">Location</h2>
+			<Card.Root size="sm" class="gap-0 px-0 py-0">
+				<button type="button" class="flex min-h-14 w-full items-center gap-3 rounded-md px-4 py-2 text-left outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset" onclick={() => onlocation?.()}>
+					<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Location</span><span class="text-xs text-muted">Places, nudges, pause tracking and visit history.</span></span>
+					<ChevronRight class="size-4 shrink-0 text-muted" aria-hidden="true" />
+				</button>
+			</Card.Root>
+		</section>
+	{/if}
 
 	<section class="flex flex-col gap-3" aria-labelledby="{id}-model">
 		<h2 id="{id}-model" class="text-sm font-semibold text-fg">Model provider</h2>
@@ -139,7 +163,7 @@
 			</Field>
 			<Field label="Model" labelId="{id}-modelname">
 				<Select.Root type="single" bind:value={model} onValueChange={(m) => onprovider?.(provider.id, m)}>
-					<Select.Trigger class="h-11! w-full text-sm" aria-labelledby="{id}-modelname">{model}</Select.Trigger>
+					<Select.Trigger class="h-11! w-full text-base" aria-labelledby="{id}-modelname">{model}</Select.Trigger>
 					<Select.Content>
 						{#each provider.models as m (m)}<Select.Item value={m} label={m} class="min-h-11">{m}</Select.Item>{/each}
 					</Select.Content>
@@ -195,7 +219,7 @@
 		<h2 id="{id}-server" class="text-sm font-semibold text-fg">Server and budget</h2>
 		<Card.Root size="sm" class="gap-4 px-4">
 			<Field label="Server URL" id="{id}-url">
-				<Input id="{id}-url" type="url" inputmode="url" placeholder="https://aroh-engine.example.com" value={settings.serverUrl} onchange={(e) => onsetting?.('server_url', e.currentTarget.value.trim())} class="{input} text-sm" />
+				<Input id="{id}-url" type="url" inputmode="url" placeholder="https://aroh-engine.example.com" value={settings.serverUrl} onchange={(e) => onsetting?.('server_url', e.currentTarget.value.trim())} class="{input} text-lg" />
 			</Field>
 			<div class="grid gap-4 @md:grid-cols-2">
 				<Field label="Monthly budget, all goals" id="{id}-budget">
@@ -206,6 +230,12 @@
 				</Field>
 			</div>
 			<p class="text-xs text-muted">In US dollars. Agents pause and ask when a budget is reached.</p>
+			{#if onrunlimit}
+				<Field label="Time limit per run, minutes" id="{id}-runlimit">
+					<Input id="{id}-runlimit" type="number" inputmode="numeric" min="1" max="120" value={runLimit ?? 5} onchange={(e) => minutes(e.currentTarget.value)} class={input} />
+				</Field>
+				<p class="text-xs text-muted">Counts only time agents work, never time waiting for you. A run stops at the limit; retry it from its chat.</p>
+			{/if}
 		</Card.Root>
 	</section>
 

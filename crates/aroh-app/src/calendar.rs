@@ -35,8 +35,9 @@ fn in_window(all_day: bool, start: DateTime<Utc>, end: DateTime<Utc>, from: Date
 
 /// Imports the device occurrences of `[from, to)` for `user_id`. Timed events starting in the
 /// window are matched against the rules and kept ones become busy blocks. All-day events
-/// overlapping the window always become blocks with their rule's day kind; those no rule
-/// decides wait for a kind and go to triage. Stale live blocks of the window are tombstoned.
+/// overlapping the window always become blocks with their rule's day kind; holiday ones with
+/// no rule are Reminders, other ones no rule decides wait for a kind and go to triage.
+/// Stale live blocks of the window are tombstoned.
 pub fn import(conn: &Connection, clock: &mut Hlc, user_id: &str, events: &[DeviceEvent], from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Import> {
     assert!(from < to, "the import window is not empty");
     for e in events {
@@ -52,7 +53,7 @@ pub fn import(conn: &Connection, clock: &mut Hlc, user_id: &str, events: &[Devic
     let mut seen = BTreeSet::new();
     for event in inside {
         let rule = rule_for(&rules, event);
-        if rule.is_none() && seen.insert(event.event_id.clone()) {
+        if rule.is_none() && !(event.all_day && event.holiday) && seen.insert(event.event_id.clone()) {
             report.unmatched.push(event.clone());
         }
         if !event.all_day && rule.is_none_or(|r| r.decision != RuleDecision::Keep) {

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import MessageSquare from '@lucide/svelte/icons/message-square';
+	import type { Snippet } from 'svelte';
 	import { Button } from '$lib/ui/primitives/button';
 	import * as Card from '$lib/ui/primitives/card';
 	import Persona from '../components/agent/Persona.svelte';
@@ -8,13 +9,14 @@
 	import { getClock } from '$lib/ui/clock';
 	import { formatDay, formatNumber } from '$lib/ui/format';
 	import type { ViewSpec } from '$lib/ui/contract';
-	import type { AutonomyLabel, GoalHeader } from './types';
+	import type { AutonomyLabel, CoachView, GoalHeader } from './types';
 
 	/**
 	 * Goal dashboard built from the goal's view spec, with the persona chat entry and autonomy level.
 	 * `onautonomy` gets the picked level, `onchat` fires on the chat button; `chatStatus` shows under it.
 	 * With `versions`, a Dashboard card picks the plugin version shown; `onversion` gets its value.
-	 * With `oncoaches`, a "Coaches on this goal" link opens the goal's coaches in the library.
+	 * The "Coaches on this goal" card lists `coaches`; `oncoaches` opens them in the library.
+	 * `children`, if given, renders between the goal cards and the view sections.
 	 */
 	let {
 		goal,
@@ -25,7 +27,9 @@
 		onautonomy,
 		onchat,
 		onversion,
-		oncoaches
+		oncoaches,
+		coaches = [],
+		children
 	}: {
 		goal: GoalHeader;
 		view: ViewSpec;
@@ -36,6 +40,8 @@
 		onchat?: () => void;
 		onversion?: (value: string) => void;
 		oncoaches?: () => void;
+		coaches?: CoachView[];
+		children?: Snippet;
 	} = $props();
 
 	const { zone } = getClock();
@@ -69,14 +75,20 @@
 	<div class="grid gap-4 @3xl:grid-cols-2">
 		<Card.Root size="sm" class="gap-3 px-4">
 			<div class="flex items-center justify-between gap-2">
-				<p class="text-sm font-medium">Your personas</p>
+				<p class="text-sm font-medium">Coaches on this goal</p>
 				<MessageSquare class="size-4 text-muted" aria-hidden="true" />
 			</div>
-			<div class="flex flex-wrap gap-x-4 gap-y-2">
-				{#each goal.personas as p (p)}<Persona name={p} />{/each}
+			{#if coaches.length}
+				<div class="flex flex-wrap gap-x-4 gap-y-2">
+					{#each coaches as c (c.name)}<Persona name={c.display_name} />{/each}
+				</div>
+			{:else}
+				<p class="text-sm text-muted">No coach has worked on this goal yet.</p>
+			{/if}
+			<div class="flex flex-wrap gap-2">
+				<Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => onchat?.()}>Chat with your personas</Button>
+				{#if oncoaches}<Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => oncoaches?.()}>All coaches</Button>{/if}
 			</div>
-			<div><Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => onchat?.()}>Chat with your personas</Button></div>
-			{#if oncoaches}<div><Button variant="outline" size="touch" class="@3xl:h-8" onclick={() => oncoaches?.()}>Coaches on this goal</Button></div>{/if}
 			{#if chatStatus}<p class="text-sm text-muted" role="status">{chatStatus}</p>{/if}
 		</Card.Root>
 		<Card.Root size="sm" class="gap-3 px-4">
@@ -92,6 +104,8 @@
 			</Card.Root>
 		{/if}
 	</div>
+
+	{@render children?.()}
 
 	{#each view.sections as section (section.title)}
 		<section class="flex flex-col gap-3" aria-label={section.title}>

@@ -12,6 +12,7 @@
 	const s = $derived(data.snapshot);
 	let email = $state<string | null>(null);
 	let last4 = $state<Record<string, string | null>>({});
+	let runLimit = $state<number | null>(null);
 
 	/** Reads the sign-in state and, when signed in, the stored keys (vendor and last 4 only). */
 	async function refresh() {
@@ -19,6 +20,8 @@
 		email = a?.signed_in ? (a.email ?? 'Signed in') : null;
 		const keys = email ? await engine.keys() : null;
 		last4 = keys?.ok && s ? keyStatus(keys.value, s.providers) : {};
+		const limit = email ? await engine.runLimit() : null;
+		runLimit = limit?.ok ? limit.value.minutes : null;
 	}
 
 	onMount(() => void refresh());
@@ -87,5 +90,8 @@
 		{onhealth}
 		onsignout={() => data.run(async () => (await client.signOut(), await refresh()))}
 		oncoaches={() => void goto('/personas')}
+		{runLimit}
+		onrunlimit={email ? (m) => void engine.setRunLimit(m).then((r) => (r.ok ? (runLimit = r.value.minutes) : (data.error = r.message))) : undefined}
+		onlocation={() => void goto('/settings/location')}
 	/>
 {/if}

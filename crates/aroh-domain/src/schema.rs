@@ -45,7 +45,7 @@ impl TableDef {
 }
 
 /// Every synced table, in push and pull order: parents before children.
-pub static SYNCED: [&TableDef; 18] = [
+pub static SYNCED: [&TableDef; 20] = [
     &rows::CATEGORIES,
     &rows::GOALS,
     &rows::GOAL_LINKS,
@@ -64,6 +64,8 @@ pub static SYNCED: [&TableDef; 18] = [
     &rows::SEARCH_SETTINGS,
     &rows::BUDGETS,
     &rows::USAGE,
+    &rows::PLACES,
+    &rows::PLACE_LINKS,
 ];
 
 /// Returns the synced table called `name`, if any.

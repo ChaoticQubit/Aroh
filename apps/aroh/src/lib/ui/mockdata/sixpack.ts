@@ -1,6 +1,6 @@
 import { catalog } from '$lib/app/catalog';
 import type { ActionView, CategorySlot, ChatMessage, ComponentSpec, Point, Ring, SpecOf, ViewSpec } from '../contract';
-import type { AllDayView, GoalHeader, GoalRow, InboxItem, ProviderView, SearchView, SettingsView } from '../screens/types';
+import type { AllDayView, CoachView, GoalHeader, GoalRow, InboxItem, ProviderView, SearchView, SettingsView } from '../screens/types';
 
 /** Zone every mockup formats times in. Sample instants are written in this zone. */
 export const mockZone = 'UTC';
@@ -272,9 +272,19 @@ export const sixpackHeader: GoalHeader = {
 	slot: sixpackGoal.slot,
 	deadline: sixpackGoal.deadline,
 	autonomy: sixpackGoal.autonomy,
-	personas: sixpackGoal.personas,
 	lead: { unit: 'kg', now: sixpackGoal.trackers[0].now, target: sixpackGoal.trackers[0].target }
 };
+
+/** The coaches that worked on the sample goal, as the Goal screen lists them. */
+export const sixpackCoaches: CoachView[] = sixpackGoal.personas.map((display_name) => ({
+	name: display_name.toLowerCase().replace(' ', '-'),
+	display_name,
+	role: '',
+	instructions: '',
+	guardrails: [],
+	locked: [],
+	source: 'builtin'
+}));
 
 /** The Goals list: the sample goal plus the two goals its busy blocks come from. */
 export const sixpackGoals: GoalRow[] = [

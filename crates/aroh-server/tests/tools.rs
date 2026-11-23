@@ -106,3 +106,38 @@ async fn write_plan_stores_tracker_cadence() {
         "trackers": [{"name": "W", "fields": [{"key": "w", "label": "W", "kind": "number", "unit": null}], "cadence": {"freq": "daily", "weekdays": [], "at": "7am"}}]}});
     assert!(tool(&env, "write_plan").call(bad, &ToolContext::for_call(RunId::new(), 2, 0)).await.is_err());
 }
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn record_proposal_refuses_changes_to_fixed_actions() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let goal = env.goal.unwrap();
+    let start = utc(T0) + chrono::Duration::days(1);
+    let mut fixed = aroh_domain::rows::Action {
+        id: Uuid::now_v7().to_string(),
+        user_id: u.to_string(),
+        goal_id: goal.to_string(),
+        series_id: None,
+        occurrence: None,
+        title: "Dentist".into(),
+        notes: None,
+        start_at: start,
+        end_at: start + chrono::Duration::minutes(30),
+        status: aroh_domain::rows::ActionStatus::Planned,
+        locked: true,
+        done_at: None,
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&pool, &env.hlc, u, &mut fixed).await.unwrap();
+    let ctx = ToolContext::for_call(RunId::new(), 1, 0);
+    for (op, start, minutes) in [("move", Some("2026-11-24T18:00:00"), Some(30)), ("resize", Some("2026-11-24T18:00:00"), Some(60)), ("delete", None, None)] {
+        let record = json!({"goal": {"timezone": "UTC"}, "proposal": {"summary": "x", "size": "small",
+            "changes": [{"op": op, "action_id": fixed.id, "title": "Dentist", "start": start, "minutes": minutes}]}});
+        let err = tool(&env, "record_proposal").call(record, &ctx).await.unwrap_err();
+        assert!(matches!(&err, ToolError::InvalidArgs(m) if m.contains("fixed")), "{err}");
+    }
+    assert_eq!(count(&pool, "proposals", goal).await, 0, "nothing on a fixed action reaches a proposal");
+}

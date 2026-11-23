@@ -1,6 +1,6 @@
 import type { Clock } from '$lib/ui/clock';
 import type { ActionView, CategorySlot, ChangeView, ComponentSpec, Point, SpecOf, Unit, ViewSpec } from '$lib/ui/contract';
-import { daysBetween, formatDate, formatYmd, minuteOfDay, mondayOf, shiftDay } from '$lib/ui/format';
+import { daysBetween, formatDate, formatDay, formatYmd, minuteOfDay, mondayOf, shiftDay } from '$lib/ui/format';
 import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, RunView, SettingsView } from '$lib/ui/screens/types';
 import { catalog } from './catalog';
 import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerEntry, TrackerField } from './client';
@@ -130,7 +130,7 @@ function goalTrackers(s: Snapshot, goalId: string): { tracker: Tracker; field: T
 		.filter((t) => t.points.length > 0);
 }
 
-/** The header facts of `goal`: category, deadline, autonomy, personas and its lead tracker's latest value. */
+/** The header facts of `goal`: category, deadline, autonomy and its lead tracker's latest value. */
 export function goalHeader(s: Snapshot, goal: Goal, zone: string): GoalHeader {
 	const category = goalCategory(categoryViews(s), goal);
 	const lead = goalTrackers(s, goal.id)[0];
@@ -141,7 +141,6 @@ export function goalHeader(s: Snapshot, goal: Goal, zone: string): GoalHeader {
 		slot: category.slot,
 		deadline: goal.deadline ? deadlineAt(goal.deadline, zone) : null,
 		autonomy: AUTONOMY_LABEL[goal.autonomy],
-		personas: s.personas.filter((p) => p.goal_id === goal.id).map((p) => p.name),
 		lead: lead ? { unit: unitOf(lead.field.unit), now: lead.points[lead.points.length - 1].value } : null
 	};
 }
@@ -249,9 +248,11 @@ const RUN_STATE: Record<string, string> = {
 
 /**
  * Runs not done, newest first, one per goal and workflow, titled by workflow and goal. Progress is
- * coarse by state: 0 queued, 50 working, 100 stopped at a wait, a pause or a failure.
+ * coarse by state: 0 queued, 50 working, 100 stopped at a wait, a pause or a failure. A run that
+ * waits for the owner says what for (`waits`, by run id, such as "3 questions to answer") and
+ * links to its goal's chat.
  */
-function openRuns(s: Snapshot, runs: RunSummary[]): RunView[] {
+function openRuns(s: Snapshot, runs: RunSummary[], waits: Record<string, string>): RunView[] {
 	const seen = new Set<string>();
 	const out: RunView[] = [];
 	for (const r of runs) {
@@ -261,7 +262,10 @@ function openRuns(s: Snapshot, runs: RunSummary[]): RunView[] {
 		const goal = s.goals.find((g) => g.id === r.goal_id);
 		const kind = WORKFLOW[r.workflow] ?? { title: r.workflow, persona: 'Aroh' };
 		const progress = r.state === 'queued' ? 0 : r.state === 'running' || r.state === 'checkpointed' ? 50 : 100;
-		out.push({ persona: kind.persona, title: goal ? `${kind.title}: ${goal.title}` : `${kind.title} (${r.run_id.slice(0, 8)})`, step: RUN_STATE[r.state] ?? r.state, progress });
+		const wait = r.state === 'waiting_human' ? waits[r.run_id] : undefined;
+		const step = wait ? `Waiting for you: ${wait}` : (RUN_STATE[r.state] ?? r.state);
+		const href = r.state === 'waiting_human' && r.goal_id ? `/goals/${r.goal_id}/chat` : undefined;
+		out.push({ persona: kind.persona, title: goal ? `${kind.title}: ${goal.title}` : `${kind.title} (${r.run_id.slice(0, 8)})`, step, progress, ...(href ? { href } : {}) });
 	}
 	return out;
 }
@@ -281,17 +285,69 @@ function insightItems(s: Snapshot, insights: Insight[]): InboxItem[] {
 	})).filter((i) => !dismissed.has(i.id));
 }
 
-/** The Inbox groups: open proposals, unconfirmed preferences, engine insights, and the engine runs not done. */
+/** Joins titles as "A", "A and B" or "A, B and C". */
+export function joinTitles(titles: string[]): string {
+	return titles.length < 2 ? (titles[0] ?? '') : `${titles.slice(0, -1).join(', ')} and ${titles[titles.length - 1]}`;
+}
+
+/**
+ * Neutral "Calendar" notes from the day of `now` on (local days in `zone`): one per Busy all-day
+ * block still holding planned actions, locked ones included (id = the block id), then one per
+ * locked planned action overlapping a timed busy block (id = the action id). Dismissed ones
+ * (`dismissed_insights`) are left out.
+ */
+export function busyDayInsights(s: Snapshot, zone: string, now: string): InboxItem[] {
+	const dismissed = new Set((s.settings.dismissed_insights ?? '').split(','));
+	const today = formatYmd(now, zone);
+	const planned = s.actions.filter((a) => a.status === 'planned').sort((a, b) => a.start_at.localeCompare(b.start_at));
+	const days = (s.busy ?? [])
+		.filter((b) => b.all_day && b.day_kind === 'busy' && !dismissed.has(b.id))
+		.flatMap((b) => {
+			const first = formatYmd(b.start_at, zone);
+			const lastAt = new Date(Date.parse(b.end_at) - 1000).toISOString();
+			const last = formatYmd(lastAt, zone);
+			const left = planned.filter((a) => {
+				const day = formatYmd(a.start_at, zone);
+				return day >= today && day >= first && day <= last;
+			});
+			if (!left.length) return [];
+			const days = first < last ? `${formatDay(b.start_at, zone)} to ${formatDay(lastAt, zone)}` : formatDay(b.start_at, zone);
+			const count = `${left.length} ${left.length === 1 ? 'action' : 'actions'}`;
+			const titles = left.map((a) => a.title);
+			const names = titles.length > 3 ? `${titles.slice(0, 3).join(', ')} and ${titles.length - 3} more` : joinTitles(titles);
+			const body = `${b.title} on ${days}: ${names} could not move. Move them by hand or change the day's kind.`;
+			return [{ id: b.id, spec: { kind: 'insight_card' as const, persona: 'Calendar', title: `No free day for ${count}`, body } }];
+		});
+	const timed = (s.busy ?? []).filter((b) => !b.all_day);
+	const clashes = planned
+		.filter((a) => a.locked && !dismissed.has(a.id) && formatYmd(a.start_at, zone) >= today)
+		.flatMap((a) => {
+			const hit = timed.find((b) => b.start_at < a.end_at && a.start_at < b.end_at);
+			if (!hit) return [];
+			const body = `${a.title} on ${formatDay(a.start_at, zone)} overlaps ${hit.title}. Fixed actions are never moved: move it by hand or turn off Fixed time.`;
+			return [{ id: a.id, spec: { kind: 'insight_card' as const, persona: 'Calendar', title: `Fixed action clashes: ${a.title}`, body } }];
+		});
+	return [...days, ...clashes];
+}
+
+/**
+ * The Inbox groups: open proposals, unconfirmed preferences, engine insights then Busy-day notes
+ * (local days in `zone`, from the day of `now`), and the engine runs not done, each with what it
+ * waits for from `waits` (by run id).
+ */
 export function inboxView(
 	s: Snapshot,
 	runs: RunSummary[] = [],
-	insights: Insight[] = []
+	insights: Insight[] = [],
+	zone = 'UTC',
+	now = new Date().toISOString(),
+	waits: Record<string, string> = {}
 ): { approvals: InboxItem[]; suggestions: InboxItem[]; insights: InboxItem[]; runs: RunView[] } {
 	return {
 		approvals: s.proposals.map((p) => ({ id: p.id, spec: { kind: 'proposal_card', persona: personaFor(s, p.goal_id), summary: p.summary, changes: changes(p) } })),
 		suggestions: s.preferences.map((f) => ({ id: f.id, spec: { kind: 'proposal_card', persona: f.source, summary: f.fact, changes: [] } })),
-		insights: insightItems(s, insights),
-		runs: openRuns(s, runs)
+		insights: [...insightItems(s, insights), ...busyDayInsights(s, zone, now)],
+		runs: openRuns(s, runs, waits)
 	};
 }
 

@@ -16,7 +16,7 @@
 	 * for the next unanswered all-day event, next action, check-in, today's actions, one insight and
 	 * the quick-log bar. Tapping an action opens the edit sheet (`inline` draws it in place for
 	 * mockups). `onaction` gets `{ id, status }`, `oncheckin` the answer, `onlog` the quick-log text,
-	 * `onedit`, `ondelete` and `onchoose` the calendar changes.
+	 * `onedit`, `onlock`, `ondelete` and `onchoose` the calendar changes.
 	 */
 	let {
 		actions,
@@ -30,6 +30,7 @@
 		oncheckin,
 		onlog,
 		onedit,
+		onlock,
 		ondelete,
 		onchoose
 	}: {
@@ -44,6 +45,7 @@
 		oncheckin?: OnChange;
 		onlog?: (text: string) => void;
 		onedit?: (edit: ActionEdit) => void;
+		onlock?: (id: string, locked: boolean) => void;
 		ondelete?: (id: string) => void;
 		onchoose?: (pick: DayPick) => void;
 	} = $props();
@@ -118,5 +120,5 @@
 	<QuickLog {onlog} />
 </div>
 {#if open}
-	<ActionSheet action={open} {confirming} {inline} onsave={edit} ondelete={remove} onclose={() => (editing = null)} />
+	<ActionSheet action={open} {confirming} {inline} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />
 {/if}

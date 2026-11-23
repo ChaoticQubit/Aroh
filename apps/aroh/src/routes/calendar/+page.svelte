@@ -5,14 +5,12 @@
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { actionViews, categoryList } from '$lib/app/views';
-	import { allDayViews, busyViews, confirmDay, openTriage, triageKinds } from '$lib/app/calendar';
-	import type { DayKind } from '$lib/ui/screens/types';
+	import { allDayViews, busyViews, confirmDay, refreshSuggestions } from '$lib/app/calendar';
 
 	const clock = getClock();
 	const s = $derived(data.snapshot);
-	let suggested = $state<Record<string, DayKind>>({});
 
-	onMount(() => void openTriage().then((t) => (suggested = triageKinds(t?.waiting))));
+	onMount(() => void (data.snapshot && refreshSuggestions(data.snapshot)));
 </script>
 
 {#if s}
@@ -20,8 +18,9 @@
 		actions={actionViews(s)}
 		categories={categoryList(s)}
 		busy={busyViews(s)}
-		allDay={allDayViews(s, clock.zone, suggested)}
+		allDay={allDayViews(s, clock.zone)}
 		onedit={(e) => data.run(() => client.editAction(e.id, e.start, e.end))}
+		onlock={(id, locked) => data.run(() => client.setLocked(id, locked))}
 		ondelete={(id) => data.run(() => client.deleteAction(id))}
 		onchoose={(p) => data.run(() => confirmDay(p.id, p.kind))}
 	/>

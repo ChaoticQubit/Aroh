@@ -54,5 +54,9 @@
 	<string>Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Aroh notices the places you visit often and asks you to name them. Visits stay on this iPhone.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Aroh nudges you when you reach a place linked to a goal, even while it is closed. Visits stay on this iPhone; only the places you name and the routines you approve sync.</string>
 </dict>
 </plist>

@@ -178,4 +178,40 @@ mod tests {
         assert!(parse(response("not-a-uuid")).is_err());
         assert!(parse(TokenResponse { user: None, ..response("0190f2a0-0000-7000-8000-00000000000a") }).is_err());
     }
+
+    /// Serves one HTTP request on a local port with a GoTrue token reply.
+    /// Returns the project URL and a handle that yields the raw request head.
+    async fn gotrue_once() -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut seen = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while !String::from_utf8_lossy(&seen).contains("\r\n\r\n") {
+                let n = socket.read(&mut chunk).await.unwrap();
+                assert!(n > 0, "the client closed before sending headers");
+                seen.extend_from_slice(&chunk[..n]);
+            }
+            let body = json!({"access_token": "a", "refresh_token": "r", "expires_in": 3600, "user": {"id": "0190f2a0-0000-7000-8000-00000000000a"}}).to_string();
+            let reply = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+            socket.write_all(reply.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&seen).to_lowercase()
+        });
+        (url, served)
+    }
+
+    #[tokio::test]
+    async fn sign_in_sends_the_publishable_key_as_apikey_and_never_as_a_bearer() {
+        let key = "sb_publishable_cD0WV69uaKlGDnnRWrGjrQ_cw1civNB";
+        let (url, served) = gotrue_once().await;
+        let config = Config::new(&url, key).unwrap();
+        let session = password_session(&config, "me@aroh.test", "secret-password").await.unwrap();
+        assert_eq!(session.user_id, "0190f2a0-0000-7000-8000-00000000000a");
+        let head = served.await.unwrap();
+        assert!(head.starts_with("post /auth/v1/token?grant_type=password "), "{head}");
+        assert!(head.contains(&format!("apikey: {}", key.to_lowercase())), "{head}");
+        assert!(!head.contains("authorization:"), "a publishable key is not a JWT, so it never goes in Authorization: {head}");
+    }
 }

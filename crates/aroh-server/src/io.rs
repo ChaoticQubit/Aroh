@@ -10,7 +10,7 @@ use aroh_domain::rows::{ProviderSetting, SearchSetting};
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use crate::db::PgPool;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use troupekit_agent::budget::UsageLedger;
 use troupekit_agent::{AgentError, AgentIo, EvalRegistry, EventSink, ModelHandle, Persona, PersonaLoader};
@@ -151,8 +151,9 @@ fn no_search() -> Toolkit {
 }
 
 /// Router condition `autonomy_gate()` of the replan workflow: `none` when
-/// the proposal has no change; `ask` when the goal's autonomy is `ask`, the
-/// proposal is big under `balanced`, or it touches a locked action; else `apply` (Q19).
+/// the proposal has no change; `ask` when the goal's autonomy is `ask` or the
+/// proposal is big under `balanced`; else `apply` (Q19). Locked actions never
+/// reach a proposal (Q53).
 pub fn autonomy_gate(state: &Map<String, Value>, _args: &[Value]) -> Result<String, String> {
     let autonomy = state.get("autonomy").and_then(Value::as_str).ok_or("autonomy is not set")?;
     let record = state.get("proposal_record").ok_or("proposal_record is not set")?;
@@ -160,22 +161,36 @@ pub fn autonomy_gate(state: &Map<String, Value>, _args: &[Value]) -> Result<Stri
         return Ok("none".into());
     }
     let size = record.get("size").and_then(Value::as_str).ok_or("proposal has no size")?;
-    let locked = record.get("touches_locked").and_then(Value::as_bool).ok_or("proposal has no touches_locked")?;
-    let ask = locked || autonomy == "ask" || (autonomy == "balanced" && size != "small");
+    let ask = autonomy == "ask" || (autonomy == "balanced" && size != "small");
     Ok(if ask { "ask" } else { "apply" }.into())
 }
 
-/// Reads the busy time a run planned around: the `busy` key of its latest
-/// checkpoint's state, as eval slots. Empty for a run without that key,
-/// before its first checkpoint, or before the run exists.
-pub async fn run_busy(pool: &PgPool, run: Option<RunId>) -> Result<Vec<evals::Slot>, ServerError> {
-    let Some(run) = run else { return Ok(Vec::new()) };
-    let busy: Option<Option<Value>> =
-        crate::db::query_scalar("select state->'state'->'busy' from public.run_checkpoints where run_id = $1 order by step desc limit 1")
+async fn run_state(pool: &PgPool, run: RunId, key: &str) -> Result<Value, ServerError> {
+    let value: Option<Option<Value>> =
+        crate::db::query_scalar("select state->'state'->$2 from public.run_checkpoints where run_id = $1 order by step desc limit 1")
             .bind(run.0)
+            .bind(key)
             .fetch_optional(pool)
             .await?;
-    evals::busy_slots(&busy.flatten().unwrap_or(Value::Null)).map_err(ServerError::Setup)
+    Ok(value.flatten().unwrap_or(Value::Null))
+}
+
+/// Reads what a run plans around from its latest checkpoint's state: the `busy`
+/// key as eval slots and the ids of the `calendar` entries marked locked.
+/// Both empty for a run without those keys, before its first checkpoint, or
+/// before the run exists.
+pub async fn run_bounds(pool: &PgPool, run: Option<RunId>) -> Result<(Vec<evals::Slot>, BTreeSet<String>), ServerError> {
+    let Some(run) = run else { return Ok((Vec::new(), BTreeSet::new())) };
+    let busy = evals::busy_slots(&run_state(pool, run, "busy").await?).map_err(ServerError::Setup)?;
+    let calendar = run_state(pool, run, "calendar").await?;
+    let fixed = calendar
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|a| a.get("locked").and_then(Value::as_bool) == Some(true))
+        .filter_map(|a| a.get("id").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    Ok((busy, fixed))
 }
 
 /// The io of one run: its user, goal and run id, the user's provider
@@ -212,7 +227,7 @@ impl RunIo {
         tools.register_toolkit(crate::triage::triage_toolkit(env)).map_err(|e| ServerError::Setup(e.to_string()))?;
         tools.register_toolkit(search_kit(&deps, user).await?.unwrap_or_else(no_search)).map_err(|e| ServerError::Setup(e.to_string()))?;
         tools.register(web_fetch(deps.web.clone(), FETCH_MAX_CHARS)).map_err(|e| ServerError::Setup(e.to_string()))?;
-        let busy = run_busy(&deps.pool, run).await?;
+        let (busy, fixed) = run_bounds(&deps.pool, run).await?;
         let mut conditions = Conditions::new();
         conditions.register("autonomy_gate", Arc::new(autonomy_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
         let writer = Arc::new(UsageWriter {
@@ -228,7 +243,7 @@ impl RunIo {
             writer,
             settings,
             tools,
-            evals: evals::registry_with_busy(busy),
+            evals: evals::registry_with_busy(busy, fixed),
             events,
             personas: workflows::loader(personas),
             conditions,
@@ -321,17 +336,16 @@ mod tests {
 
     #[test]
     fn autonomy_gate_routes() {
-        let state = |autonomy: &str, size: &str, locked: bool| {
-            let v = json!({"autonomy": autonomy, "proposal_record": {"size": size, "touches_locked": locked}});
+        let state = |autonomy: &str, size: &str| {
+            let v = json!({"autonomy": autonomy, "proposal_record": {"size": size, "changes": [{"op": "move"}]}});
             v.as_object().unwrap().clone()
         };
-        assert_eq!(autonomy_gate(&state("auto", "big", false), &[]).unwrap(), "apply");
-        assert_eq!(autonomy_gate(&state("balanced", "small", false), &[]).unwrap(), "apply");
-        assert_eq!(autonomy_gate(&state("balanced", "big", false), &[]).unwrap(), "ask");
-        assert_eq!(autonomy_gate(&state("ask", "small", false), &[]).unwrap(), "ask");
-        assert_eq!(autonomy_gate(&state("auto", "small", true), &[]).unwrap(), "ask");
+        assert_eq!(autonomy_gate(&state("auto", "big"), &[]).unwrap(), "apply");
+        assert_eq!(autonomy_gate(&state("balanced", "small"), &[]).unwrap(), "apply");
+        assert_eq!(autonomy_gate(&state("balanced", "big"), &[]).unwrap(), "ask");
+        assert_eq!(autonomy_gate(&state("ask", "small"), &[]).unwrap(), "ask");
         assert!(autonomy_gate(&Map::new(), &[]).is_err());
-        let empty = json!({"autonomy": "ask", "proposal_record": {"size": "small", "touches_locked": false, "changes": []}});
+        let empty = json!({"autonomy": "ask", "proposal_record": {"size": "small", "changes": []}});
         assert_eq!(autonomy_gate(empty.as_object().unwrap(), &[]).unwrap(), "none");
     }
 }

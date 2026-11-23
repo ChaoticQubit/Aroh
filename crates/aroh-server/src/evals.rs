@@ -2,6 +2,7 @@ use aroh_domain::recur;
 use aroh_domain::rows::ActionSeries;
 use chrono::{Duration, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use troupekit_agent::eval::lookup;
 use troupekit_agent::EvalRegistry;
@@ -192,19 +193,72 @@ pub fn public_sources(output: &Value, args: &[Value]) -> Result<(), String> {
     Ok(())
 }
 
+/// Phrases of questions that make the owner work something out instead of
+/// telling what they know: what is left is the planner's sum, and a speed is
+/// the planner's estimate from minutes and progress.
+const COMPUTE_PHRASES: [&str; 12] =
+    ["are left", "is left", "left to ", "left for ", "pages left", "chapters left", "remaining", "remain ", "per hour", "per minute", "in an hour", "pages an hour"];
+
+/// Eval `owner_terms(path)`: no question at `path` asks the owner to work
+/// something out (what is left, a reading speed), and every number question
+/// names its unit and a range `min` to `max`. Errors name each failing id.
+pub fn owner_terms(output: &Value, args: &[Value]) -> Result<(), String> {
+    let path = args.first().and_then(Value::as_str).filter(|_| args.len() == 1).ok_or("takes (path)")?;
+    let mut failed = Vec::new();
+    for q in lookup(output, path).into_iter().flat_map(|v| v.as_array().cloned().unwrap_or_default()) {
+        let id = q.get("id").and_then(Value::as_str).unwrap_or("?").to_string();
+        let text = q.get("text").and_then(Value::as_str).unwrap_or_default().to_lowercase();
+        if COMPUTE_PHRASES.iter().any(|p| text.contains(p)) {
+            failed.push(format!("{id}: ask what the owner knows (such as chapters read or minutes a day), never what they must work out"));
+        }
+        if q.get("kind").and_then(Value::as_str) == Some("number") {
+            let unit = q.get("unit").and_then(Value::as_str).map(str::trim).unwrap_or_default();
+            let (min, max) = (q.get("min").and_then(Value::as_f64), q.get("max").and_then(Value::as_f64));
+            if unit.is_empty() || !matches!((min, max), (Some(lo), Some(hi)) if lo <= hi) {
+                failed.push(format!("{id}: a number question needs a unit and a range min to max"));
+            }
+        }
+    }
+    if failed.is_empty() {
+        Ok(())
+    } else {
+        Err(failed.join("; "))
+    }
+}
+
 /// Builds the eval registry every Aroh run uses: the built-in `min_items`
-/// plus the domain evals `no_overlap`, `within_availability`, `valid_plugin`
-/// and `public_sources`. Returns the registry, with no busy time bound.
+/// plus the domain evals `no_overlap`, `within_availability`, `valid_plugin`,
+/// `keeps_fixed`, `public_sources` and `owner_terms`. Returns the registry, with no busy time
+/// or fixed action bound.
 pub fn registry() -> EvalRegistry {
-    registry_with_busy(Vec::new())
+    registry_with_busy(Vec::new(), Default::default())
+}
+
+/// Rejects a move, resize or delete at `path` whose `action_id` is in `fixed`,
+/// the locked actions no agent changes (Q53). The error names the action so
+/// the repair round asks for a change of a flexible one instead.
+fn keeps_fixed(output: &Value, args: &[Value], fixed: &BTreeSet<String>) -> Result<(), String> {
+    let [path] = args else { return Err("takes (path)".to_string()) };
+    let path = path.as_str().ok_or("takes a path to a list of changes")?;
+    for change in lookup(output, path).into_iter().flat_map(|v| v.as_array().cloned().unwrap_or_else(|| vec![v.clone()])) {
+        let op = change.get("op").and_then(Value::as_str).unwrap_or("");
+        let id = change.get("action_id").and_then(Value::as_str).unwrap_or("");
+        if matches!(op, "move" | "resize" | "delete") && fixed.contains(id) {
+            let title = change.get("title").and_then(Value::as_str).unwrap_or(id);
+            return Err(format!("`{title}` is a fixed action: never move, resize or delete it; change a flexible action instead"));
+        }
+    }
+    Ok(())
 }
 
 /// Builds the registry with `busy` bound into `no_overlap`, so the items at
-/// its path also never overlap a kept device event; busy slots are never
-/// checked against each other. Returns the registry.
-pub fn registry_with_busy(busy: Vec<Slot>) -> EvalRegistry {
+/// its path also never overlap a kept device event (busy slots are never
+/// checked against each other), and the `fixed` action ids into `keeps_fixed`.
+pub fn registry_with_busy(busy: Vec<Slot>, fixed: BTreeSet<String>) -> EvalRegistry {
     let mut r = EvalRegistry::new();
+    r.register("keeps_fixed", Arc::new(move |output: &Value, args: &[Value]| keeps_fixed(output, args, &fixed))).expect("fresh name");
     r.register("public_sources", Arc::new(public_sources)).expect("fresh name");
+    r.register("owner_terms", Arc::new(owner_terms)).expect("fresh name");
     let overlap = move |output: &Value, args: &[Value]| {
         if args.len() != 1 {
             return Err("takes (path)".to_string());
@@ -224,6 +278,20 @@ mod tests {
 
     fn plan(items: Value) -> Value {
         json!({ "items": items })
+    }
+
+    #[test]
+    fn keeps_fixed_rejects_any_change_to_a_locked_action() {
+        let fixed: BTreeSet<String> = ["a-fixed".to_string()].into();
+        let registry = registry_with_busy(vec![], fixed);
+        let keeps = registry.get("keeps_fixed").unwrap();
+        let change = |op: &str, id: Option<&str>| json!({"op": op, "action_id": id, "title": "Dentist", "start": null, "minutes": null});
+        for op in ["move", "resize", "delete"] {
+            let err = keeps(&json!({"changes": [change(op, Some("a-fixed"))]}), &[json!("changes")]).unwrap_err();
+            assert!(err.contains("Dentist") && err.contains("fixed"), "{err}");
+        }
+        assert!(keeps(&json!({"changes": [change("move", Some("a-free")), change("create", None)]}), &[json!("changes")]).is_ok());
+        assert!(keeps(&json!({"changes": []}), &[]).is_err(), "takes (path)");
     }
 
     #[test]
@@ -284,7 +352,7 @@ mod tests {
             {"title": "Sync", "start": "2026-11-23T09:15:00", "minutes": 30}
         ]))
         .unwrap();
-        let r = registry_with_busy(busy);
+        let r = registry_with_busy(busy, Default::default());
         let f = r.get("no_overlap").unwrap();
         let clear = plan(json!([{"title": "Run", "start": "2026-11-23T07:00:00", "minutes": 30, "rrule": "FREQ=DAILY"}]));
         assert!(f(&clear, &[json!("items")]).is_ok());
@@ -340,5 +408,43 @@ mod tests {
         assert!(public_sources(&json!({"sources": [{"title": "t", "url": 3}]}), &args).is_err());
         assert!(public_sources(&with(&[]), &[]).is_err());
         assert!(registry().get("public_sources").is_some());
+    }
+
+    /// The six intake questions of the owner's stuck production run, in the
+    /// shape the new schema takes, with the units and bounds they lacked.
+    fn prod_intake() -> Value {
+        json!({"questions": [
+            {"id": "pages_remaining", "kind": "number", "text": "About how many pages are left for you to read in The Joy of X?", "choices": [], "unit": "pages", "min": 0, "max": 400},
+            {"id": "daily_reading_minutes", "kind": "number", "text": "On a typical day this week, how many minutes can you set aside for reading?", "choices": [], "unit": "minutes per day", "min": 0, "max": 180},
+            {"id": "preferred_reading_time", "kind": "choice", "text": "When do you prefer to read?", "choices": ["Early morning", "Midday", "Evening", "Late night", "It varies"], "unit": null, "min": null, "max": null},
+            {"id": "reading_pace", "kind": "number", "text": "Roughly how many pages do you read per hour?", "choices": [], "unit": "pages per hour", "min": 0, "max": 200},
+            {"id": "book_format", "kind": "choice", "text": "What format are you reading the book in?", "choices": ["Print book", "E-reader", "Phone or tablet", "Audiobook"], "unit": null, "min": null, "max": null},
+            {"id": "busy_days_limits", "kind": "text", "text": "Are there days this week when you will be unavailable or have limits like eye strain or travel?", "choices": [], "unit": null, "min": null, "max": null}
+        ]})
+    }
+
+    #[test]
+    fn owner_terms_fails_questions_the_owner_must_work_out() {
+        let args = [json!("questions")];
+        let err = owner_terms(&prod_intake(), &args).unwrap_err();
+        assert!(err.contains("pages_remaining") && err.contains("reading_pace"), "{err}");
+        assert!(!err.contains("daily_reading_minutes"), "minutes per day is the owner's own number: {err}");
+        let mut fixed = prod_intake();
+        fixed["questions"][0] = json!({"id": "chapters_done", "kind": "number", "text": "How many chapters have you read so far?", "choices": [], "unit": "chapters", "min": 0, "max": 30});
+        fixed["questions"][3] = json!({"id": "reading_days", "kind": "number", "text": "On how many days this week can you read?", "choices": [], "unit": "days", "min": 1, "max": 7});
+        assert_eq!(owner_terms(&fixed, &args), Ok(()));
+        for (key, value) in [("unit", json!(null)), ("unit", json!(" ")), ("min", json!(null)), ("max", json!(null)), ("max", json!(-1))] {
+            let mut bad = fixed.clone();
+            bad["questions"][1][key] = value.clone();
+            assert!(owner_terms(&bad, &args).unwrap_err().contains("daily_reading_minutes"), "{key} = {value}");
+        }
+        let mut speed = fixed.clone();
+        speed["questions"][5]["text"] = json!("How many pages can you read in an hour?");
+        assert!(owner_terms(&speed, &args).is_err());
+        let mut plain = fixed.clone();
+        plain["questions"][5]["text"] = json!("Do you have an hour a day, or pain in your left knee?");
+        assert_eq!(owner_terms(&plain, &args), Ok(()), "an hour a day and a left knee are the owner's own words");
+        assert!(owner_terms(&fixed, &[]).is_err());
+        assert!(registry().get("owner_terms").is_some());
     }
 }

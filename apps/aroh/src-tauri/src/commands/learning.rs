@@ -28,3 +28,12 @@ pub fn app_edit_action(
     after_write(&app);
     Ok(action)
 }
+
+/// Turns Fixed time on or off for action `id` (the edit sheet and plan approval switch),
+/// then reschedules reminders. Output: the stored action.
+#[tauri::command]
+pub fn app_set_locked(app: AppHandle, state: State<'_, AppState>, id: String, locked: bool) -> Result<Action, String> {
+    let action = with_core(&state, |c| write::set_locked(&c.conn, &mut c.clock, &id, locked))?;
+    after_write(&app);
+    Ok(action)
+}

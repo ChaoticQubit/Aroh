@@ -76,13 +76,13 @@
 	{#if editable}
 		<Card.Root size="sm" class="gap-4 px-4">
 			<Field label="Name" id="{id}-name">
-				<Input id="{id}-name" class="h-11 text-base" bind:value={displayName} />
+				<Input id="{id}-name" class="h-11 text-lg" bind:value={displayName} />
 			</Field>
 			<Field label="Style" id="{id}-role">
-				<Textarea id="{id}-role" class="text-sm" bind:value={role} />
+				<Textarea id="{id}-role" class="text-lg" bind:value={role} />
 			</Field>
 			<Field label="Instructions" id="{id}-instructions">
-				<Textarea id="{id}-instructions" class="min-h-40 text-sm" bind:value={instructions} />
+				<Textarea id="{id}-instructions" class="min-h-40 text-lg" bind:value={instructions} />
 			</Field>
 		</Card.Root>
 	{:else}
@@ -110,7 +110,7 @@
 		{#if persona.locked.length}<p class="text-xs text-muted">Safety rules stay on every coach and cannot be removed.</p>{/if}
 		{#if editable}
 			<div class="flex items-center gap-2">
-				<Input aria-label="New rule" placeholder="Add a rule" class="h-11 flex-1 text-sm" bind:value={draft} onkeydown={(e) => e.key === 'Enter' && addRule()} />
+				<Input aria-label="New rule" placeholder="Add a rule" class="h-11 flex-1 text-lg" bind:value={draft} onkeydown={(e) => e.key === 'Enter' && addRule()} />
 				<Button variant="outline" size="touch" class="@3xl:h-8" onclick={addRule}><Plus />Add</Button>
 			</div>
 		{/if}

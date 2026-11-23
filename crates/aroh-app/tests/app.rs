@@ -41,10 +41,14 @@ fn settings_are_whitelisted_and_validated() {
     local::set_setting(&conn, "server_url", "https://engine.example.com").unwrap();
     assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("https://engine.example.com"));
     local::set_setting(&conn, "server_url", "").unwrap();
-    assert_eq!(local::setting(&conn, "server_url").unwrap(), None);
+    assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("https://aroh-ten.vercel.app"));
+    assert_eq!(local::setting(&conn, "goal_budget_usd").unwrap(), None);
     assert!(local::set_setting(&conn, "server_url", "http://engine.example.com").is_err());
     assert!(local::set_setting(&conn, "user_id", "x").is_err());
     assert!(local::set_setting(&conn, "calendars", "maybe").is_err());
+    assert!(local::set_setting(&conn, "setup_done", "maybe").is_err());
+    local::set_setting(&conn, "setup_done", "true").unwrap();
+    assert_eq!(local::setting(&conn, "setup_done").unwrap().as_deref(), Some("true"));
     assert!(local::set_setting(&conn, "goal_budget_usd", "-1").is_err());
     local::set_setting(&conn, "goal_budget_usd", "8").unwrap();
 }
@@ -62,9 +66,24 @@ fn dismissed_insights_hold_at_most_30_uuids() {
 }
 
 #[test]
+fn day_suggestions_hold_at_most_300_known_kinds() {
+    let (conn, _, _) = setup();
+    local::set_setting(&conn, "day_suggestions", r#"{"trip":"away","fair":"busy","bday":"reminder"}"#).unwrap();
+    assert!(local::setting(&conn, "day_suggestions").unwrap().unwrap().contains("trip"));
+    local::set_setting(&conn, "day_suggestions", "{}").unwrap();
+    let many: serde_json::Map<String, serde_json::Value> = (0..=300).map(|i| (format!("e{i}"), json!("busy"))).collect();
+    assert!(local::set_setting(&conn, "day_suggestions", &serde_json::Value::Object(many).to_string()).is_err());
+    assert!(local::set_setting(&conn, "day_suggestions", r#"{"trip":"holiday"}"#).is_err());
+    assert!(local::set_setting(&conn, "day_suggestions", r#"{"":"busy"}"#).is_err());
+    assert!(local::set_setting(&conn, "day_suggestions", &format!(r#"{{"{}":"busy"}}"#, "x".repeat(256))).is_err());
+    assert!(local::set_setting(&conn, "day_suggestions", r#"["busy"]"#).is_err());
+    assert!(local::set_setting(&conn, "day_suggestions", "true").is_err());
+}
+
+#[test]
 fn tick_seeds_materializes_and_is_idempotent() {
     let (conn, mut clock, user) = seeded();
-    let first = tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    let first = tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
     assert_eq!(repo::list::<Category>(&conn, &[]).unwrap().len(), 6);
     assert!(first.materialized > 0);
     let series: Vec<ActionSeries> = repo::list(&conn, &[]).unwrap();
@@ -76,16 +95,16 @@ fn tick_seeds_materializes_and_is_idempotent() {
         .filter(|a| a.start_at >= now() && a.start_at < horizon)
         .collect();
     assert_eq!(ahead.len(), 14);
-    let second = tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    let second = tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
     assert_eq!((second.seeded, second.materialized, second.missed), (0, 0, 0));
 }
 
 #[test]
 fn tick_marks_overdue_planned_actions_missed() {
     let (conn, mut clock, user) = seeded();
-    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
     let later = now() + Duration::days(2);
-    let report = tick::tick(&conn, &mut clock, &user, later).unwrap();
+    let report = tick::tick(&conn, &mut clock, &user, later, ZONE).unwrap();
     assert!(report.missed > 0);
     let actions: Vec<Action> = repo::list(&conn, &[]).unwrap();
     let grace = Duration::minutes(tick::MISSED_GRACE_MIN);
@@ -96,7 +115,7 @@ fn tick_marks_overdue_planned_actions_missed() {
 #[test]
 fn snapshot_returns_live_rows_of_the_range() {
     let (conn, mut clock, user) = seeded();
-    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
     let from = now() - Duration::days(1);
     let to = now() + Duration::days(1);
     let snap = snapshot::snapshot(&conn, &user, from, to, now() - Duration::days(30)).unwrap();
@@ -193,7 +212,7 @@ fn a_bad_diff_changes_nothing_and_reject_only_sets_status() {
 #[test]
 fn done_status_stamps_done_at() {
     let (conn, mut clock, user) = seeded();
-    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
     let planned = repo::list::<Action>(&conn, &[("status", "planned")]).unwrap().remove(0);
     let done = write::set_action_status(&conn, &mut clock, &planned.id, ActionStatus::Done, now()).unwrap();
     assert_eq!(done.done_at, Some(now()));
@@ -205,7 +224,7 @@ fn done_status_stamps_done_at() {
 #[test]
 fn edit_action_moves_resizes_deletes_and_locks() {
     let (conn, mut clock, user) = seeded();
-    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
     let planned = repo::list::<Action>(&conn, &[("status", "planned")]).unwrap().remove(0);
     assert!(!planned.locked);
     let start = planned.start_at + Duration::hours(10);
@@ -226,7 +245,7 @@ fn edit_action_moves_resizes_deletes_and_locks() {
 #[test]
 fn reminders_cover_actions_and_check_ins() {
     let (conn, mut clock, user) = seeded();
-    tick::tick(&conn, &mut clock, &user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
     let planned = remind::plan(&conn, &user, now(), ZONE).unwrap();
     assert!(!planned.is_empty() && planned.len() <= remind::CAP);
     assert!(planned.windows(2).all(|w| w[0].fire_at <= w[1].fire_at));
@@ -267,7 +286,7 @@ const ACCOUNT: &str = "0190f2a0-0000-7000-8000-0000000000ac";
 #[test]
 fn adopt_reowns_rows_and_reseeds() {
     let (mut conn, mut clock, local_user) = seeded();
-    tick::tick(&conn, &mut clock, &local_user, now()).unwrap();
+    tick::tick(&conn, &mut clock, &local_user, now(), ZONE).unwrap();
     let old_seeds: Vec<String> = aroh_domain::seed::categories(&local_user).into_iter().map(|c| c.id).collect();
     let goals_before = repo::list::<Goal>(&conn, &[]).unwrap();
     assert!(goals_before.iter().any(|g| g.category_id.as_ref().is_some_and(|c| old_seeds.contains(c))));
@@ -330,5 +349,24 @@ fn supabase_settings_validate() {
     local::set_setting(&conn, "supabase_anon_key", "eyJhbGciOiJIUzI1NiJ9.e30.signature").unwrap();
     assert!(local::set_setting(&conn, "supabase_url", "http://evil.example.com").is_err());
     assert!(local::set_setting(&conn, "supabase_anon_key", "short").is_err());
-    assert_eq!(local::settings(&conn).unwrap().len(), 2);
+    assert_eq!(local::settings(&conn).unwrap().len(), 3);
+}
+
+#[test]
+fn hosted_project_and_engine_are_the_defaults_until_the_owner_sets_others() {
+    let (conn, _, _) = setup();
+    let defaults = [
+        ("supabase_url", "https://dgxkjlgsxxejpapsdzjd.supabase.co"),
+        ("supabase_anon_key", "sb_publishable_cD0WV69uaKlGDnnRWrGjrQ_cw1civNB"),
+        ("server_url", "https://aroh-ten.vercel.app"),
+    ];
+    for (name, value) in defaults {
+        assert_eq!(local::setting(&conn, name).unwrap().as_deref(), Some(value), "{name}");
+        assert_eq!(local::settings(&conn).unwrap().get(name).map(String::as_str), Some(value), "{name}");
+        local::set_setting(&conn, name, value).unwrap();
+    }
+    local::set_setting(&conn, "server_url", "http://127.0.0.1:8095").unwrap();
+    assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("http://127.0.0.1:8095"));
+    local::set_setting(&conn, "server_url", " ").unwrap();
+    assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("https://aroh-ten.vercel.app"));
 }

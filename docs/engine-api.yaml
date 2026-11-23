@@ -790,6 +790,105 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/runs/{run_id}/cancel:
+    post:
+      tags:
+      - runs
+      operationId: cancel_run
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Stopped, or already finished
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/runs/{run_id}/retry:
+    post:
+      tags:
+      - runs
+      operationId: retry_run
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: the run is not stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/settings/run-limit:
+    get:
+      tags:
+      - runs
+      operationId: get_run_limit
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunLimit'
+      security:
+      - bearer: []
+    put:
+      tags:
+      - runs
+      operationId: set_run_limit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunLimit'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunLimit'
+        '400':
+          description: minutes outside 1 to 120
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/tick:
     post:
       tags:
@@ -854,8 +953,8 @@ components:
       type: object
       description: |-
         Body of `POST /v1/runs/{run_id}/answers`: the human node and its answer.
-        Approval nodes take a bool, `questions` takes `[{id, answer}]`, and
-        `change` takes a string.
+        Approval nodes take a bool, `questions` takes `[{id, answer}]` with
+        `answer` a string, or null for a skipped question, and `change` a string.
       required:
       - node
       - answer
@@ -1231,6 +1330,20 @@ components:
           type: integer
           format: int32
           minimum: 0
+    RunLimit:
+      type: object
+      description: |-
+        The owner's run time limit: minutes of active work a run may take
+        before it stops, 1 to 120; time waiting for the owner never counts.
+        Five minutes until the owner sets one.
+      required:
+      - minutes
+      properties:
+        minutes:
+          type: integer
+          format: int32
+          minimum: 0
+      additionalProperties: false
     RunSummary:
       type: object
       description: |-

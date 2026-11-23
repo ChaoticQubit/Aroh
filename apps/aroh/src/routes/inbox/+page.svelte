@@ -5,26 +5,32 @@
 	import * as client from '$lib/app/client';
 	import { follow } from '$lib/app/chat.svelte';
 	import { engine, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
-	import { decisionsFrom, finishTriage, openTriage, triageCards } from '$lib/app/calendar';
+	import { decisionsFrom, deviceSuggestions, finishTriage, refreshSuggestions, triageCards } from '$lib/app/calendar';
 	import { inboxView } from '$lib/app/views';
+	import * as location from '$lib/app/location';
+	import { getClock } from '$lib/ui/clock';
 
+	const clock = getClock();
 	const s = $derived(data.snapshot);
 	let runs = $state<RunSummary[]>([]);
 	let insights = $state<Insight[]>([]);
+	let waits = $state<Record<string, string>>({});
 	let triage = $state<{ runId: string; waiting: Waiting } | null>(null);
 	let answers: Record<string, unknown> = {};
+	let places = $state<location.LocationView | null>(null);
 
-	/** Reads the engine's newest runs and insights; offline leaves both lists empty. */
+	/** Reads the engine's newest runs, what the waiting ones wait for, and insights; offline leaves all empty. */
 	async function loadRuns() {
 		const [r, i] = await Promise.all([engine.runs(), engine.insights()]);
 		runs = r.ok ? r.value : [];
 		insights = i.ok ? i.value : [];
+		waits = await engine.waits(runs);
 		await loadTriage();
 	}
 
-	/** Reads the calendar-triage run waiting at `decide`, if any, for the Calendar groups cards. */
+	/** Reads the calendar-triage run waiting at `decide` for the group cards and keeps its day suggestions. */
 	async function loadTriage() {
-		triage = await openTriage(runs);
+		triage = data.snapshot ? await refreshSuggestions(data.snapshot, deviceSuggestions(runs)) : null;
 		answers = {};
 	}
 
@@ -42,6 +48,13 @@
 	}
 
 	onMount(() => void loadRuns());
+	onMount(() => location.follow((v) => (places = v), (e) => (data.error = String(e))));
+
+	/** Answers a place prompt; an answer the card cannot give is ignored. */
+	function onplace(id: string, answer: unknown) {
+		const decision = location.decisionFor(answer);
+		if (decision) void data.run(() => location.decidePrompt(id, decision));
+	}
 
 	/**
 	 * The replan run of `goalId` waiting at `approve` for proposal `id`, if any. Such a proposal is
@@ -57,9 +70,10 @@
 		return null;
 	}
 
-	/** The dismissed insight ids still shown, plus `id`: the list stays as short as the Inbox. */
+	/** The dismissed insight ids still shown (engine insights, device notes, Busy-day and fixed-clash notes), plus `id`. */
 	function dismissedWith(id: string): string {
-		const shown = new Set([...insights, ...(s?.notes ?? [])].map((i) => i.id));
+		const ids = [...insights, ...(s?.notes ?? [])].map((i) => i.id);
+		const shown = new Set([...ids, ...(s?.busy ?? []).map((b) => b.id), ...(s?.actions ?? []).filter((a) => a.locked).map((a) => a.id)]);
 		const kept = (s?.settings.dismissed_insights ?? '').split(',').filter((x) => shown.has(x) && x !== id);
 		return [...kept, id].slice(-30).join(',');
 	}
@@ -74,6 +88,7 @@
 		if (group === 'suggestion') return data.run(() => client.decidePreference(id, yes));
 		if (group === 'insight') return data.run(() => client.setSetting('dismissed_insights', dismissedWith(id)));
 		if (group !== 'approval') return;
+		if (id.startsWith(location.PATTERN_PREFIX)) return data.run(() => location.decidePattern(id.slice(location.PATTERN_PREFIX.length), yes));
 		const goalId = s?.proposals.find((p) => p.id === id)?.goal_id;
 		const runId = goalId ? await waitingRun(goalId, id) : null;
 		if (!runId) return data.run(() => client.decideProposal(id, yes));
@@ -85,5 +100,13 @@
 </script>
 
 {#if s}
-	<InboxScreen {...inboxView(s, runs, insights)} triage={triageCards(triage?.waiting)} {ondecide} />
+	{@const inbox = inboxView(s, runs, insights, clock.zone, clock.now, waits)}
+	<InboxScreen
+		{...inbox}
+		approvals={[...(places ? location.patternItems(places) : []), ...inbox.approvals]}
+		places={places ? location.placePrompts(places, s) : []}
+		triage={triageCards(triage?.waiting)}
+		{ondecide}
+		{onplace}
+	/>
 {/if}

@@ -5,8 +5,9 @@ goal = "A short evidence-based summary of the course of study, its modules and h
 instructions = """
 1. Search the web for the syllabus, course outline or standard levels of the subject with web_search.
 2. Read the one or two most relevant pages with web_fetch.
-3. Summarize the modules in order, realistic study time per module, and quizzes or exercises that check understanding, fitted to the owner's answers.
+3. Summarize the modules in order, realistic study time per module, and quizzes or exercises that check understanding, for the goal as stated: for a book, its chapters and length.
 4. List every source you used. When search is not available, say so and summarize common guidance.
+5. Name the facts the plan needs that you could not find, such as the length of a book, so the interviewer asks the owner.
 """
 model = "default"
 tools = ["web_search", "web_fetch"]

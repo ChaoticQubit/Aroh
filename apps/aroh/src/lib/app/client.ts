@@ -66,8 +66,8 @@ export type Budget = { id: string; scope: 'call' | 'run' | 'goal_month' | 'user_
 /** A kept device calendar event as busy time; times are RFC 3339 UTC. */
 export type BusyBlock = { id: string; calendar_id: string; event_id: string; title: string; start_at: string; end_at: string; all_day: boolean; group_name: string | null; day_kind: 'reminder' | 'busy' | 'away' | null };
 
-/** One device calendar occurrence as the EventKit plugin reads it; times are ISO 8601. */
-export type DeviceEvent = { calendar_id: string; calendar: string; event_id: string; title: string; start_at: string; end_at: string; all_day: boolean; rrule: string | null };
+/** One device calendar occurrence as the EventKit plugin reads it; times are ISO 8601, `holiday` marks holiday and birthday calendars. */
+export type DeviceEvent = { calendar_id: string; calendar: string; event_id: string; title: string; start_at: string; end_at: string; all_day: boolean; rrule: string | null; holiday?: boolean };
 
 /** What one calendar import did; `unmatched` holds one event per series for triage. */
 export type CalendarImport = { kept: number; ignored: number; removed: number; unmatched: DeviceEvent[] };
@@ -86,7 +86,7 @@ export type Snapshot = {
 	providers: ProviderSetting[];
 	search: SearchSetting[];
 	budgets: Budget[];
-	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights', string>>;
+	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions', string>>;
 	pending_logs: { text: string; at: string }[];
 	busy?: BusyBlock[];
 	notes?: Note[];
@@ -102,8 +102,8 @@ export type Logged = { kind: 'entry'; entry: TrackerEntry } | { kind: 'queued' }
 /** Reads the snapshot with actions overlapping `[from, to)`. */
 export const snapshot = (from: string, to: string) => invoke<Snapshot>('app_snapshot', { from, to });
 
-/** Runs the start-up tick (seed, materialize, mark missed) now. */
-export const tick = () => invoke<{ seeded: number; materialized: number; missed: number }>('app_tick');
+/** Runs the start-up tick (seed, materialize, keep off Busy days, mark missed) now. */
+export const tick = () => invoke<{ seeded: number; materialized: number; missed: number; moved: number }>('app_tick');
 
 /** Sets an action to planned, done or skipped. */
 export const setActionStatus = (id: string, status: 'planned' | 'done' | 'skipped') => invoke<Action>('app_set_action_status', { id, status });
@@ -130,7 +130,7 @@ export const saveProvider = (vendor: string, model: string) => invoke<ProviderSe
 export const saveBudget = (usd: number | null) => invoke<null>('app_save_budget', { usd });
 
 /** Stores one device setting. */
-export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights', value: string) => invoke<null>('app_set_setting', { name, value });
+export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions', value: string) => invoke<null>('app_set_setting', { name, value });
 
 /** Asks for notification permission once and reports whether it is granted. */
 export const notificationPermission = () => invoke<boolean>('app_notification_permission');
@@ -176,6 +176,9 @@ export const editAction = (id: string, start: string, end: string) => invoke<Act
 
 /** Deletes an action; the server learns from the edit when it syncs. */
 export const deleteAction = (id: string) => invoke<Action>('app_edit_action', { id, startAt: null, endAt: null, delete: true });
+
+/** Turns Fixed time on or off for an action; a fixed action is never moved by agents or the app. */
+export const setLocked = (id: string, locked: boolean) => invoke<Action>('app_set_locked', { id, locked });
 
 /** What confirming an all-day kind did: actions moved off a Busy day and titles that found no slot. */
 export type DaySet = { blocks: number; moved: Action[]; stuck: string[] };

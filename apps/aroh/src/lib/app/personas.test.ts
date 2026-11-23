@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { coachesOn, editError, groupByTeam, type PersonaView } from './personas';
+import { coachesOn, editError, groupByTeam, loadCoaches, type PersonaView } from './personas';
+import type { Snapshot } from './client';
 
 const SAFETY = 'Safety: no individual investment, tax or legal advice; refer to a licensed financial professional for those.';
 
@@ -56,6 +57,25 @@ describe('persona library', () => {
 			['intake-interviewer', 'intake-interviewer']
 		]);
 		expect(coachesOn(views, rows, [], 'none')).toEqual([]);
+	});
+
+	it('loads the library and the coaches of one goal, empty when offline', async () => {
+		const s = { personas: [{ id: '1', goal_id: 'g1', name: 'practice-coach' }] } as unknown as Snapshot;
+		const asked: (string | undefined)[] = [];
+		const online = {
+			personas: async () => ({ ok: true as const, value: views }),
+			runs: async (q: { goalId?: string }) => (asked.push(q.goalId), { ok: true as const, value: [{ personas: ['goal-planner'] }] })
+		};
+		const loaded = await loadCoaches(s, 'g1', online);
+		expect(loaded.coaches.map((c) => c.name)).toEqual(['goal-planner', 'practice-coach']);
+		expect([loaded.views.length, loaded.status]).toEqual([views.length, null]);
+		expect(asked).toEqual(['g1']);
+		const library = await loadCoaches(s, null, online);
+		expect([library.coaches, library.views.length]).toEqual([[], views.length]);
+		expect(asked, 'no goal, no runs read').toEqual(['g1']);
+		const offline = { personas: async () => ({ ok: false as const, reason: 'needs_engine' as const, message: 'Offline.' }), runs: async () => ({ ok: false as const, reason: 'needs_engine' as const, message: 'Offline.' }) };
+		const away = await loadCoaches(s, 'g1', offline);
+		expect([away.views, away.coaches.map((c) => c.name), away.status]).toEqual([[], ['practice-coach'], 'Offline.']);
 	});
 
 	it('turns engine errors into owner text', () => {

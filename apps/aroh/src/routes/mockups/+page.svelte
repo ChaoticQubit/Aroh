@@ -20,6 +20,13 @@
 	import LogScreen from '$lib/ui/screens/LogScreen.svelte';
 	import { setClock } from '$lib/ui/clock';
 	import ClockFrame from './ClockFrame.svelte';
+	import LocationExplainer from '$lib/ui/components/location/LocationExplainer.svelte';
+	import LockScreenNudge from '$lib/ui/components/location/LockScreenNudge.svelte';
+	import PlacesScreen from '$lib/ui/screens/PlacesScreen.svelte';
+	import RoutinesScreen from '$lib/ui/screens/RoutinesScreen.svelte';
+	import LocationSettingsScreen from '$lib/ui/screens/LocationSettingsScreen.svelte';
+	import LocationLogScreen from '$lib/ui/screens/LocationLogScreen.svelte';
+	import { groceryPattern, gymPrompt, locationSettings, placeResults, places, routines, routinesHeader, routinesView, visits } from '$lib/ui/mockdata/location';
 	import { gallery } from '$lib/ui/mockdata/gallery';
 	import {
 		plannedActions,
@@ -31,6 +38,7 @@
 		sixpackActions,
 		sixpackChat,
 		sixpackGoals,
+		sixpackCoaches,
 		sixpackHeader,
 		sixpackInbox,
 		sixpackInboxItems,
@@ -42,7 +50,7 @@
 
 	setClock({ now: mockNow, zone: mockZone });
 
-	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing';
+	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'location';
 	const VIEWS: { value: View; label: string }[] = [
 		{ value: 'tokens', label: 'Tokens' },
 		{ value: 'inputs', label: 'Inputs' },
@@ -51,10 +59,11 @@
 		{ value: 'agent', label: 'Agent' },
 		{ value: 'screens-phone', label: 'Screens (phone)' },
 		{ value: 'screens-desktop', label: 'Screens (desktop)' },
-		{ value: 'editing', label: 'Calendar editing' }
+		{ value: 'editing', label: 'Calendar editing' },
+		{ value: 'location', label: 'Location' }
 	];
 	const keep = () => {};
-	const EDIT = { onedit: keep, ondelete: keep, onchoose: keep, inline: true };
+	const EDIT = { onedit: keep, onlock: keep, ondelete: keep, onchoose: keep, inline: true };
 	const PIANO = 'a-2026-11-26-2000-4';
 	const CORE = 'a-2026-12-03-0700-2';
 	const EDITING: { name: string; title: string; tab: TabId; now: string; screen: Component<any>; props: Record<string, unknown> }[] = [
@@ -73,11 +82,25 @@
 		{ name: 'Today', title: 'Today', tab: 'today', screen: TodayScreen, props: { actions: plannedActions, checkIn: weightCheckIn, insight: sixpackInbox.insights[0], allDay: sixpackAllDay } },
 		{ name: 'Calendar', title: 'Calendar', tab: 'calendar', screen: CalendarScreen, props: { actions: plannedActions, categories, allDay: sixpackAllDay } },
 		{ name: 'Goals', title: 'Goals', tab: 'goals', screen: GoalsScreen, props: { goals: sixpackGoals, categories } },
-		{ name: 'Goal', title: 'Goals', tab: 'goals', screen: GoalScreen, props: { goal: sixpackHeader, view: sixpackView, versions: [{ value: 'derived', label: 'Derived' }, { value: 'p2', label: 'v2' }, { value: 'p1', label: 'v1' }], version: 'p2' } },
+		{ name: 'Goal', title: 'Goals', tab: 'goals', screen: GoalScreen, props: { goal: sixpackHeader, coaches: sixpackCoaches, view: sixpackView, versions: [{ value: 'derived', label: 'Derived' }, { value: 'p2', label: 'v2' }, { value: 'p1', label: 'v1' }], version: 'p2' } },
 		{ name: 'New goal', title: 'New goal', tab: 'goals', screen: NewGoalScreen, props: { messages: sixpackChat } },
 		{ name: 'Inbox', title: 'Inbox', tab: 'inbox', screen: InboxScreen, props: { ...sixpackInboxItems, runs: sixpackInbox.runs } },
 		{ name: 'Log', title: 'Log', tab: 'log', screen: LogScreen, props: sixpackLog },
 		{ name: 'Settings', title: 'Settings', tab: 'settings', screen: SettingsScreen, props: { settings: sixpackSettings } }
+	];
+	const NUDGE = { time: '18:04', date: 'Thursday 26 November', title: 'Strength session, due 18:00', body: 'Near your gym. Quick workout to stay on track?', detail: 'Six-pack by summer', actions: ['Mark done', 'Remind me in 1 hour', 'Skip today'] };
+	const LOCATION: { name: string; title: string | null; tab: TabId | 'settings'; now: string; screen: Component<any>; props: Record<string, unknown> }[] = [
+		{ name: 'Before asking for Always', title: null, tab: 'today', now: mockNow, screen: LocationExplainer, props: {} },
+		{ name: 'Inbox, is this your gym?', title: 'Inbox', tab: 'inbox', now: mockNow, screen: InboxScreen, props: { places: [gymPrompt], approvals: [], suggestions: [], insights: [], runs: [] } },
+		{ name: 'Lock screen nudge', title: null, tab: 'today', now: '2026-11-26T18:04:00Z', screen: LockScreenNudge, props: NUDGE },
+		{ name: 'Nudge, long press', title: null, tab: 'today', now: '2026-11-26T18:04:00Z', screen: LockScreenNudge, props: { ...NUDGE, expanded: true } },
+		{ name: 'Inbox, learned routine', title: 'Inbox', tab: 'inbox', now: mockNow, screen: InboxScreen, props: { approvals: [], suggestions: [groceryPattern, ...sixpackInboxItems.suggestions], insights: [], runs: [] } },
+		{ name: 'Places', title: 'Places', tab: 'settings', now: mockNow, screen: PlacesScreen, props: { places } },
+		{ name: 'Places, add by map search', title: 'Places', tab: 'settings', now: mockNow, screen: PlacesScreen, props: { places, query: 'trader', results: placeResults } },
+		{ name: 'Routines goal', title: 'Goals', tab: 'goals', now: mockNow, screen: RoutinesScreen, props: { goal: routinesHeader, view: routinesView, routines } },
+		{ name: 'Settings, Location row', title: 'Settings', tab: 'settings', now: mockNow, screen: SettingsScreen, props: { settings: sixpackSettings, onlocation: keep } },
+		{ name: 'Settings, Location', title: 'Location', tab: 'settings', now: mockNow, screen: LocationSettingsScreen, props: { settings: locationSettings } },
+		{ name: 'Location log', title: 'Location log', tab: 'settings', now: '2026-11-26T18:05:00Z', screen: LocationLogScreen, props: { visits } }
 	];
 	const COLORS = ['bg', 'surface', 'surface-2', 'border', 'border-strong', 'fg', 'muted', 'accent', 'status-done', 'status-planned', 'status-warn', 'status-missed', 'status-skipped', 'series-1', 'series-2', 'series-3', 'series-4', 'series-5', 'series-6', 'cat-1', 'cat-2', 'cat-3', 'cat-4', 'cat-5', 'cat-6'];
 	const TYPE = ['text-xs', 'text-sm', 'text-md', 'text-lg', 'text-xl'];
@@ -203,6 +226,23 @@
 						<div class="box-content h-[844px] w-[390px] [transform:translateZ(0)] overflow-hidden rounded-md border border-border bg-bg">
 							<ClockFrame now={s.now} zone={mockZone}>
 								<PhoneShell title={s.title} tab={s.tab} {inboxCount}><s.screen {...s.props} /></PhoneShell>
+							</ClockFrame>
+						</div>
+						<p class="text-sm font-medium">{s.name}</p>
+					</li>
+				{/each}
+			</ul>
+		{:else if view === 'location'}
+			<ul class="flex gap-6 overflow-x-auto pb-4">
+				{#each LOCATION as s (s.name)}
+					<li class="flex shrink-0 flex-col items-center gap-2">
+						<div class="box-content h-[844px] w-[390px] [transform:translateZ(0)] overflow-hidden rounded-md border border-border bg-bg">
+							<ClockFrame now={s.now} zone={mockZone}>
+								{#if s.title}
+									<PhoneShell title={s.title} tab={s.tab} {inboxCount}><s.screen {...s.props} /></PhoneShell>
+								{:else}
+									<s.screen {...s.props} />
+								{/if}
 							</ClockFrame>
 						</div>
 						<p class="text-sm font-medium">{s.name}</p>

@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import NewGoalScreen from '$lib/ui/screens/NewGoalScreen.svelte';
 	import { GoalChat } from '$lib/app/chat.svelte';
+	import { speech } from '$lib/app/speech.svelte';
 
 	const chat = $derived(new GoalChat(page.params.id ?? null, 'What changed? Tell me and I will look at the plan.'));
 
@@ -9,5 +10,5 @@
 </script>
 
 {#key chat}
-	<NewGoalScreen messages={chat.messages} onchange={(e) => chat.handle(e)} echo={false} />
+	<NewGoalScreen messages={chat.messages} onchange={(e) => chat.handle(e)} echo={false} voice={speech} />
 {/key}
