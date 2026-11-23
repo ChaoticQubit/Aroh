@@ -179,6 +179,7 @@ pub fn remove_sent(conn: &Connection, sent: &[PendingLog]) -> Result<usize> {
 
 const ZONE: &str = "zone";
 const ZONE_PENDING: &str = "zone_pending";
+const ZONE_BEFORE: &str = "zone_before";
 const NOTES: &str = "notes";
 
 /// Most device-local Inbox notes kept; the oldest beyond it are dropped.
@@ -199,15 +200,24 @@ pub fn zone(conn: &Connection) -> Result<Option<String>> {
     Ok(get_state(conn, &key(ZONE))?)
 }
 
-/// Stores `zone` as the zone the rows follow. With `pending` the engine's stored
-/// zone still has to follow (see [`zone_pending`]).
+/// Stores `zone` as the zone the rows follow. With `pending` (a shift) the zone it
+/// replaces becomes [`previous_zone`] and the engine's stored zone still has to follow
+/// (see [`zone_pending`]).
 pub fn set_zone(conn: &Connection, zone: &str, pending: bool) -> Result<()> {
     assert!(zone.parse::<chrono_tz::Tz>().is_ok(), "zone must be a known IANA name");
-    set_state(conn, &key(ZONE), zone)?;
     if pending {
+        if let Some(before) = self::zone(conn)? {
+            set_state(conn, &key(ZONE_BEFORE), &before)?;
+        }
         set_state(conn, &key(ZONE_PENDING), "true")?;
     }
+    set_state(conn, &key(ZONE), zone)?;
     Ok(())
+}
+
+/// The zone the rows followed before the last shift; `None` before the first shift.
+pub fn previous_zone(conn: &Connection) -> Result<Option<String>> {
+    Ok(get_state(conn, &key(ZONE_BEFORE))?)
 }
 
 /// Whether a zone change still has to reach the engine.

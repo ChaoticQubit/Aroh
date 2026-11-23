@@ -16,7 +16,7 @@ pub const MAX_PER_WINDOW: usize = 500;
 /// Largest COUNT a series rule may carry.
 pub const MAX_COUNT: u32 = 10_000;
 
-const LOCAL_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
+pub(crate) const LOCAL_FORMAT: &str = "%Y-%m-%dT%H:%M:%S";
 const ICAL_LOCAL: &str = "%Y%m%dT%H%M%S";
 const ICAL_UTC: &str = "%Y%m%dT%H%M%SZ";
 
@@ -85,29 +85,39 @@ pub fn materialize(series: &ActionSeries, from: DateTime<Utc>, days: u32, existi
     }
     let set = rule_set(series)?;
     let to = from + Duration::days(i64::from(days));
-    let length = Duration::minutes(series.duration_minutes);
-    let actions: Vec<Action> = occurrences(set, from, to)?
-        .into_iter()
-        .filter(|at| !existing.contains(at))
-        .map(|at| Action {
-            id: occurrence_id(&series.id, &at),
-            user_id: series.user_id.clone(),
-            goal_id: series.goal_id.clone(),
-            series_id: Some(series.id.clone()),
-            occurrence: Some(at),
-            title: series.title.clone(),
-            notes: series.notes.clone(),
-            start_at: at,
-            end_at: at + length,
-            status: ActionStatus::Planned,
-            locked: false,
-            done_at: None,
-            updated_at: crate::seed::SEED_STAMP.to_string(),
-            deleted: false,
-        })
-        .collect();
+    let actions: Vec<Action> =
+        occurrences(set, from, to)?.into_iter().filter(|at| !existing.contains(at)).map(|at| occurrence(series, at)).collect();
     assert!(actions.len() <= MAX_PER_WINDOW);
     Ok(actions)
+}
+
+/// The derived action of `series` at occurrence `at`: deterministic id, planned,
+/// unlocked, the series' length and the lowest stamp, exactly as [`materialize`]
+/// writes it. Input: a series and one of its occurrence instants. Output: the action.
+pub fn occurrence(series: &ActionSeries, at: DateTime<Utc>) -> Action {
+    Action {
+        id: occurrence_id(&series.id, &at),
+        user_id: series.user_id.clone(),
+        goal_id: series.goal_id.clone(),
+        series_id: Some(series.id.clone()),
+        occurrence: Some(at),
+        title: series.title.clone(),
+        notes: series.notes.clone(),
+        start_at: at,
+        end_at: at + Duration::minutes(series.duration_minutes),
+        status: ActionStatus::Planned,
+        locked: false,
+        done_at: None,
+        updated_at: crate::seed::SEED_STAMP.to_string(),
+        deleted: false,
+    }
+}
+
+/// Whether `at` is an occurrence of the current rule of `series`.
+/// Input: a series and an instant. Output: true when the rule yields exactly `at`.
+/// Errors with `Recurrence` when the series rule does not validate.
+pub fn is_occurrence(series: &ActionSeries, at: DateTime<Utc>) -> Result<bool> {
+    Ok(occurrences(rule_set(series)?, at, at + Duration::seconds(1))? == [at])
 }
 
 fn rule_parts(line: &str) -> Vec<String> {
@@ -130,8 +140,7 @@ pub fn split(series: &ActionSeries, at: DateTime<Utc>, new_id: String) -> Result
     let tz = timezone(series)?;
     let start = *set.get_dt_start();
     let rule = set.get_rrule()[0].clone();
-    let hit = occurrences(set.clone(), at, at + Duration::seconds(1))?;
-    if hit != [at] {
+    if !is_occurrence(series, at)? {
         return Err(recurrence("split point is not an occurrence of the series"));
     }
     let start_utc = start.with_timezone(&Utc);
