@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { sliderRange, typedNumber } from '$lib/ui/format';
-import { answerText, FALLBACK_BOUNDS, groupMessage, inputFor, scrollFor, withAnswer, type QuestionGroup } from './questions';
+import { answerText, FALLBACK_BOUNDS, groupMessage, inputFor, scrollFor, submissionOf, withAnswer, type QuestionGroup } from './questions';
 
 describe('question inputs', () => {
 	it('a number question shows its unit and its own slider bounds', () => {
@@ -61,3 +61,14 @@ describe('chat scroll around a question group (build 1 feedback)', () => {
 		expect(scrollFor([], null).to).toBe('bottom');
 	});
 });
+
+describe('typing a free-text answer', () => {
+	it('keeps a trailing space while typing and trims only on submit', () => {
+		const g: QuestionGroup = { runId: 'r', node: 'n', prompt: 'p', questions: [{ id: 'why', kind: 'text', text: 'Why?' } as never], values: {}, skipped: [], sending: false, error: null };
+		const typed = withAnswer(g, 'why', 'lose weight ');
+		expect(typed.values.why).toBe('lose weight ');
+		expect(submissionOf(withAnswer(typed, 'why', ' lose weight  '))).toEqual([{ id: 'why', answer: 'lose weight' }]);
+		expect(withAnswer(typed, 'why', '   ').values.why).toBeUndefined();
+	});
+});
+

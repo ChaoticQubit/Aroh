@@ -62,7 +62,7 @@ export function statusOf(g: QuestionGroup): string {
 /** The `questions` answer to post: every question in order, a skip as `answer: null`. Null while any is open. */
 export function submissionOf(g: QuestionGroup): { id: string; answer: string | null }[] | null {
 	if (missingOf(g).length) return null;
-	return g.questions.map((q) => ({ id: q.id, answer: g.skipped.includes(q.id) ? null : g.values[q.id] }));
+	return g.questions.map((q) => ({ id: q.id, answer: g.skipped.includes(q.id) ? null : g.values[q.id].trim() }));
 }
 
 /** Sets one answer from an input value; an empty value clears it. Answering a skipped question un-skips it. */
@@ -70,7 +70,7 @@ export function withAnswer(g: QuestionGroup, id: string, value: unknown): Questi
 	if (!g.questions.some((q) => q.id === id)) return g;
 	const text = answerText(value);
 	const values = { ...g.values };
-	if (text) values[id] = text;
+	if (text) values[id] = typeof value === 'string' ? value : text;
 	else delete values[id];
 	return { ...g, values, skipped: text ? g.skipped.filter((s) => s !== id) : g.skipped, error: null };
 }
