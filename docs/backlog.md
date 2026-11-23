@@ -59,3 +59,5 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B53 | PR #6 review | plan card | Open-ended recurrences (FREQ=DAILY) show the 366-day preview end as "finishes" with a finish flag | medium | open |
 | B54 | PR #6 review | back bar | Cold start at a deep route: replaceState Back pushes the parent on the synthetic stack, so the next Back is mislabelled and calls history.back() | medium | open |
 | B55 | Owner, build 4 | question answers | Spaces could not be typed in answer boxes: each keystroke was trimmed and bound back | high | closed, see fix(app): keep spaces while typing an answer |
+| B56 | Owner, build 4 | server DB pool | write_plan failed: EMAXCONNSESSION max clients 15; pool max 10 per Vercel instance | critical | closed, fix(server): cap database connections per instance |
+| B57 | Owner, build 4 | profile facts | A workout time fact was offered as known for reading and office-prep questions | high | closed, fix(agents): profile facts answer only questions about the same subject |
