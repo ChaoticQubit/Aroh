@@ -73,11 +73,36 @@ pub fn check(state: &Map<String, Value>) -> Result<Value, String> {
         _ => false,
     };
     if problems.is_empty() && !late {
-        return Ok(json!({"fits": true, "tries": 0, "problems": [], "questions": []}));
+        let mut fits = json!({"fits": true, "tries": 0, "problems": [], "questions": [], "card": null, "move_to": null});
+        if let (Some(Choice::Move), Some(f)) = (choice(state), finish) {
+            fits["move_to"] = json!(f.to_string());
+        }
+        return Ok(fits);
     }
     let tries = if problems.is_empty() { prev_tries } else { prev_tries + 1 };
-    let questions = card(cap, finish, deadline.filter(|_| late), today);
-    Ok(json!({"fits": false, "tries": tries, "problems": problems, "questions": questions}))
+    let target = deadline.filter(|_| late);
+    let questions = card(cap, finish, target, today);
+    let numbers = figures(&slots, cap, needed, finish, target, today);
+    Ok(json!({"fits": false, "tries": tries, "problems": problems, "questions": questions, "card": numbers, "move_to": null}))
+}
+
+/// The limits card's numbers for the app (Q64): the cap, today, the target
+/// and the finish at the cap, the minutes the target needs, the daily
+/// minutes that would finish by the target (rounded up to 5 over the days
+/// the draft has sessions on) and the minutes that fit by the target.
+fn figures(slots: &[Slot], cap: Option<i64>, needed: Option<i64>, finish: Option<NaiveDate>, target: Option<NaiveDate>, today: NaiveDate) -> Value {
+    let before: Vec<&Slot> = target.map_or(Vec::new(), |t| slots.iter().filter(|s| s.start.date() <= t).collect());
+    let days = before.iter().map(|s| s.start.date()).collect::<std::collections::BTreeSet<_>>().len() as i64;
+    let fits_minutes: i64 = before.iter().map(|s| (s.end - s.start).num_minutes()).sum();
+    let raise_to = match (needed, target) {
+        (Some(n), Some(_)) if days > 0 => Some(((n + days - 1) / days + 4) / 5 * 5).filter(|m| *m <= MAX_DAILY_MINUTES),
+        _ => None,
+    };
+    let day = |d: Option<NaiveDate>| d.map(|d| d.to_string());
+    json!({
+        "cap": cap, "today": today.to_string(), "target": day(target), "finish": day(finish), "needed": needed,
+        "raise_to": raise_to, "fits_minutes": target.map(|_| fits_minutes),
+    })
 }
 
 /// Router condition `limits_gate()` of the new-goal workflow: `fits` when
@@ -134,7 +159,7 @@ pub fn tool() -> Arc<dyn Tool> {
 /// `limit_answers` starts as an empty list beside it.
 /// Returns the JSON the engine puts in the run input.
 pub fn initial() -> Value {
-    json!({"fits": true, "tries": 0, "problems": [], "questions": []})
+    json!({"fits": true, "tries": 0, "problems": [], "questions": [], "card": null, "move_to": null})
 }
 
 const NEW_MINUTES_ID: &str = "new_minutes";
@@ -298,6 +323,10 @@ mod tests {
         assert_eq!(q["choices"], json!(["Move the date to Dec 15", "Raise the daily minutes", "Lower the target"]));
         assert_eq!(limits["questions"][1]["id"], "new_minutes");
         assert_eq!(limits["questions"][1]["kind"], "number");
+        assert_eq!(
+            limits["card"],
+            json!({"cap": 20, "today": "2026-11-23", "target": "2026-12-05", "finish": "2026-12-15", "needed": 440, "raise_to": 40, "fits_minutes": 240})
+        );
         let mut short = s.clone();
         short.insert("limits".into(), limits);
         assert_eq!(limits_gate(&short, &[]).unwrap(), "short");
@@ -307,14 +336,16 @@ mod tests {
     fn a_plan_that_fits_goes_to_approval() {
         let s = run(plan(vec![daily(20)], Some(5 * 20)), Some("2026-12-05"), Some("20"));
         let limits = check(&s).unwrap();
-        assert_eq!(limits, json!({"fits": true, "tries": 0, "problems": [], "questions": []}));
+        assert_eq!(limits, json!({"fits": true, "tries": 0, "problems": [], "questions": [], "card": null, "move_to": null}));
         let mut ok = s.clone();
         ok.insert("limits".into(), limits);
         assert_eq!(limits_gate(&ok, &[]).unwrap(), "fits");
         let moved = state(json!({"limit_answers": [{"id": "limit_choice", "answer": "Move the date to Dec 15"}]}));
         let mut late = run(plan(vec![daily(20)], Some(22 * 20)), Some("2026-12-05"), Some("20"));
         late.extend(moved);
-        assert_eq!(check(&late).unwrap()["fits"], json!(true));
+        let limits = check(&late).unwrap();
+        assert_eq!(limits["fits"], json!(true));
+        assert_eq!(limits["move_to"], json!("2026-12-15"));
     }
 
     #[test]

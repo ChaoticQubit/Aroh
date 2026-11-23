@@ -35,7 +35,7 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B29 | Owner, build 3 | Today action rows | Action rows overflow the screen width; checkbox only visible after scrolling right | high | closed, c829697 (pod 31) |
 | B30 | Owner, build 3 | Inbox run cards | Stopped goal-planner cards still show a spinning blue circle | medium | closed, ac51d57 (pod 31) |
 | B31 | Owner, build 3 | composer mic, attach Photo | Mic, camera and every attachment (Link, Photo, File) in New Goal do nothing on iPhone; Info.plist lacks NSCameraUsageDescription and NSPhotoLibraryUsageDescription | high | closed, 023168f (simulator up to probe and prompt; phone confirms on build 4) |
-| B32 | Owner, build 3 | Goals tab | Tapping Goals from inside a goal shows a blank screen until another tab is visited | high | open, pod 31: not reproduced on the simulator (dev build, sample goals, no engine run, goal screen scrolled or not); e2e/pod31.sh checks it |
+| B32 | Owner, build 3 | Goals tab | Tapping Goals from inside a goal shows a blank screen until another tab is visited | high | open, pod 31: not reproduced on the simulator (dev build, sample goals, no engine run, goal screen scrolled or not); e2e/pod31.sh checks it. Pod 30: not reproduced on a production-asset build either (e2e/pod30-b32.js); the layout now resets the main scroller on every navigation and restores it on back, a likely cause if the blank screen was a stale scroll offset. Needs the owner's phone check on build 5 |
 | B33 | Owner, build 3 | write_plan tool | First goal's later run stopped: write_plan invalid arguments "bad cadence for quizzes score" after the plan was applied | high | closed, b339d13 + b638eb1 (prod PR #5) |
 | B34 | Owner, build 3 | Calendar status | Action checked done on Today still shows blue (planned) on the Calendar, not marked done | high | closed, 9e9056f (pod 31) |
 | B35 | Owner, build 3 | Calendar | No swipe left or right to change day or week | medium | closed, e068703 (pod 31) |
@@ -44,7 +44,9 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B38 | Pod 33 DONE | storage bulk delete | DELETE /storage/v1/object/goal-files with prefixes tested only against a stub; confirm on prod | medium | open, check on build 4 |
 | B39 | Pod 31 DONE | Calendar phone week view | Swipe moves 7 days while the phone grid shows one day; next page not drawn during the drag | low | open |
 | B40 | Pod 29 DONE | troupekit http | `http::tests::times_out` fails in the full parallel run, passes alone (flaky) | low | open |
-| B41 | Pod 29 DONE | limit_choice | Choosing "Move the date" does not update the goal's target date | medium | open |
+| B41 | Pod 29 DONE | limit_choice | Choosing "Move the date" does not update the goal's target date | medium | fixed on feat/plan-view (pod 30), server test `moving_the_date_on_the_limits_card_sets_the_deadline`; ships with build 5 |
 | B42 | Pod 29 DONE | replan, record_proposal | No daily-cap check on replans and proposals, only on new plans | medium | open |
 | B43 | Pod 29 DONE | web search errors | "web search not enabled" 400 from the API surfaces raw, not as a clear message | medium | open |
 | B44 | Pod 29 DONE | coach_questions eval | Matches English keywords only | low | open |
+| B45 | Pod 30 dataviz check | `apps/aroh/src/lib/ui/tokens/tokens.css` dark `--cat-*`, `--series-*` | Dark category and series colours fail the dataviz validator's lightness band; light order cat-1, cat-5, cat-4 passes | medium | open, foundation |
+| B46 | Pod 30 | `e2e/pod30-app.js` | One of four runs timed out waiting for the plan card on the first goal (20 s); passed on retry | low | open |

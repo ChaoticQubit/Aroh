@@ -11,6 +11,7 @@
 	import StatusChip from '../StatusChip.svelte';
 	import Persona from '../agent/Persona.svelte';
 	import PersonaChat from '../agent/PersonaChat.svelte';
+	import type { PlanContext } from '../plan/PlanCard.svelte';
 	import AgentControls from './AgentControls.svelte';
 	import Attachments, { type Attachment } from './Attachments.svelte';
 	import { getClock } from '$lib/ui/clock';
@@ -57,6 +58,7 @@
 		onlink,
 		onretryfile,
 		onremove,
+		planContext,
 		children
 	}: {
 		goal: GoalHeader;
@@ -85,6 +87,7 @@
 		onlink?: (url: string) => void;
 		onretryfile?: (id: string) => void;
 		onremove?: (id: string) => void;
+		planContext?: PlanContext;
 		children?: Snippet;
 	} = $props();
 
@@ -203,7 +206,7 @@
 
 	<section class="flex flex-col gap-2" aria-labelledby="{id}-chat">
 		<h3 id="{id}-chat" class="text-sm font-semibold">Chat about this goal</h3>
-		<PersonaChat {messages} onchange={onchat} echo={false} {voice} inline />
+		<PersonaChat {messages} onchange={onchat} echo={false} {voice} inline {planContext} slot={goal.slot} />
 	</section>
 </div>
 

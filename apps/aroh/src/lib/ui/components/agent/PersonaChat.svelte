@@ -11,6 +11,8 @@
 	import Persona from './Persona.svelte';
 	import QuestionCard from './QuestionCard.svelte';
 	import QuestionGroup from './QuestionGroup.svelte';
+	import PlanCard, { type PlanContext } from '../plan/PlanCard.svelte';
+	import CantFitCard from '../plan/CantFitCard.svelte';
 	import type { ChatMessage, OnChange } from '$lib/ui/contract';
 	import { Dictation, type Speech } from '$lib/app/speech.svelte';
 	import DictationNotice from '../inputs/DictationNotice.svelte';
@@ -24,14 +26,18 @@
 	 * run's `stop` and `retry`. With `echo` false the caller adds sent messages itself. With
 	 * `inline` the thread flows in the page, which is the only scroller, and the composer sticks
 	 * to the bottom of the screen (the goal card); only a new question group scrolls into view.
+	 * A plan with its items renders as the week strip (Q65) on `planContext`, in category `slot`; the
+	 * limits question group renders as the can't-fit card (Q64).
 	 */
 	let {
 		messages,
 		onchange,
 		echo = true,
 		voice,
-		inline = false
-	}: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean; voice?: Speech; inline?: boolean } = $props();
+		inline = false,
+		planContext,
+		slot = 1
+	}: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean; voice?: Speech; inline?: boolean; planContext?: PlanContext; slot?: number } = $props();
 
 	const id = $props.id();
 	let sent = $state<ChatMessage[]>([]);
@@ -89,6 +95,8 @@
 					{:else}
 						<Render spec={m.spec} onchange={(v) => answer(v)} />
 					{/if}
+				{:else if m.type === 'questions' && m.node === 'limit_choice'}
+					<CantFitCard group={m} {onchange} />
 				{:else if m.type === 'questions'}
 					<QuestionGroup group={m} {onchange} />
 				{:else if m.type === 'progress'}
@@ -111,6 +119,19 @@
 						<p class="min-w-0 flex-1 text-sm text-fg">{m.text}</p>
 						{#if m.retry}<Button size="touch" variant="outline" onclick={() => onchange?.({ type: 'retry' })}>Retry</Button>{/if}
 					</div>
+				{:else if m.type === 'plan' && m.plan}
+					<PlanCard
+						title={m.title}
+						plan={m.plan}
+						context={planContext}
+						{slot}
+						{approved}
+						onapprove={(f) => {
+							approved = true;
+							onchange?.({ type: 'approve', fixed: f });
+						}}
+						onchange={() => onchange?.({ type: 'change' })}
+					/>
 				{:else if m.type === 'plan'}
 					<Card.Root size="sm" class="gap-3 px-4">
 						<Persona name="Orchestrator" note="Plan ready" />

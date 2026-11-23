@@ -1,3 +1,5 @@
+import type { PlanItemLike } from './plan/strip';
+import type { LimitsCard } from './plan/limits';
 /** Tracker units understood by inputs and charts. */
 export type Unit = 'kg' | 'lb' | 'cm' | 'kcal' | 'g' | 'ml' | 'L' | 'min' | 'reps' | 'steps' | 'usd' | 'count';
 
@@ -71,12 +73,14 @@ export type ChatMessage =
 	| { type: 'message'; from: 'owner' | 'persona'; name: string; text: string }
 	| { type: 'card'; spec: ComponentSpec }
 	| { type: 'progress'; lines: { text: string; done: boolean }[]; working: boolean }
-	| { type: 'plan'; title: string; items: string[]; fixable?: boolean[] }
+	| { type: 'plan'; title: string; items: string[]; fixable?: boolean[]; plan?: { items: PlanItemLike[]; timezone: string | null } }
 	| { type: 'working'; step: string | null; cost: string }
 	| { type: 'stopped'; text: string; retry: boolean }
 	| {
 			type: 'questions';
 			persona: string;
+			node?: string;
+			card?: LimitsCard | null;
 			prompt: string;
 			items: { id: string; text: string; input: ComponentSpec; known?: { value: string; source: string } }[];
 			values: Record<string, string>;

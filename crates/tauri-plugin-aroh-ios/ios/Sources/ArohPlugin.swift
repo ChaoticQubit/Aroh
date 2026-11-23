@@ -65,6 +65,7 @@ class ArohPlugin: Plugin {
     webview.scrollView.bounces = false
     webview.scrollView.keyboardDismissMode = .interactive
     webview.scrollView.isScrollEnabled = false
+    webview.allowsBackForwardNavigationGestures = true
     pinned = webview.scrollView.observe(\.contentOffset, options: [.new]) { view, _ in
       if view.contentOffset != .zero { view.contentOffset = .zero }
     }

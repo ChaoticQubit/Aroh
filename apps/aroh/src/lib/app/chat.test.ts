@@ -6,6 +6,7 @@ const fake = vi.hoisted(() => ({
 	posts: [] as { path: string; body: unknown }[],
 	questions: [] as unknown[],
 	node: 'questions',
+	card: null as unknown,
 	answerStatus: 202
 }));
 
@@ -24,7 +25,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 					status: { status: 'waiting_human', reason: { kind: 'human', node: fake.node } },
 					waiting: [
 						fake.node === 'limit_choice'
-							? { node: 'limit_choice', ask: 'question', prompt: 'Pick what should change.', data: { limits: { fits: false, questions: fake.questions } } }
+							? { node: 'limit_choice', ask: 'question', prompt: 'Pick what should change.', data: { limits: { fits: false, questions: fake.questions, card: fake.card } } }
 							: { node: 'questions', ask: 'question', prompt: 'Answer these so the plan fits you.', data: { intake: { questions: fake.questions } } }
 					],
 					events: [{ seq: 0, at_ms: 1, body: { type: 'run_started' } }],
@@ -101,12 +102,13 @@ beforeEach(() => {
 describe('limits card (Q64)', () => {
 	it('shows the limit questions and posts the pick to limit_choice', async () => {
 		fake.node = 'limit_choice';
+		fake.card = { cap: 20, today: '2026-11-23', target: '2026-12-05', finish: '2026-12-15', needed: 440, raise_to: 40, fits_minutes: 240 };
 		fake.questions = [
 			{ id: 'limit_choice', text: 'At 20 min/day you finish on Dec 15, 10 days after your target. What should change?', kind: 'choice', choices: ['Move the date to Dec 15', 'Raise the daily minutes', 'Lower the target'] },
 			{ id: 'new_minutes', text: 'If you raise them, how many minutes a day?', kind: 'number', choices: [], unit: 'minutes per day', min: 21, max: 960 }
 		];
 		const chat = await opened();
-		expect(group(chat.messages)).toMatchObject({ persona: 'Aroh', items: [{ id: 'limit_choice' }, { id: 'new_minutes' }] });
+		expect(group(chat.messages)).toMatchObject({ persona: 'Aroh', node: 'limit_choice', card: fake.card, items: [{ id: 'limit_choice' }, { id: 'new_minutes' }] });
 		chat.handle({ type: 'answer', id: 'limit_choice', value: 'Move the date to Dec 15' });
 		chat.handle({ type: 'skip', id: 'new_minutes' });
 		chat.handle({ type: 'submit' });

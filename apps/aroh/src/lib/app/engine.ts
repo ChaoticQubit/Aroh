@@ -207,8 +207,9 @@ export function chatFromRun(view: RunView): ChatMessage[] {
 	const w = view.waiting[0];
 	if (view.status.status === 'waiting_human' && w) {
 		if (w.node === 'approve' && w.data.plan) {
-			const plan = w.data.plan as { summary: string; items: PlanItem[] };
-			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine), fixable: plan.items.map((i) => !i.rrule) });
+			const plan = w.data.plan as { summary: string; items: PlanItem[]; timezone?: string };
+			const items = plan.items.map(({ title, start, minutes, rrule }) => ({ title, start, minutes, rrule }));
+			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine), fixable: plan.items.map((i) => !i.rrule), plan: { items, timezone: plan.timezone ?? null } });
 		} else if (w.node === 'approve' && w.data.proposal_record) {
 			const p = w.data.proposal_record as { summary: string };
 			out.push({ type: 'message', from: 'persona', name: 'Adaptation analyst', text: `${p.summary} It is in your Inbox to apply.` });

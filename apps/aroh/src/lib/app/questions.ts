@@ -1,4 +1,5 @@
 import type { ChatMessage, ComponentSpec } from '$lib/ui/contract';
+import type { LimitsCard } from '$lib/ui/plan/limits';
 import type { Question } from './engine';
 
 /** Slider bounds for a number question that names none, as in runs started before units existed. */
@@ -14,6 +15,7 @@ export type QuestionGroup = {
 	skipped: string[];
 	sending: boolean;
 	error: string | null;
+	card?: LimitsCard | null;
 };
 
 /** An answer input's value as the text posted: choices joined, numbers as digits, blanks empty. */
@@ -91,6 +93,8 @@ export function groupMessage(g: QuestionGroup, submitted = false): Extract<ChatM
 	return {
 		type: 'questions',
 		persona: g.node === 'limit_choice' ? 'Aroh' : 'Intake interviewer',
+		node: g.node,
+		...(g.node === 'limit_choice' ? { card: g.card ?? null } : {}),
 		prompt: g.prompt,
 		items: g.questions.map((q) => ({
 			id: q.id,

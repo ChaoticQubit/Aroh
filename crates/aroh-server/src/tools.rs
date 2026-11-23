@@ -218,9 +218,14 @@ pub struct Plan {
 #[derive(Deserialize, JsonSchema)]
 struct PlanArgs {
     plan: Plan,
+    #[serde(default)]
+    limits: Option<Value>,
 }
 
-async fn write_plan(env: &ToolEnv, plan: &Plan, ctx: &ToolContext) -> Result<Value, ToolError> {
+/// Stores an approved plan as actions, series and trackers, activates a draft
+/// goal and, when the owner moved the date on the limits card (B41), sets the
+/// goal's deadline to `move_to`. Returns the counts it wrote.
+async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, ctx: &ToolContext) -> Result<Value, ToolError> {
     let goal = env.live_goal().await?;
     let tz = timezone(&plan.timezone)?;
     let (user, goal_text) = (env.user.to_string(), goal.to_string());
@@ -296,8 +301,14 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, ctx: &ToolContext) -> Result<Val
         put_row(&env.pool, &env.hlc, env.user, &mut tracker).await.map_err(failed)?;
     }
     if let Some(mut g) = get_row::<rows::Goal>(&env.pool, env.user, &goal_text).await.map_err(failed)? {
-        if g.status == GoalStatus::Draft {
-            g.status = GoalStatus::Active;
+        let moved = move_to.filter(|d| g.deadline.as_deref() != Some(*d));
+        if g.status == GoalStatus::Draft || moved.is_some() {
+            if g.status == GoalStatus::Draft {
+                g.status = GoalStatus::Active;
+            }
+            if let Some(d) = moved {
+                g.deadline = Some(d.to_string());
+            }
             put_row(&env.pool, &env.hlc, env.user, &mut g).await.map_err(failed)?;
         }
     }
@@ -655,7 +666,10 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
     let e1 = env.clone();
     let write = typed_tool("write_plan", "Store an approved plan as actions, series and trackers.", move |a: PlanArgs, ctx: ToolContext| {
         let env = e1.clone();
-        async move { write_plan(&env, &a.plan, &ctx).await.map(json_output) }
+        async move {
+            let move_to = a.limits.as_ref().and_then(|l| l.get("move_to")).and_then(Value::as_str);
+            write_plan(&env, &a.plan, move_to, &ctx).await.map(json_output)
+        }
     });
     let e2 = env.clone();
     let record = typed_tool("record_proposal", "Store a plan change as a proposal for the Inbox.", move |a: RecordArgs, ctx: ToolContext| {

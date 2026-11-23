@@ -40,7 +40,7 @@ describe('engine client', () => {
 		expect(waitLabel(view({ status: 'waiting_human' }, [{ node: 'change', ask: 'question', prompt: null, data: {} }]))).toBe('What to change in the plan');
 		expect(waitLabel(view({ status: 'running' }))).toBeNull();
 		const plan = chatFromRun(view({ status: 'waiting_human' }, [approve])).at(-1);
-		expect(plan).toEqual({ type: 'plan', title: 'Core work and a daily plank.', items: ['Core workout, 2026-11-22 07:00, 30 min'], fixable: [true] });
+		expect(plan).toEqual({ type: 'plan', title: 'Core work and a daily plank.', items: ['Core workout, 2026-11-22 07:00, 30 min'], fixable: [true], plan: { items: [{ title: 'Core workout', start: '2026-11-22T07:00:00', minutes: 30, rrule: null }], timezone: null } });
 		expect(chatFromRun(view({ status: 'done' })).at(-1)).toMatchObject({ text: 'Approved. The plan is on your calendar.' });
 	});
 

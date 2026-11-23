@@ -21,6 +21,9 @@
 	import { goalAttachments, pendingAttachment, uploadFailed } from '$lib/app/files';
 	import type { Attachment } from '$lib/ui/components/goal/Attachments.svelte';
 	import DeleteGoalSheet from '$lib/ui/components/goal/DeleteGoalSheet.svelte';
+	import type { PlanContext } from '$lib/ui/components/plan/PlanCard.svelte';
+	import { AHEAD_DAYS } from '$lib/app/calendar';
+	import { formatYmd, shiftDay } from '$lib/ui/format';
 
 	const DERIVED = 'derived';
 	const SHOWN_VERSIONS = 3;
@@ -127,6 +130,9 @@
 	);
 	const controls = $derived<AgentSettings | null>(goal ? { autonomy: goal.autonomy, reminders: goal.reminders, useCalendars: goal.use_calendars, runLimit: goal.run_limit_minutes } : null);
 	const status = $derived(goalStatus(chat.view, goal?.run_limit_minutes ?? settingsLimit, now));
+	const planContext = $derived<PlanContext | undefined>(
+		s && goal ? { busy: s.busy ?? [], actions: s.actions, goalId: goal.id, deadline: goal.deadline, knownUntil: shiftDay(formatYmd(clock.now, clock.zone), AHEAD_DAYS) } : undefined
+	);
 
 	/**
 	 * Saves changed agent controls (the autonomy level, or reminders, calendars and the run
@@ -205,6 +211,7 @@
 			onfiles={(list) => void uploadFiles(list)}
 			onretryfile={(key) => void retryUpload(key)}
 			onlink={(url) => attaching(() => client.attachLink(goal.id, url))}
+			{planContext}
 			onremove={(fid) => (retries.has(fid) ? ((retries.delete(fid)), (failed = failed.filter((f) => f.id !== fid))) : attaching(() => client.removeGoalFile(fid)))}
 		/>
 	{/key}

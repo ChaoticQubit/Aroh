@@ -66,6 +66,20 @@ async fn replayed_write_plan_writes_each_row_once() {
 
 #[tokio::test]
 #[ignore = "needs AROH_TEST_PG"]
+async fn moving_the_date_on_the_limits_card_sets_the_deadline() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let args = json!({"plan": {"summary": "s", "timezone": "UTC", "trackers": [],
+        "items": [{"title": "Read", "start": "2026-11-24T20:00:00", "minutes": 20, "rrule": null, "notes": null}]},
+        "limits": {"fits": true, "tries": 0, "problems": [], "questions": [], "card": null, "move_to": "2026-12-15"}});
+    tool(&env, "write_plan").call(args, &ToolContext::for_call(RunId::new(), 4, 0)).await.unwrap();
+    let deadline: Option<String> = db::query_scalar("select deadline::text from public.goals where id = $1").bind(env.goal.unwrap()).fetch_one(&pool).await.unwrap();
+    assert_eq!(deadline.as_deref(), Some("2026-12-15"));
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
 async fn tools_refuse_rows_outside_the_run() {
     let pool = pg().await;
     let (a, b) = (user(&pool).await, user(&pool).await);
