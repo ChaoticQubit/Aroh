@@ -1,7 +1,8 @@
 //! Seeded goal categories (Q6), derived identically by every engine.
 
 use crate::derived_id;
-use crate::rows::Category;
+use crate::rows::{Autonomy, Category, Goal, GoalStatus};
+use chrono::{DateTime, Utc};
 
 /// Stamp of derived rows (seeds and materialized occurrences): the lowest HLC, so any edit by the owner wins under LWW,
 /// and a zero node that no device has, so no device ever pushes them.
@@ -34,10 +35,50 @@ pub fn categories(user_id: &str) -> Vec<Category> {
         .collect()
 }
 
+/// The id of the built-in Routines goal (Q56). One fixed id for every user, so a device that
+/// adopts an account and the account's other devices collapse onto one Routines goal under LWW.
+pub fn routines_id() -> String {
+    derived_id("aroh", "goal:routines", 0)
+}
+
+/// The built-in Routines goal of `user_id` in the seeded Habit category: autonomy Ask,
+/// a fixed creation instant and [`SEED_STAMP`]. The app writes it with its own stamp on
+/// first use, so it syncs like any goal the owner made.
+pub fn routines_goal(user_id: &str) -> Goal {
+    let habit = categories(user_id).into_iter().find(|c| c.name == "Habit").map(|c| c.id);
+    assert!(habit.is_some(), "the Habit category is seeded");
+    Goal {
+        id: routines_id(),
+        user_id: user_id.to_string(),
+        category_id: habit,
+        title: "Routines".into(),
+        context: Some("Routines Aroh learned from your places, approved by you.".into()),
+        deadline: None,
+        status: GoalStatus::Active,
+        autonomy: Autonomy::Ask,
+        created_at: DateTime::<Utc>::UNIX_EPOCH,
+        updated_at: SEED_STAMP.to_string(),
+        deleted: false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::rows::{samples, Record};
+
+    #[test]
+    fn routines_goal_is_stable_per_user_and_valid() {
+        let a = routines_goal(samples::USER);
+        assert_eq!(a, routines_goal(samples::USER));
+        a.validate().unwrap();
+        assert_eq!((a.title.as_str(), a.autonomy), ("Routines", Autonomy::Ask));
+        let habit = categories(samples::USER).into_iter().find(|c| c.name == "Habit").unwrap();
+        assert_eq!(a.category_id.as_deref(), Some(habit.id.as_str()));
+        let b = routines_goal("0190f2a0-0000-7000-8000-00000000000b");
+        assert_eq!(a.id, b.id);
+        assert_ne!(a.category_id, b.category_id);
+    }
 
     #[test]
     fn seeds_are_stable_per_user_and_valid() {

@@ -223,3 +223,104 @@ fn foreign_and_bad_pages_commit_nothing() {
     assert!(apply_page(&mut conn, goals, samples::USER, &[with_seq(good, 5)], &mut clock).is_err(), "cursor must advance");
     assert!(clock.tick().as_str() > samples::STAMP);
 }
+
+const SENTINEL_LAT: i64 = 47_123_457;
+const SENTINEL_TEXT: &str = "SENTINEL-RAW-LOCATION";
+
+fn fill_local_tables(conn: &Connection) {
+    conn.execute(
+        "INSERT INTO visits (id, lat_e6, lon_e6, accuracy_m, arrived_at, left_at, place_id) VALUES (?1, ?2, ?2, 30, '2026-11-20T10:00:00Z', NULL, NULL)",
+        rusqlite::params![aroh_domain::new_id(), SENTINEL_LAT],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO place_candidates (id, lat_e6, lon_e6, poi_name, poi_kind, address, state, visit_count, last_at, prompted_at) VALUES (?1, ?2, ?2, ?3, ?3, ?3, 'pending', 3, '2026-11-20T10:00:00Z', NULL)",
+        rusqlite::params![aroh_domain::new_id(), SENTINEL_LAT, SENTINEL_TEXT],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO pattern_candidates (id, place_id, title, gap_days, weekday, local_time, duration_minutes, evidence, state, declined_until, created_at) VALUES (?1, ?1, ?2, 7, 6, '10:00', 45, 5, 'pending', NULL, '2026-11-20T10:00:00Z')",
+        rusqlite::params![aroh_domain::new_id(), SENTINEL_TEXT],
+    )
+    .unwrap();
+    conn.execute("INSERT INTO nudge_sent (place_id, local_date) VALUES (?1, '2026-11-20')", [SENTINEL_TEXT]).unwrap();
+    conn.execute("INSERT INTO place_kinds (place_id, kind) VALUES (?1, ?1)", [SENTINEL_TEXT]).unwrap();
+}
+
+#[tokio::test]
+async fn raw_visits_never_reach_sync() {
+    let server = Arc::new(Mutex::new(Server::default()));
+    let mut a = Device::new("00000000000000aa", &server, 1_763_683_300_000);
+    fill_local_tables(&a.conn);
+    let mut goal = samples::goal();
+    repo::put(&a.conn, &mut a.clock, &mut goal).unwrap();
+    let mut place = samples::place();
+    repo::put(&a.conn, &mut a.clock, &mut place).unwrap();
+
+    for table in SYNCED.iter() {
+        assert!(!aroh_store::local::LOCAL_TABLES.contains(&table.name), "{} is local only", table.name);
+        let rows = serde_json::to_string(&a.pending(table)).unwrap();
+        assert!(!rows.contains(SENTINEL_TEXT) && !rows.contains(&SENTINEL_LAT.to_string()), "{}", table.name);
+    }
+    assert_eq!(a.sync().await.pushed, 2, "only the goal and the named place push");
+    let pushed = serde_json::to_string(&server.lock().unwrap().rows.values().map(|(_, r)| r.clone()).collect::<Vec<_>>()).unwrap();
+    assert!(!pushed.contains(SENTINEL_TEXT) && !pushed.contains(&SENTINEL_LAT.to_string()));
+    assert!(server.lock().unwrap().rows.keys().all(|(t, _, _)| *t == "goals" || *t == "places"));
+
+    let mut stmt = a.conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").unwrap();
+    let tables: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+    for name in &tables {
+        let synced = SYNCED.iter().any(|t| t.name == name);
+        let local = aroh_store::local::LOCAL_TABLES.contains(&name.as_str()) || name == "sync_state";
+        assert!(synced != local, "{name} must be synced or local, not both or neither");
+    }
+    for local in aroh_store::local::LOCAL_TABLES {
+        assert!(tables.iter().any(|t| t == local), "{local} exists");
+    }
+}
+
+#[test]
+fn visits_older_than_90_days_are_deleted() {
+    let conn = db::open_in_memory().unwrap();
+    let now = Utc.with_ymd_and_hms(2026, 11, 22, 12, 0, 0).unwrap();
+    for (id, arrived) in [("old", "2026-08-23T11:00:00Z"), ("edge", "2026-08-24T13:00:00Z"), ("new", "2026-11-21T10:00:00Z")] {
+        conn.execute(
+            "INSERT INTO visits (id, lat_e6, lon_e6, accuracy_m, arrived_at, left_at, place_id) VALUES (?1, 1, 1, 30, ?2, NULL, NULL)",
+            [id, arrived],
+        )
+        .unwrap();
+    }
+    assert_eq!(aroh_store::local::prune_visits(&conn, now).unwrap(), 1);
+    let mut stmt = conn.prepare("SELECT id FROM visits ORDER BY id").unwrap();
+    let left: Vec<String> = stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+    assert_eq!(left, ["edge", "new"]);
+    assert_eq!(aroh_store::local::prune_visits(&conn, now).unwrap(), 0);
+}
+
+#[tokio::test]
+async fn places_and_links_converge_under_lww() {
+    use aroh_domain::rows::{Place, PlaceLink};
+    let server = Arc::new(Mutex::new(Server::default()));
+    let mut a = Device::new("00000000000000aa", &server, 1_763_683_300_000);
+    let mut b = Device::new("00000000000000bb", &server, 1_763_683_300_000);
+    let mut place = samples::place();
+    repo::put(&a.conn, &mut a.clock, &mut place).unwrap();
+    let mut link: PlaceLink = serde_json::from_value(samples::all()[19].clone()).unwrap();
+    repo::put(&a.conn, &mut a.clock, &mut link).unwrap();
+    assert_eq!(a.sync().await.pushed, 2);
+    assert_eq!(b.sync().await.pulled, 2);
+    let mut on_a = repo::get::<Place>(&a.conn, &place.id).unwrap();
+    on_a.name = "Old gym".into();
+    repo::put(&a.conn, &mut a.clock, &mut on_a).unwrap();
+    let mut on_b = repo::get::<Place>(&b.conn, &place.id).unwrap();
+    on_b.name = "Gym".into();
+    b.clock.set_wall_clock(1_763_683_500_000);
+    repo::put(&b.conn, &mut b.clock, &mut on_b).unwrap();
+    for _ in 0..2 {
+        a.sync().await;
+        b.sync().await;
+    }
+    assert_eq!(repo::get::<Place>(&a.conn, &place.id).unwrap().name, "Gym");
+    assert_eq!(repo::get::<Place>(&b.conn, &place.id).unwrap(), repo::get::<Place>(&a.conn, &place.id).unwrap());
+    assert_eq!(repo::get::<PlaceLink>(&b.conn, &link.id).unwrap().series_id, link.series_id);
+}

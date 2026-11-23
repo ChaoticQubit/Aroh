@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 const POSTGRES: &str = include_str!("../../../supabase/migrations/20261121000000_rebuild.sql");
 const LATER: &[&str] = &[include_str!("../../../supabase/migrations/20261124000000_day_kind.sql")];
+const CREATED: &[&str] = &[include_str!("../../../supabase/migrations/20261126010000_places.sql")];
 
 fn added_columns(tables: &mut BTreeMap<String, Vec<String>>) {
     for sql in LATER {
@@ -25,7 +26,7 @@ fn added_columns(tables: &mut BTreeMap<String, Vec<String>>) {
 fn postgres_tables() -> BTreeMap<String, Vec<String>> {
     let mut tables = BTreeMap::new();
     let mut current: Option<(String, Vec<String>)> = None;
-    for line in POSTGRES.lines().map(str::trim) {
+    for line in std::iter::once(POSTGRES).chain(CREATED.iter().copied()).flat_map(str::lines).map(str::trim) {
         if let Some(rest) = line.strip_prefix("create table public.") {
             let name = rest.trim_end_matches(" (").to_string();
             current = Some((name, Vec::new()));
@@ -57,7 +58,7 @@ fn sqlite_columns_match_the_registry() {
 #[test]
 fn postgres_columns_match_the_registry_plus_server_seq() {
     let tables = postgres_tables();
-    assert_eq!(tables.len(), 25, "18 synced and 7 server-only tables");
+    assert_eq!(tables.len(), 27, "20 synced and 7 server-only tables");
     for table in SYNCED.iter() {
         let mut expected: Vec<String> = table.names().iter().map(|c| c.to_string()).collect();
         expected.push("server_seq".into());

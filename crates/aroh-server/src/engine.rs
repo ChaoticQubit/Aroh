@@ -13,7 +13,8 @@ use crate::db;
 use aroh_domain::calendar::local_days;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{
-    Action, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, DayKind, Goal, GoalStatus, Preference, ProviderSetting, SearchSetting, Tracker,
+    Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, DayKind, Goal, GoalStatus, Place, PlaceLink, Preference,
+    ProviderSetting, SearchSetting, Tracker,
 };
 use aroh_domain::time::MISSED_GRACE_MIN;
 use crate::triggers;
@@ -366,6 +367,30 @@ impl Engine {
         Ok(prefs.into_iter().take(PROFILE_LIMIT).map(|p| p.fact).collect())
     }
 
+    /// The owner's named places (Q56) as planning reads them in state `places`: each name
+    /// with the titles of its linked goals and routines, never coordinates or addresses.
+    /// Raw visits never reach the server. Returns one entry per live place, in id order.
+    pub(crate) async fn places(&self, user: Uuid) -> Result<Vec<Value>, ServerError> {
+        let places: Vec<Place> = list_rows::<Place>(&self.deps.pool, user, &[], false).await?;
+        if places.is_empty() {
+            return Ok(Vec::new());
+        }
+        let links: Vec<PlaceLink> = list_rows::<PlaceLink>(&self.deps.pool, user, &[], false).await?;
+        let goals: Vec<Goal> = list_rows::<Goal>(&self.deps.pool, user, &[], false).await?;
+        let series: Vec<ActionSeries> = list_rows::<ActionSeries>(&self.deps.pool, user, &[], false).await?;
+        Ok(places
+            .iter()
+            .map(|p| {
+                let mine: Vec<&PlaceLink> = links.iter().filter(|l| l.place_id == p.id).collect();
+                let mut goal_titles: Vec<&str> = mine.iter().filter_map(|l| goals.iter().find(|g| g.id == l.goal_id)).map(|g| g.title.as_str()).collect();
+                goal_titles.sort_unstable();
+                goal_titles.dedup();
+                let routines: Vec<&str> = mine.iter().filter_map(|l| l.series_id.as_deref()).filter_map(|s| series.iter().find(|x| x.id == s)).map(|s| s.title.as_str()).collect();
+                json!({"name": p.name, "goals": goal_titles, "routines": routines})
+            })
+            .collect())
+    }
+
     async fn limits(&self, user: Uuid, goal: Option<Uuid>) -> Result<Limits, ServerError> {
         let budgets = list_rows::<Budget>(&self.deps.pool, user, &[], false).await?;
         let goal_text = goal.map(|g| g.to_string());
@@ -498,6 +523,7 @@ impl Engine {
         input.insert("goal".into(), Self::goal_input(&goal, tz, now));
         input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
         input.insert("profile".into(), json!(self.profile(user).await?));
+        input.insert("places".into(), json!(self.places(user).await?));
         let (busy, away_days) = self.busy(user, tz, now).await?;
         input.insert("busy".into(), json!(busy));
         input.insert("away_days".into(), json!(away_days));
@@ -544,6 +570,7 @@ impl Engine {
         input.insert("reason".into(), json!(reason));
         input.insert("autonomy".into(), serde_json::to_value(goal.autonomy).expect("autonomy serializes"));
         input.insert("profile".into(), json!(self.profile(user).await?));
+        input.insert("places".into(), json!(self.places(user).await?));
         let run = self.start(user, Some(goal_id), REPLAN, input).await?;
         triggers::claim_status_events(&self.deps.pool, user, goal_id, run, now).await?;
         Ok(run)

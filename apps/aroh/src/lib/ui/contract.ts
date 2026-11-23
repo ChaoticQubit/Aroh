@@ -35,7 +35,7 @@ export type ChangeView = {
 
 /** Renderer-neutral component spec: the shape plugin view trees use. */
 export type ComponentSpec =
-	| { kind: 'number_input'; label: string; unit: Unit | (string & {}); value: number | null; step: number; min?: number; max?: number }
+	| { kind: 'number_input'; label: string; unit: string; value: number | null; step: number; min?: number; max?: number }
 	| { kind: 'rating'; label: string; min: number; max: number; value: number | null }
 	| { kind: 'choice'; label: string; options: string[]; multi: boolean; value: string[] }
 	| { kind: 'note'; label: string; placeholder: string; value: string }

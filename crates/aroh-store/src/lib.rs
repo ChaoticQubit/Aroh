@@ -2,6 +2,7 @@
 
 pub mod codec;
 pub mod db;
+pub mod local;
 pub mod repo;
 pub mod sync;
 
