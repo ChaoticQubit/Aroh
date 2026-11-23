@@ -30,3 +30,4 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B24 | Pod 26 DONE | mockups | Point the mockup GoalCard at the real card | low | open |
 | B25 | Pod 26 DONE | goal card | Top bar says "Goals" instead of the goal name | low | open |
 | B26 | Pod 26 DONE | chat composer | Placeholder says "Message your personas" instead of the lead coach | low | open |
+| B27 | PR #3 review (P2) | `apps/aroh/src-tauri/src/commands/goals.rs:112` | Snapshot not reloaded after profile edits, so the profile screen can show stale facts until the next refresh | medium | open |
