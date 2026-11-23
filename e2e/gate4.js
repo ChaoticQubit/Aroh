@@ -19,8 +19,9 @@
   window.alert = (m) => note(`dialog alert ${m}`);
   window.confirm = (m) => (note(`dialog confirm ${m}`), false);
   window.prompt = (m) => (note(`dialog prompt ${m}`), null);
-  let six, piano, save, reading, snap, hooked;
+  let six, piano, save, reading, snap, hooked, work, list;
   let signedIn = true;
+  let transient = false;
   const setup = async () => {
   const range = { from: new Date(Date.now() - 30 * 864e5).toISOString(), to: new Date(Date.now() + 30 * 864e5).toISOString() };
   snap = await invoke('app_snapshot', range);
@@ -30,6 +31,11 @@
   save = goal('Save $10k');
   reading = goal('Read The Joy of X');
   if (!six || !piano || !save || !reading) throw new Error('gate seed goals missing');
+  const cardOf = (a) => (typeof a.card === 'string' ? JSON.parse(a.card) : a.card);
+  const ahead = snap.actions.filter((a) => a.card && a.status === 'planned' && Date.parse(a.start_at) > Date.now()).sort((a, b) => a.start_at.localeCompare(b.start_at));
+  work = ahead.find((a) => cardOf(a)?.blocks?.some((b) => b.kind === 'workout'));
+  list = ahead.find((a) => !cardOf(a)?.blocks?.some((b) => b.kind === 'workout'));
+  if (!work || !list) throw new Error(`gate seed cards missing: ${ahead.length} carded actions`);
 
   const QUESTIONS = [
     { id: 'days', text: 'How many days a week can you train without dropping it after the first week?', kind: 'number', choices: [], unit: 'days', min: 1, max: 7 },
@@ -44,6 +50,7 @@
   const RS = '0000000a-0000-4000-8000-000000000002';
   const RP = '0000000a-0000-4000-8000-000000000003';
   const RW = '0000000a-0000-4000-8000-000000000004';
+  const RA = '0000000a-0000-4000-8000-000000000005';
   const RUNS = [run(RW, reading, 'running', ago(2)), run(RQ, six, 'waiting_human', ago(20)), run(RP, save, 'waiting_human', ago(40)), run(RS, piano, 'failed', ago(60))];
   const t0 = Date.now() - 10 * 60000;
   const events = (done, open) => {
@@ -65,6 +72,7 @@
     [RQ]: { run_id: RQ, goal_id: six?.id, workflow: 'new-goal', status: { status: 'waiting_human' }, waiting: [{ node: 'questions', ask: 'question', prompt: 'A few questions so the plan fits your week. Skip any you do not want to answer.', data: { intake: { questions: QUESTIONS } } }], events: events(['intake', 'research']), usage: { cost_usd_micros: 31000 }, research, answers: [] },
     [RS]: { run_id: RS, goal_id: piano?.id, workflow: 'new-goal', status: { status: 'failed', reason: { kind: 'time_limit', limit_ms: 300000 } }, waiting: [], events: events(['intake'], 'research'), usage: { cost_usd_micros: 42000 }, research: null, answers: [] },
     [RP]: { run_id: RP, goal_id: save?.id, workflow: 'new-goal', status: { status: 'waiting_human' }, waiting: [{ node: 'approve', ask: 'approval', prompt: null, data: { plan } }], events: events(['intake', 'research', 'plan']), usage: { cost_usd_micros: 58000 }, research, answers: [{ id: 'income', text: 'What is your monthly take-home pay after tax?', answer: '$4,800' }, { id: 'fixed', text: 'What are your fixed monthly costs?', answer: null }] },
+    [RA]: { run_id: RA, goal_id: save?.id, workflow: 'run-again', status: { status: 'running' }, waiting: [], events: events([], 'research'), usage: { cost_usd_micros: 3000 }, research: null, answers: [] },
     [RW]: { run_id: RW, goal_id: reading?.id, workflow: 'new-goal', status: { status: 'running' }, waiting: [], events: events(['intake'], 'research'), usage: { cost_usd_micros: 12000 }, research: null, answers: [] }
   };
   const INSIGHTS = [{ id: 'i1', goal_id: six?.id ?? null, run_id: null, source: 'adapt', title: 'Moved Thursday core session to 07:30 because the team stand-up now starts at 07:00', body: 'Your calendar showed a recurring meeting at 07:00 on Thursdays, so the core session moved after it.', state: null, created_at: ago(90) }];
@@ -76,6 +84,8 @@
     const qs = new URLSearchParams(q ?? '');
     if (method === 'GET' && p === '/v1/runs') return { status: 200, body: RUNS.filter((r) => (!qs.get('goal_id') || r.goal_id === qs.get('goal_id')) && (!qs.get('state') || r.state === qs.get('state'))) };
     const one = p.match(/^\/v1\/runs\/([^/]+)$/);
+    if (one && method === 'GET' && one[1] === RS && transient) return { status: 200, body: { ...VIEWS[RS], status: { status: 'failed', retryable: true, error: 'the model provider did not answer after 3 tries' } } };
+    if (/^\/v1\/goals\/[^/]+\/run-again$/.test(p) && method === 'POST') return { status: 202, body: { goal_id: p.split('/')[3], run_id: RA } };
     if (one && method === 'GET') return VIEWS[one[1]] ? { status: 200, body: VIEWS[one[1]] } : { status: 404, body: { error: 'no run' } };
     if (/^\/v1\/runs\/[^/]+\/(answers|cancel|retry)$/.test(p)) return { status: 202, body: { run_id: p.split('/')[3] } };
     if (p === '/v1/insights') return { status: 200, body: INSIGHTS };
@@ -175,6 +185,14 @@
     document.querySelector('button[aria-label="Color 3"]')?.click();
     await sleep(600);
   };
+  const runAgain = (edit) => async () => {
+    [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Run again')?.click();
+    await until('run again sheet', () => text().includes('again?'), 6000).catch(() => note('result run-again-sheet fail no sheet'));
+    await sleep(800);
+    if (!edit) return;
+    [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Edit answers first')?.click();
+    await sleep(1500);
+  };
   let SCREENS = [];
   const screenList = () => {
   const persona = 'nutrition-coach';
@@ -188,6 +206,10 @@
     { name: '07-goal-plan', path: `/goals/${save?.id}`, wait: 'Plan to approve', max: 5 },
     { name: '08-goal-stopped', path: `/goals/${piano?.id}`, wait: 'Stopped', max: 3 },
     { name: '09-goal-working', path: `/goals/${reading?.id}`, wait: 'Working', max: 3 },
+    { name: '08b-goal-failed-retry', path: `/goals/${piano?.id}`, wait: 'Failed', max: 3, before: () => (transient = true) },
+    { name: '09b-run-again-sheet', path: `/goals/${save?.id}`, wait: 'Plan to approve', one: true, prep: runAgain(false) },
+    { name: '09c-run-again-edit', path: `/goals/${save?.id}`, wait: 'Plan to approve', max: 5, prep: runAgain(true) },
+    { name: '09d-run-again-no-answers', path: `/goals/${six?.id}`, wait: 'questions to answer', one: true, prep: runAgain(false) },
     { name: '10-new-goal', path: '/goals/new', wait: 'Create goal' },
     { name: '11-new-goal-category', path: '/goals/new', prep: () => newGoal(true) },
     { name: '12-inbox', path: '/inbox', wait: 'questions to answer' },
@@ -205,13 +227,21 @@
     { name: '19-settings-places', path: '/settings/places' },
     { name: '20-coaches', path: '/personas', max: 4 },
     { name: '21-coach', path: `/personas/${encodeURIComponent(persona ?? 'fitness-coach')}`, max: 3 },
-    { name: '22-settings-signed-out', path: '/settings', max: 7, before: () => (signedIn = false), after: () => (signedIn = true) }
+    { name: '22-settings-signed-out', path: '/settings', max: 7, before: () => (signedIn = false), after: () => (signedIn = true) },
+    { name: '23-action-workout', path: `/actions/${work?.id}`, max: 6 },
+    { name: '24-action-list', path: `/actions/${list?.id}`, max: 4 },
+    { name: '25-action-logging', path: `/actions/${work?.id}`, max: 6, prep: async () => {
+      [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Start session')?.click();
+      await sleep(1200);
+    } },
+    { name: '26-action-chat', path: `/actions/${work?.id}/chat`, max: 3 }
   ];
   if (smoke) SCREENS = SCREENS.filter((x) => ['06-goal-questions', '14-settings'].includes(x.name));
   if (only.length) SCREENS = SCREENS.filter((x) => only.includes(x.name));
   };
   const open = async (s) => {
     signedIn = true;
+    transient = false;
     s.before?.();
     await go(s.path === '/inbox' ? '/today' : '/inbox');
     await go(s.path);
@@ -312,6 +342,11 @@
     await spaces(name, el);
     el.blur();
     await sleep(900);
+    const scope = [...document.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith('This session only') && visible(b));
+    if (scope) {
+      scope.click();
+      await sleep(900);
+    }
   };
   const byPlaceholder = (p) => () => document.querySelector(`[placeholder="${p}"]`);
   const keyboard = async () => {
@@ -357,6 +392,25 @@
     const gs = given().length;
     await note(`given answers ${gs}`);
     for (let i = 0; i < gs; i++) await kbField(n++, `given-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i]);
+    for (let i = 0; i < gs; i++) await kbField(n++, `run-again-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i], runAgain(true));
+    const start = async () => {
+      [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Start session')?.click();
+      await sleep(1200);
+    };
+    const seenFields = new Set();
+    for (const [tag, path, prep] of [['work', `/actions/${work?.id}`], ['list', `/actions/${list?.id}`], ['log', `/actions/${work?.id}`, start], ['chat', `/actions/${work?.id}/chat`]]) {
+      await go('/inbox');
+      await go(path);
+      await sleep(2500);
+      if (prep) await prep();
+      const names = textFields().map(nameOf);
+      const fresh = names.map((name, i) => [name, i]).filter(([name]) => !seenFields.has(name));
+      await note(`action ${tag} text fields ${names.length} new ${fresh.length}`);
+      for (const [name, i] of fresh.slice(0, 30)) {
+        seenFields.add(name);
+        await kbField(n++, `action-${tag}-${i + 1}-${name}`.slice(0, 50), path, () => textFields()[i], prep);
+      }
+    }
   };
 
   const NATIVE = /^(Speak a message|Speak a log entry|Stop speaking|Photo|File|Log with a photo|Open Settings)$/;

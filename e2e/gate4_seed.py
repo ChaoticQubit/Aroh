@@ -67,6 +67,8 @@ def main():
             done = iso(end) if status == "done" else None
             a = dict(row, id=str(uuid.uuid4()), goal_id=pick(title), series_id=None, occurrence=None, title=title, notes=None,
                      start_at=iso(start), end_at=iso(end), status=status if day == 0 else "planned", locked=0, done_at=done if day == 0 else None, deleted=0)
+            if "card" in a:
+                a["card"] = None
             db.execute(f"INSERT INTO actions ({', '.join(a)}) VALUES ({', '.join('?' * len(a))})", list(a.values()))
             count += 1
     db.commit()
