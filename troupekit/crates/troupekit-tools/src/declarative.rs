@@ -128,6 +128,7 @@ fn build_tool(
             name: def.name,
             description: def.description,
             schema: def.schema,
+            hosted: None,
         },
         method: def.method,
         template,

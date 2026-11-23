@@ -5,6 +5,7 @@ const fake = vi.hoisted(() => ({
 	latencyMs: 0,
 	posts: [] as { path: string; body: unknown }[],
 	questions: [] as unknown[],
+	node: 'questions',
 	answerStatus: 202
 }));
 
@@ -20,8 +21,12 @@ vi.mock('@tauri-apps/api/core', () => ({
 					run_id: 'r1',
 					goal_id: 'g1',
 					workflow: 'new-goal',
-					status: { status: 'waiting_human', reason: { kind: 'human', node: 'questions' } },
-					waiting: [{ node: 'questions', ask: 'question', prompt: 'Answer these so the plan fits you.', data: { intake: { questions: fake.questions } } }],
+					status: { status: 'waiting_human', reason: { kind: 'human', node: fake.node } },
+					waiting: [
+						fake.node === 'limit_choice'
+							? { node: 'limit_choice', ask: 'question', prompt: 'Pick what should change.', data: { limits: { fits: false, questions: fake.questions } } }
+							: { node: 'questions', ask: 'question', prompt: 'Answer these so the plan fits you.', data: { intake: { questions: fake.questions } } }
+					],
 					events: [{ seq: 0, at_ms: 1, body: { type: 'run_started' } }],
 					usage: { cost_usd_micros: 1200 }
 				}
@@ -89,7 +94,25 @@ beforeEach(() => {
 	fake.latencyMs = 0;
 	fake.posts = [];
 	fake.questions = PROD;
+	fake.node = 'questions';
 	fake.answerStatus = 202;
+});
+
+describe('limits card (Q64)', () => {
+	it('shows the limit questions and posts the pick to limit_choice', async () => {
+		fake.node = 'limit_choice';
+		fake.questions = [
+			{ id: 'limit_choice', text: 'At 20 min/day you finish on Dec 15, 10 days after your target. What should change?', kind: 'choice', choices: ['Move the date to Dec 15', 'Raise the daily minutes', 'Lower the target'] },
+			{ id: 'new_minutes', text: 'If you raise them, how many minutes a day?', kind: 'number', choices: [], unit: 'minutes per day', min: 21, max: 960 }
+		];
+		const chat = await opened();
+		expect(group(chat.messages)).toMatchObject({ persona: 'Aroh', items: [{ id: 'limit_choice' }, { id: 'new_minutes' }] });
+		chat.handle({ type: 'answer', id: 'limit_choice', value: 'Move the date to Dec 15' });
+		chat.handle({ type: 'skip', id: 'new_minutes' });
+		chat.handle({ type: 'submit' });
+		await settle();
+		expect(fake.posts.map((p) => p.body)).toEqual([{ node: 'limit_choice', answer: [{ id: 'limit_choice', answer: 'Move the date to Dec 15' }, { id: 'new_minutes', answer: null }] }]);
+	});
 });
 
 describe('stuck answers (Q58): the owner answered some cards and nothing was posted', () => {

@@ -82,6 +82,9 @@ describe('engine client', () => {
 	it('routes chat text to the waiting node or a replan', () => {
 		expect(route(undefined, 'I missed today')).toEqual({ kind: 'replan', reason: 'I missed today' });
 		expect(route(questions, '4')).toEqual({ kind: 'questions' });
+		const limits: Waiting = { node: 'limit_choice', ask: 'question', prompt: 'Pick what should change.', data: { limits: { questions: [{ id: 'limit_choice', text: 'What should change?', kind: 'choice', choices: ['Lower the target'] }] } } };
+		expect(route(limits, 'lower it')).toEqual({ kind: 'questions' });
+		expect(waitLabel(view({ status: 'waiting_human' }, [limits]))).toBe('1 question to answer');
 		expect(route(approve, 'Mornings only')).toEqual({ kind: 'answer', node: 'approve', answer: false, change: 'Mornings only' });
 		expect(route({ node: 'change', ask: 'question', prompt: null, data: {} }, 'Mornings only')).toEqual({ kind: 'answer', node: 'change', answer: 'Mornings only' });
 	});

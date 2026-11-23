@@ -7,6 +7,7 @@ export const FALLBACK_BOUNDS = { min: 0, max: 100 } as const;
 /** One open question set of a run: the questions, the owner's answers by id, skips, and the submit state. */
 export type QuestionGroup = {
 	runId: string;
+	node: string;
 	prompt: string;
 	questions: Question[];
 	values: Record<string, string>;
@@ -89,7 +90,7 @@ export function fillNext(g: QuestionGroup, text: string): QuestionGroup | null {
 export function groupMessage(g: QuestionGroup, submitted = false): Extract<ChatMessage, { type: 'questions' }> {
 	return {
 		type: 'questions',
-		persona: 'Intake interviewer',
+		persona: g.node === 'limit_choice' ? 'Aroh' : 'Intake interviewer',
 		prompt: g.prompt,
 		items: g.questions.map((q) => ({
 			id: q.id,

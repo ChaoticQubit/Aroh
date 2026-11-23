@@ -129,8 +129,8 @@ export class GoalChat {
 		this.live = chatFromRun(v);
 		const questions = v.status.status === 'waiting_human' ? questionsOf(v.waiting[0]) : [];
 		if (!questions.length) this.group = null;
-		else if (this.group?.runId !== v.run_id) {
-			this.group = { runId: v.run_id, prompt: v.waiting[0].prompt ?? 'Answer these so the plan fits you.', questions, values: {}, skipped: [], sending: false, error: null };
+		else if (this.group?.runId !== v.run_id || this.group.node !== v.waiting[0].node) {
+			this.group = { runId: v.run_id, node: v.waiting[0].node, prompt: v.waiting[0].prompt ?? 'Answer these so the plan fits you.', questions, values: {}, skipped: [], sending: false, error: null };
 		}
 	}
 
@@ -193,7 +193,7 @@ export class GoalChat {
 			return;
 		}
 		this.group = { ...g, sending: true, error: null };
-		const r = await engine.answer(g.runId, 'questions', answer);
+		const r = await engine.answer(g.runId, g.node, answer);
 		if (!r.ok) {
 			this.group = { ...g, sending: false, error: `Your answers were not sent: ${r.message}` };
 			return;

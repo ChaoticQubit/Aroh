@@ -11,7 +11,9 @@ places = "list<{name: string, goals: list<string>, routines: list<string>}>"
 intake = "{questions: list<{id: string, text: string, kind: enum(text, number, choice), choices: list<string>, unit: string?, min: number?, max: number?, lasting: {topic: string, label: string}?, known: {fact_id: string, value: string, source: string}?}>}"
 answers = "list<{id: string, answer: string?}>"
 research = "{summary: string, sources: list<{title: string, url: string}>}"
-plan = "{summary: string, timezone: string, items: list<{title: string, start: string, minutes: int, rrule: string?, notes: string?}>, trackers: list<{name: string, fields: list<{key: string, label: string, kind: enum(number, text, bool), unit: string?}>, cadence: {freq: enum(daily, weekly), weekdays: list<enum(Mon, Tue, Wed, Thu, Fri, Sat, Sun)>, at: string}?, rules: list<{field: string, op: enum(above, below, flat, missed), value: number, window_days: int}>?}>}"
+plan = "{summary: string, timezone: string, items: list<{title: string, start: string, minutes: int, rrule: string?, notes: string?}>, daily_minutes: int?, needed_minutes: int?, trackers: list<{name: string, fields: list<{key: string, label: string, kind: enum(number, text, bool), unit: string?}>, cadence: {freq: enum(daily, weekly), weekdays: list<enum(Mon, Tue, Wed, Thu, Fri, Sat, Sun)>, at: string}?, rules: list<{field: string, op: enum(above, below, flat, missed), value: number, window_days: int}>?}>}"
+limits = "{fits: bool, tries: int, problems: list<string>, questions: list<{id: string, text: string, kind: enum(text, number, choice), choices: list<string>, unit: string?, min: number?, max: number?, lasting: {topic: string, label: string}?, known: {fact_id: string, value: string, source: string}?}>}"
+limit_answers = "list<{id: string, answer: string?}>"
 approved = "bool"
 change = "string"
 profile = "list<{id: string, fact: string, topic: string?, source: string, date: string}>"
@@ -59,8 +61,36 @@ id = "plan"
 kind = "agent"
 persona = "goal-planner"
 prompt = "Write the plan for this goal. An answer of null means the owner skipped that question: use a sensible default for it and name the defaults you chose in the summary."
-reads = ["goal", "intake", "answers", "research", "calendar", "busy", "away_days", "profile", "places"]
+reads = ["goal", "intake", "answers", "research", "calendar", "busy", "away_days", "profile", "places", "limit_answers"]
 writes = "plan"
+
+[[nodes]]
+id = "check_limits"
+kind = "tool"
+tool = "check_limits"
+reads = ["goal", "plan", "answers", "profile", "limits", "limit_answers"]
+writes = "limits"
+
+[[nodes]]
+id = "fit"
+kind = "agent"
+persona = "goal-planner"
+prompt = "Fit the plan to the owner's limits. Keep everything else as it is: fix the days limits.problems lists, and follow the owner's choice in limit_answers."
+reads = ["goal", "intake", "answers", "research", "calendar", "busy", "away_days", "profile", "places", "limits", "limit_answers", "plan"]
+writes = "plan"
+
+[[nodes]]
+id = "limits_gate"
+kind = "router"
+condition = "limits_gate()"
+
+[[nodes]]
+id = "limit_choice"
+kind = "human"
+ask = "question"
+prompt = "This plan does not fit your daily minutes by the date. Pick what should change."
+reads = ["limits"]
+writes = "limit_answers"
 
 [[nodes]]
 id = "approve"
@@ -88,7 +118,7 @@ id = "revise"
 kind = "agent"
 persona = "goal-planner"
 prompt = "Revise the plan using the change the owner asked for. An answer of null means the owner skipped that question: keep a sensible default for it."
-reads = ["goal", "intake", "answers", "research", "calendar", "busy", "away_days", "profile", "places", "plan", "change"]
+reads = ["goal", "intake", "answers", "research", "calendar", "busy", "away_days", "profile", "places", "limits", "limit_answers", "plan", "change"]
 writes = "plan"
 
 [[nodes]]
@@ -135,7 +165,34 @@ to = "plan"
 
 [[edges]]
 from = "plan"
+to = "check_limits"
+
+[[edges]]
+from = "check_limits"
+to = "limits_gate"
+
+[[edges]]
+from = "limits_gate"
 to = "approve"
+when = "fits"
+
+[[edges]]
+from = "limits_gate"
+to = "fit"
+when = "over"
+
+[[edges]]
+from = "limits_gate"
+to = "limit_choice"
+when = "short"
+
+[[edges]]
+from = "limit_choice"
+to = "fit"
+
+[[edges]]
+from = "fit"
+to = "check_limits"
 
 [[edges]]
 from = "approve"
@@ -157,7 +214,7 @@ to = "revise"
 
 [[edges]]
 from = "revise"
-to = "approve"
+to = "check_limits"
 
 [[edges]]
 from = "write"

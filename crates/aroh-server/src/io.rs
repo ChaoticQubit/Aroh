@@ -2,7 +2,9 @@ use crate::checkpoints::EventBuffer;
 use crate::error::ServerError;
 use crate::evals;
 use crate::ledger::{PgLedger, UsageModel, UsageWriter};
-use crate::rows::{list_rows, ServerClock};
+use crate::rows::{get_row, list_rows, ServerClock};
+use crate::teams::{self, Kind};
+use aroh_domain::rows::Goal;
 use crate::tools::{aroh_toolkit, ToolEnv};
 use crate::vault::Vault;
 use crate::workflows;
@@ -18,9 +20,10 @@ use troupekit_core::clock::Clock;
 use troupekit_core::ids::RunId;
 use troupekit_graph::{Conditions, GraphIo};
 use troupekit_providers::{Catalog, HttpModel, MeteredModel, Model};
+use troupekit_core::tool::WEB_SEARCH;
 use troupekit_tools::{
-    typed_tool, web_fetch, BraveSearch, EnvSecrets, HttpLimits, SearchProvider, SearchToolkit, SearxngSearch, ToolContext,
-    ToolOutput, ToolRegistry, Toolkit, Transport,
+    hosted, typed_tool, web_fetch, BraveSearch, EnvSecrets, HostedTool, HttpLimits, SearchProvider, SearchToolkit,
+    SearxngSearch, ToolContext, ToolOutput, ToolRegistry, Toolkit, Transport,
 };
 use uuid::Uuid;
 
@@ -30,6 +33,16 @@ use uuid::Uuid;
 pub const CATALOG: &str = include_str!("../../../troupekit/catalog/providers.toml");
 
 const FETCH_MAX_CHARS: usize = 20_000;
+
+/// Claude's server-side web search for one agent run: at most 5 searches,
+/// about $0.05 on the owner's key (Q63).
+/// Every other vendor calls the local `web_search` stand-in.
+const SEARCH: HostedTool = HostedTool::WebSearch { max_uses: 5 };
+
+/// Claude's server-side web fetch for one agent run: at most 5 pages of
+/// at most 6,000 tokens each, close to the local `FETCH_MAX_CHARS`.
+/// Fetches cost tokens only.
+const FETCH: HostedTool = HostedTool::WebFetch { max_uses: 5, max_content_tokens: 6000 };
 const BRAVE_BASE_URL: &str = "https://api.search.brave.com";
 
 /// What every run io of the process shares: pool, vault, provider catalog,
@@ -150,6 +163,21 @@ fn no_search() -> Toolkit {
     Toolkit::new("search").with(Arc::new(tool))
 }
 
+/// Registers `web_search` and `web_fetch` as hosted tools (Q63): Claude runs
+/// its own server-side search and fetch, capped per agent run, on the
+/// owner's key. Other vendors call the stand-ins: `search` (or the stub)
+/// and a client fetch through `web`, both fencing what they return.
+fn register_web(tools: &mut ToolRegistry, search: Option<Toolkit>, web: Arc<dyn Transport>) -> Result<(), ServerError> {
+    let setup = |e: troupekit_tools::ToolError| ServerError::Setup(e.to_string());
+    let search = search.unwrap_or_else(no_search);
+    let mut kit = Toolkit::new(search.name());
+    for tool in search.tools() {
+        kit = kit.with(if tool.spec().name == WEB_SEARCH { hosted(tool.clone(), SEARCH) } else { tool.clone() });
+    }
+    tools.register_toolkit(kit).map_err(setup)?;
+    tools.register(hosted(web_fetch(web, FETCH_MAX_CHARS), FETCH)).map_err(setup)
+}
+
 /// Router condition `autonomy_gate()` of the replan workflow: `none` when
 /// the proposal has no change; `ask` when the goal's autonomy is `ask` or the
 /// proposal is big under `balanced`; else `apply` (Q19). Locked actions never
@@ -193,6 +221,17 @@ pub async fn run_bounds(pool: &PgPool, run: Option<RunId>) -> Result<(Vec<evals:
     Ok((busy, fixed))
 }
 
+/// The kind of `user`'s goal `goal` as its team reads it, so the intake
+/// eval asks what a coach of that kind needs. General for a run with no
+/// goal or a goal row the server lacks.
+async fn goal_kind(pool: &PgPool, user: Uuid, goal: Option<Uuid>) -> Result<Kind, ServerError> {
+    let Some(id) = goal else { return Ok(Kind::General) };
+    let row = get_row::<Goal>(pool, user, &id.to_string()).await?;
+    Ok(row.map_or(Kind::General, |g| {
+        teams::for_goal(user, g.category_id.as_deref(), &crate::engine::about(&g.title, g.context.as_deref())).kind
+    }))
+}
+
 /// The io of one run: its user, goal and run id, the user's provider
 /// settings, a tool registry closed over the user, the domain evals, the
 /// user's ledger, the step's event buffer and the run's persona snapshot.
@@ -225,11 +264,13 @@ impl RunIo {
         let env = ToolEnv { pool: deps.pool.clone(), hlc: deps.hlc.clone(), clock: deps.clock.clone(), user, goal };
         tools.register_toolkit(aroh_toolkit(env.clone())).map_err(|e| ServerError::Setup(e.to_string()))?;
         tools.register_toolkit(crate::triage::triage_toolkit(env)).map_err(|e| ServerError::Setup(e.to_string()))?;
-        tools.register_toolkit(search_kit(&deps, user).await?.unwrap_or_else(no_search)).map_err(|e| ServerError::Setup(e.to_string()))?;
-        tools.register(web_fetch(deps.web.clone(), FETCH_MAX_CHARS)).map_err(|e| ServerError::Setup(e.to_string()))?;
+        register_web(&mut tools, search_kit(&deps, user).await?, deps.web.clone())?;
         let (busy, fixed) = run_bounds(&deps.pool, run).await?;
+        let kind = goal_kind(&deps.pool, user, goal).await?;
         let mut conditions = Conditions::new();
         conditions.register("autonomy_gate", Arc::new(autonomy_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
+        conditions.register("limits_gate", Arc::new(crate::limits::limits_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
+        tools.register(crate::limits::tool()).map_err(|e| ServerError::Setup(e.to_string()))?;
         let writer = Arc::new(UsageWriter {
             pool: deps.pool.clone(),
             hlc: deps.hlc.clone(),
@@ -243,7 +284,7 @@ impl RunIo {
             writer,
             settings,
             tools,
-            evals: evals::registry_with_busy(busy, fixed),
+            evals: evals::registry_for(busy, fixed, kind),
             events,
             personas: workflows::loader(personas),
             conditions,
@@ -332,6 +373,18 @@ mod tests {
         assert!(resolve(&[], "default").is_err());
         let only = vec![setting(3, "solo", "anthropic", false)];
         assert_eq!(resolve(&only, "default").unwrap().0.label, "solo");
+    }
+
+    #[test]
+    fn web_tools_are_hosted_with_local_stand_ins() {
+        let web: Arc<dyn Transport> =
+            crate::fake::FnTransport::new(|_| crate::fake::Reply { status: 404, content_type: "text/plain", body: String::new() });
+        let mut tools = ToolRegistry::new();
+        register_web(&mut tools, None, web).unwrap();
+        let specs = tools.specs();
+        let hosted = |name: &str| specs.iter().find(|s| s.name == name).and_then(|s| s.hosted);
+        assert_eq!(hosted("web_search"), Some(HostedTool::WebSearch { max_uses: 5 }));
+        assert_eq!(hosted("web_fetch"), Some(HostedTool::WebFetch { max_uses: 5, max_content_tokens: 6000 }));
     }
 
     #[test]

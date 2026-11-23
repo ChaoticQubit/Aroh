@@ -36,6 +36,7 @@ where
             name: name.into(),
             description: description.into(),
             schema,
+            hosted: None,
         },
         f,
         args: PhantomData,

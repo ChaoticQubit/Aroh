@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use troupekit_core::error::CoreError;
 use troupekit_core::event::Usage;
+use troupekit_core::tool::WEB_SEARCH;
 use troupekit_providers::{CompletionRequest, Price};
 
 /// A spend limit for one period, such as a goal's or a user's month.
@@ -99,7 +100,8 @@ impl UsageLedger for InMemoryLedger {
 
 /// Worst-case cost of sending `req` at `price`: input tokens counted as
 /// a quarter of the JSON bytes of system text, messages and tool specs,
-/// rounded up, plus `max_tokens` output tokens. Never under-counts output.
+/// rounded up, plus `max_tokens` output tokens and every web search the
+/// hosted tools allow. Never under-counts output.
 pub fn estimate(req: &CompletionRequest, price: &Price) -> u64 {
     let bytes = req.system.as_ref().map_or(0, String::len)
         + serde_json::to_string(&req.messages)
@@ -109,11 +111,20 @@ pub fn estimate(req: &CompletionRequest, price: &Price) -> u64 {
             .expect("tool specs serialize")
             .len();
     let input_tokens = u64::try_from(bytes.div_ceil(4)).expect("byte count fits in u64");
-    price.cost_usd_micros(&Usage {
-        input_tokens,
-        output_tokens: u64::from(req.max_tokens),
-        cost_usd_micros: 0,
-    })
+    let searches: u64 = req
+        .tools
+        .iter()
+        .filter_map(|t| t.hosted)
+        .filter(|h| h.name() == WEB_SEARCH)
+        .map(|h| u64::from(h.max_uses()))
+        .sum();
+    price
+        .cost_usd_micros(&Usage {
+            input_tokens,
+            output_tokens: u64::from(req.max_tokens),
+            cost_usd_micros: 0,
+        })
+        .saturating_add(searches.saturating_mul(price.search_usd_micros))
 }
 
 /// Checks a call costing up to `estimate` against every layer of `limits`,
@@ -174,6 +185,7 @@ mod tests {
         output_usd_micros_per_mtok: 2_000_000,
         verified: true,
         long_context: None,
+        search_usd_micros: 0,
     };
 
     fn req() -> CompletionRequest {
@@ -195,6 +207,26 @@ mod tests {
         );
         assert!(estimate(&r, &PRICE) >= 2000 + 100);
         assert_eq!(estimate(&r, &Price::FREE), 0);
+    }
+
+    #[test]
+    fn estimate_adds_every_allowed_search() {
+        use troupekit_core::tool::{HostedTool, ToolSpec};
+        let mut r = req();
+        let priced = Price {
+            search_usd_micros: 10_000,
+            ..PRICE
+        };
+        let base = estimate(&r, &priced);
+        r.tools.push(ToolSpec {
+            name: "web_search".into(),
+            description: String::new(),
+            schema: serde_json::json!({}),
+            hosted: Some(HostedTool::WebSearch { max_uses: 3 }),
+        });
+        let tools = serde_json::to_string(&r.tools).unwrap().len() as u64;
+        assert!(estimate(&r, &priced) >= base + 30_000);
+        assert!(estimate(&r, &priced) <= base + 30_000 + tools.div_ceil(4) + 1);
     }
 
     #[tokio::test]

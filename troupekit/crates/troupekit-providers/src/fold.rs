@@ -13,6 +13,7 @@ use troupekit_core::message::{ContentPart, Message, Role};
 pub struct Fold {
     parts: Vec<ContentPart>,
     calls: BTreeMap<u32, (usize, String)>,
+    hosted: BTreeMap<u32, (usize, String)>,
     input_tokens: u64,
     output_tokens: u64,
     stop: Option<StopReason>,
@@ -54,7 +55,22 @@ impl Fold {
                     arguments: Value::Null,
                 });
             }
-            Delta::ToolCallArgs { index, json } => match self.calls.get_mut(index) {
+            Delta::Hosted { index, tool, block } => {
+                if self.calls.contains_key(index) || self.hosted.contains_key(index) {
+                    return Err(decode_error(format!("block {index} started twice")));
+                }
+                self.hosted
+                    .insert(*index, (self.parts.len(), String::new()));
+                self.parts.push(ContentPart::Hosted {
+                    tool: tool.clone(),
+                    block: block.clone(),
+                });
+            }
+            Delta::ToolCallArgs { index, json } => match self
+                .calls
+                .get_mut(index)
+                .or_else(|| self.hosted.get_mut(index))
+            {
                 Some((_, raw)) => raw.push_str(json),
                 None => {
                     return Err(decode_error(format!(
@@ -85,6 +101,7 @@ impl Fold {
         let Fold {
             mut parts,
             calls,
+            hosted,
             input_tokens,
             output_tokens,
             stop,
@@ -95,6 +112,14 @@ impl Fold {
                 "reply ended before a stop reason",
             ));
         };
+        for (pos, raw) in hosted.values().filter(|(_, raw)| !raw.trim().is_empty()) {
+            let parsed: Value = serde_json::from_str(raw)
+                .map_err(|e| decode_error(format!("hosted tool input is not JSON: {e}")))?;
+            match &mut parts[*pos] {
+                ContentPart::Hosted { block, .. } => block["input"] = parsed,
+                _ => unreachable!("a hosted slot always points at its hosted part"),
+            }
+        }
         for (pos, raw) in calls.values() {
             let parsed = if raw.trim().is_empty() {
                 Value::Object(Default::default())

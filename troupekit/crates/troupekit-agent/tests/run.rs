@@ -19,13 +19,14 @@ use troupekit_providers::model::{Endpoint, HttpModel};
 use troupekit_providers::transport::{Scripted, ScriptedTransport};
 use troupekit_providers::wire::{AuthStyle, Protocol, Quirks};
 use troupekit_providers::{CompletionRequest, CompletionResponse, Delta, Model, Price, StopReason};
-use troupekit_tools::{typed_tool, ToolContext, ToolOutput, ToolRegistry};
+use troupekit_tools::{hosted, typed_tool, HostedTool, ToolContext, ToolOutput, ToolRegistry};
 
 const PRICE: Price = Price {
     input_usd_micros_per_mtok: 1_000_000,
     output_usd_micros_per_mtok: 2_000_000,
     verified: true,
     long_context: None,
+    search_usd_micros: 0,
 };
 
 type Reply = Result<CompletionResponse, ProviderError>;
@@ -151,6 +152,12 @@ fn setup(replies: Vec<Reply>, price: Price) -> Setup {
     let mut tools = ToolRegistry::new();
     tools.register(counted("echo", count.clone())).unwrap();
     tools.register(counted("secret", count.clone())).unwrap();
+    tools
+        .register(hosted(
+            counted("web_search", count.clone()),
+            HostedTool::WebSearch { max_uses: 2 },
+        ))
+        .unwrap();
     let model = FakeModel::new(replies);
     let sink = Arc::new(VecSink::default());
     let ledger = Arc::new(InMemoryLedger::default());
@@ -369,6 +376,90 @@ async fn schema_failure_repairs_once() {
     );
     let req = &s.model.seen()[0];
     assert!(req.output_schema.is_some() && req.system.as_deref().unwrap().contains("JSON Schema"));
+}
+
+fn searched(before: &str, after: &str, stop: StopReason) -> Reply {
+    let mut parts = Vec::new();
+    if !before.is_empty() {
+        parts.push(ContentPart::Text {
+            text: before.into(),
+        });
+    }
+    parts.push(ContentPart::Hosted {
+        tool: Some("web_search".into()),
+        block: json!({"type": "server_tool_use", "id": "s", "name": "web_search", "input": {"query": "q"}}),
+    });
+    parts.push(ContentPart::Hosted {
+        tool: None,
+        block: json!({"type": "web_search_tool_result", "tool_use_id": "s"}),
+    });
+    if !after.is_empty() {
+        parts.push(ContentPart::Text { text: after.into() });
+    }
+    Ok(CompletionResponse {
+        message: Message::new(Role::Assistant, parts).unwrap(),
+        usage: usage(10, 5),
+        stop,
+    })
+}
+
+fn search_cap(req: &CompletionRequest) -> Option<u32> {
+    req.tools
+        .iter()
+        .find(|t| t.name == "web_search")
+        .map(|t| t.hosted.unwrap().max_uses())
+}
+
+#[tokio::test]
+async fn hosted_search_pauses_resumes_and_stops_at_the_cap() {
+    let s = setup(
+        vec![
+            searched("", "", StopReason::PauseTurn),
+            searched("Let me look.", "not json", StopReason::EndTurn),
+            text("{\"n\": 1, \"items\": []}"),
+        ],
+        PRICE,
+    );
+    let p = persona(&format!("tools = ['web_search']\n{TYPED}"));
+    let mut run = AgentRun::new(&p, ask(), Limits::default(), &s.io)
+        .await
+        .unwrap();
+    assert_eq!(
+        run_to_end(&mut run, &s.io).await,
+        StepOutcome::Done(json!({"n": 1, "items": []}))
+    );
+    let seen = s.model.seen();
+    assert_eq!(seen.len(), 3);
+    assert_eq!(
+        seen.iter().map(search_cap).collect::<Vec<_>>(),
+        vec![Some(2), Some(1), None]
+    );
+    assert_eq!(seen[1].messages.len(), 2);
+    assert_eq!(seen[1].messages[1].hosted_calls("web_search"), 1);
+    let repair = seen[2].messages.last().unwrap().text_content();
+    assert!(repair.contains("not JSON"), "{repair}");
+    assert!(!repair.contains("Let me look"), "{repair}");
+    assert_eq!(s.count.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn answer_is_the_text_after_the_last_search() {
+    let s = setup(
+        vec![searched(
+            "Searching first.",
+            "{\"n\": 2, \"items\": []}",
+            StopReason::EndTurn,
+        )],
+        PRICE,
+    );
+    let p = persona(&format!("tools = ['web_search']\n{TYPED}"));
+    let mut run = AgentRun::new(&p, ask(), Limits::default(), &s.io)
+        .await
+        .unwrap();
+    assert_eq!(
+        run_to_end(&mut run, &s.io).await,
+        StepOutcome::Done(json!({"n": 2, "items": []}))
+    );
 }
 
 #[tokio::test]
@@ -737,6 +828,7 @@ async fn max_tokens_fits_a_tight_call_budget() {
         output_usd_micros_per_mtok: 20_000_000,
         verified: true,
         long_context: None,
+        search_usd_micros: 0,
     };
     let s = setup(vec![text("hi")], opus);
     let mut run = AgentRun::new(

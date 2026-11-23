@@ -283,7 +283,7 @@ pub(crate) fn parse_tz(name: &str) -> Result<Tz, ServerError> {
 /// Joins a goal's `title` and optional `context` into one text.
 /// The team classifier in `teams` reads this text for keywords.
 /// Returns the joined text; an absent context adds nothing.
-fn about(title: &str, context: Option<&str>) -> String {
+pub(crate) fn about(title: &str, context: Option<&str>) -> String {
     format!("{title} {}", context.unwrap_or(""))
 }
 
@@ -544,6 +544,8 @@ impl Engine {
         let (busy, away_days) = self.busy(user, &goal, tz, now).await?;
         input.insert("busy".into(), json!(busy));
         input.insert("away_days".into(), json!(away_days));
+        input.insert("limits".into(), crate::limits::initial());
+        input.insert("limit_answers".into(), json!([]));
         let team = teams::for_goal(user, goal.category_id.as_deref(), &about(&goal.title, goal.context.as_deref()));
         let template = aroh_plugins::template(team.template).expect("every team template ships");
         input.insert("plugin_guide".into(), json!({"template": template, "reference": aroh_plugins::reference()}));

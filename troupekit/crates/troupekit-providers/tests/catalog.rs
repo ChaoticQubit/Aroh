@@ -133,8 +133,34 @@ fn prices_round_up_and_switch_to_long_context_rates() {
         output_usd_micros_per_mtok: u64::MAX,
         verified: true,
         long_context: None,
+        search_usd_micros: 0,
     };
     assert_eq!(max.cost_usd_micros(&usage(u64::MAX, u64::MAX)), u64::MAX);
+}
+
+#[test]
+fn hosted_searches_are_priced_per_search() {
+    use serde_json::json;
+    use troupekit_core::message::{ContentPart, Message, Role};
+    use troupekit_providers::request::{CompletionResponse, StopReason};
+    let c = Catalog::load(CATALOG).unwrap();
+    let opus = c.price("anthropic/claude-opus-5-5").unwrap();
+    assert_eq!(opus.search_usd_micros, 10_000);
+    assert_eq!(c.price("openai/gpt-6.2-sol").unwrap().search_usd_micros, 0);
+    let call = ContentPart::Hosted {
+        tool: Some("web_search".into()),
+        block: json!({"type": "server_tool_use"}),
+    };
+    let fetch = ContentPart::Hosted {
+        tool: Some("web_fetch".into()),
+        block: json!({"type": "server_tool_use"}),
+    };
+    let reply = CompletionResponse {
+        message: Message::new(Role::Assistant, vec![call.clone(), call, fetch]).unwrap(),
+        usage: usage(1_000_000, 0),
+        stop: StopReason::EndTurn,
+    };
+    assert_eq!(opus.reply_cost_usd_micros(&reply), 4_000_000 + 2 * 10_000);
 }
 
 #[test]

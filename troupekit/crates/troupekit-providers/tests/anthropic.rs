@@ -100,7 +100,7 @@ fn maps_stop_reasons() {
         ("stop_sequence", StopReason::EndTurn),
         ("max_tokens", StopReason::MaxTokens),
         ("refusal", StopReason::Refusal),
-        ("pause_turn", StopReason::Other("pause_turn".into())),
+        ("pause_turn", StopReason::PauseTurn),
     ];
     for (wire, want) in table {
         let body = json!({"type":"message","content":[],"stop_reason":wire,"usage":{"input_tokens":1,"output_tokens":1}});
@@ -171,4 +171,105 @@ fn never_sends_a_blank_text_block() {
     )
     .unwrap_err();
     assert_eq!(err.kind, ProviderErrorKind::BadRequest);
+}
+
+fn hosted_request() -> CompletionRequest {
+    use troupekit_core::tool::{HostedTool, ToolSpec};
+    let mut req = CompletionRequest::user("research", 100);
+    req.output_schema = Some(json!({"type": "object"}));
+    let spec = |hosted: HostedTool| ToolSpec {
+        name: hosted.name().into(),
+        description: "d".into(),
+        schema: json!({"type": "object"}),
+        hosted: Some(hosted),
+    };
+    req.tools = vec![
+        spec(HostedTool::WebSearch { max_uses: 5 }),
+        spec(HostedTool::WebFetch {
+            max_uses: 3,
+            max_content_tokens: 8000,
+        }),
+    ];
+    req
+}
+
+#[test]
+fn hosted_tools_encode_as_server_tools_without_output_format() {
+    let body = encode(
+        Protocol::Anthropic,
+        &anthropic_quirks(),
+        "m",
+        &hosted_request(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        body["tools"],
+        json!([
+            {"type": "web_search_20250305", "name": "web_search", "max_uses": 5},
+            {"type": "web_fetch_20250910", "name": "web_fetch", "max_uses": 3, "max_content_tokens": 8000}
+        ])
+    );
+    assert!(body.get("output_config").is_none());
+    let openai = encode(
+        Protocol::OpenAi,
+        &Quirks::default(),
+        "m",
+        &hosted_request(),
+        false,
+    )
+    .unwrap();
+    assert_eq!(openai["tools"][0]["function"]["name"], "web_search");
+}
+
+#[test]
+fn search_stream_keeps_hosted_blocks_and_sends_them_back() {
+    use troupekit_core::message::ContentPart;
+    let (_, reply) = stream_deltas(
+        Protocol::Anthropic,
+        &golden_text("anthropic_search_stream.sse"),
+    );
+    assert_eq!(reply.stop, StopReason::EndTurn);
+    assert_eq!(reply.message.hosted_calls("web_search"), 1);
+    assert_eq!(
+        reply.message.final_text(),
+        "{\"summary\":\"Run 3 times a week.\",\"sources\":[]}"
+    );
+    let ContentPart::Hosted { block, .. } = &reply.message.parts[1] else {
+        panic!("{:?}", reply.message.parts)
+    };
+    assert_eq!(block["input"], json!({"query": "couch to 5k plan"}));
+    let mut body = json!({"type": "message", "content": [], "stop_reason": "end_turn",
+        "usage": {"input_tokens": 40, "output_tokens": 30}});
+    for p in &reply.message.parts {
+        body["content"].as_array_mut().unwrap().push(match p {
+            ContentPart::Text { text } => json!({"type": "text", "text": text}),
+            ContentPart::Hosted { block, .. } => block.clone(),
+            other => panic!("{other:?}"),
+        });
+    }
+    assert_eq!(
+        fold_all(&decode_body(Protocol::Anthropic, &body).unwrap()),
+        reply
+    );
+    let mut req = hosted_request();
+    req.messages.push(reply.message.clone());
+    let sent = encode(Protocol::Anthropic, &anthropic_quirks(), "m", &req, false).unwrap();
+    assert_eq!(sent["messages"][1]["content"][1]["type"], "server_tool_use");
+    assert_eq!(
+        sent["messages"][1]["content"][2]["content"][0]["encrypted_content"],
+        "EqAB"
+    );
+    let openai = encode(Protocol::OpenAi, &Quirks::default(), "m", &req, false).unwrap();
+    assert!(!openai.to_string().contains("server_tool_use"));
+}
+
+#[test]
+fn pause_turn_keeps_the_hosted_call() {
+    let body = json!({"type": "message",
+        "content": [{"type": "server_tool_use", "id": "s", "name": "web_search", "input": {"query": "q"}}],
+        "stop_reason": "pause_turn", "usage": {"input_tokens": 1, "output_tokens": 1}});
+    let reply = fold_all(&decode_body(Protocol::Anthropic, &body).unwrap());
+    assert_eq!(reply.stop, StopReason::PauseTurn);
+    assert_eq!(reply.message.hosted_calls("web_search"), 1);
 }

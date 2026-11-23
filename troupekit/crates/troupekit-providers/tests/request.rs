@@ -9,6 +9,7 @@ fn tool(name: &str) -> ToolSpec {
         name: name.into(),
         description: "d".into(),
         schema: json!({"type":"object"}),
+        hosted: None,
     }
 }
 

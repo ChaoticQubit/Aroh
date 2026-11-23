@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use troupekit_agent::eval::lookup;
 use troupekit_agent::EvalRegistry;
+use crate::teams::Kind;
 
 /// Days of a recurring item that the evals expand and check.
 /// Matches the materialized window of the app engine.
@@ -38,6 +39,13 @@ pub struct Slot {
 /// slots: one, or every occurrence in the first `EVAL_WINDOW_DAYS` days of
 /// the rule. An item without `start` (a deletion) has no slots.
 pub fn slots(item: &Value) -> Result<Vec<Slot>, String> {
+    slots_within(item, EVAL_WINDOW_DAYS)
+}
+
+/// Expands one item like `slots`, over the first `days` days of its rule.
+/// The limit check (Q64) reads whole plans up to their deadline this way.
+/// Returns the slots, or why the item does not expand.
+pub fn slots_within(item: &Value, days: u32) -> Result<Vec<Slot>, String> {
     let title = item.get("title").and_then(Value::as_str).unwrap_or("item").to_string();
     let Some(start) = item.get("start").and_then(Value::as_str) else {
         return Ok(Vec::new());
@@ -65,7 +73,7 @@ pub fn slots(item: &Value) -> Result<Vec<Slot>, String> {
         deleted: false,
     };
     let from = Utc.from_utc_datetime(&start) - Duration::seconds(1);
-    let occurrences = recur::materialize(&series, from, EVAL_WINDOW_DAYS, &Default::default())
+    let occurrences = recur::materialize(&series, from, days, &Default::default())
         .map_err(|e| format!("`{title}`: {e}"))?;
     Ok(occurrences
         .into_iter()
@@ -226,10 +234,87 @@ pub fn owner_terms(output: &Value, args: &[Value]) -> Result<(), String> {
     }
 }
 
+/// What an expert coach asks a new client of each kind of goal: a topic the
+/// eval names and words a question on it uses. Every kind asks the
+/// `daily_minutes` cap (Q64) on top.
+fn coach_topics(kind: Kind) -> &'static [(&'static str, &'static [&'static str])] {
+    match kind {
+        Kind::Fitness => &[
+            ("body weight", &["weight", "weigh", "kg", "lbs", "pounds"]),
+            ("height", &["height", "tall"]),
+            ("activity", &["active", "activity", "trained", "train before", "experience", "fitness level", "sedentary"]),
+            ("diet", &["diet", "eat", "vegetarian", "vegan", "food", "cook", "meals"]),
+            ("injuries", &["injur", "pain", "health condition", "medical"]),
+        ],
+        Kind::Learning => &[("progress so far", &["so far", "already", "finished", "level", "current", "progress", "chapters read", "pages read"])],
+        Kind::Finance => &[
+            ("income", &["income", "earn", "pay", "salary", "wage"]),
+            ("spending", &["spend", "expense", "bills", "costs", "rent"]),
+            ("savings so far", &["saved", "savings", "so far", "already have"]),
+        ],
+        Kind::General | Kind::Music | Kind::Habits => &[],
+    }
+}
+
+/// Whether lowercase question text `said` mentions `word`: a phrase anywhere,
+/// a single word only as the start of a word, so `eat` matches eating but
+/// never great, and `tall` never install.
+fn mentions(said: &str, word: &str) -> bool {
+    if word.contains(' ') {
+        return said.contains(word);
+    }
+    said.split(|c: char| !c.is_alphanumeric()).any(|w| w.starts_with(word))
+}
+
+/// Eval `coach_questions(path)`: the questions at `path` ask what an expert
+/// coach of goal `kind` needs (fitness: weight, height, activity, diet,
+/// injuries), and always `daily_minutes`. Errors name each missing topic.
+pub fn coach_questions(output: &Value, args: &[Value], kind: Kind) -> Result<(), String> {
+    let path = args.first().and_then(Value::as_str).filter(|_| args.len() == 1).ok_or("takes (path)")?;
+    let questions: Vec<Value> = lookup(output, path).into_iter().flat_map(|v| v.as_array().cloned().unwrap_or_default()).collect();
+    let said: Vec<String> = questions
+        .iter()
+        .map(|q| format!("{} {}", q.get("id").and_then(Value::as_str).unwrap_or_default(), q.get("text").and_then(Value::as_str).unwrap_or_default()).to_lowercase())
+        .collect();
+    let mut missing: Vec<String> = coach_topics(kind)
+        .iter()
+        .filter(|(_, words)| !said.iter().any(|s| words.iter().any(|w| mentions(s, w))))
+        .map(|(topic, _)| format!("ask the owner's {topic}, as a coach would"))
+        .collect();
+    let caps = |q: &Value| q.get("id").and_then(Value::as_str) == Some(crate::limits::DAILY_MINUTES_ID) || q.pointer("/lasting/topic").and_then(Value::as_str) == Some(crate::limits::DAILY_MINUTES_TOPIC);
+    if !questions.iter().any(caps) {
+        missing.push("ask daily_minutes, the minutes a day the owner can give".into());
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(missing.join("; "))
+    }
+}
+
+/// Eval `notes_filled(path)`: every planned item at `path` (one with a
+/// `start`) carries notes with the session's content, such as exercises,
+/// sets, reps and rest, or the chapters to read. Errors name each bare item.
+pub fn notes_filled(output: &Value, args: &[Value]) -> Result<(), String> {
+    let path = args.first().and_then(Value::as_str).filter(|_| args.len() == 1).ok_or("takes (path)")?;
+    let bare: Vec<String> = lookup(output, path)
+        .into_iter()
+        .flat_map(|v| v.as_array().cloned().unwrap_or_default())
+        .filter(|i| i.get("start").is_some_and(|s| !s.is_null()))
+        .filter(|i| i.get("notes").and_then(Value::as_str).is_none_or(|n| n.trim().is_empty()))
+        .map(|i| i.get("title").and_then(Value::as_str).unwrap_or("?").to_string())
+        .collect();
+    if bare.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("give every action notes with what the session holds (exercises, sets, reps, rest, or chapters): {}", bare.join(", ")))
+    }
+}
+
 /// Builds the eval registry every Aroh run uses: the built-in `min_items`
 /// plus the domain evals `no_overlap`, `within_availability`, `valid_plugin`,
-/// `keeps_fixed`, `public_sources` and `owner_terms`. Returns the registry, with no busy time
-/// or fixed action bound.
+/// `keeps_fixed`, `public_sources`, `owner_terms`, `coach_questions` and `notes_filled`.
+/// Returns the registry, with no busy time, fixed action or goal kind bound.
 pub fn registry() -> EvalRegistry {
     registry_with_busy(Vec::new(), Default::default())
 }
@@ -255,7 +340,16 @@ fn keeps_fixed(output: &Value, args: &[Value], fixed: &BTreeSet<String>) -> Resu
 /// its path also never overlap a kept device event (busy slots are never
 /// checked against each other), and the `fixed` action ids into `keeps_fixed`.
 pub fn registry_with_busy(busy: Vec<Slot>, fixed: BTreeSet<String>) -> EvalRegistry {
+    registry_for(busy, fixed, Kind::General)
+}
+
+/// Builds the registry of one run like `registry_with_busy`, with
+/// `coach_questions` asking what a coach of goal `kind` needs.
+/// Returns the registry.
+pub fn registry_for(busy: Vec<Slot>, fixed: BTreeSet<String>, kind: Kind) -> EvalRegistry {
     let mut r = EvalRegistry::new();
+    r.register("coach_questions", Arc::new(move |output: &Value, args: &[Value]| coach_questions(output, args, kind))).expect("fresh name");
+    r.register("notes_filled", Arc::new(notes_filled)).expect("fresh name");
     r.register("keeps_fixed", Arc::new(move |output: &Value, args: &[Value]| keeps_fixed(output, args, &fixed))).expect("fresh name");
     r.register("public_sources", Arc::new(public_sources)).expect("fresh name");
     r.register("owner_terms", Arc::new(owner_terms)).expect("fresh name");
@@ -446,5 +540,70 @@ mod tests {
         assert_eq!(owner_terms(&plain, &args), Ok(()), "an hour a day and a left knee are the owner's own words");
         assert!(owner_terms(&fixed, &[]).is_err());
         assert!(registry().get("owner_terms").is_some());
+    }
+
+    fn asks(qs: &[(&str, &str)]) -> Value {
+        json!({"questions": qs.iter().map(|(id, text)| json!({"id": id, "text": text, "kind": "text", "choices": []})).collect::<Vec<_>>()})
+    }
+
+    #[test]
+    fn coach_questions_fail_shallow_fitness_reading_and_savings_sets() {
+        let args = [json!("questions")];
+        let shallow = asks(&[("daily_minutes", "How many minutes a day can you train?"), ("time", "Morning or evening?")]);
+        let err = coach_questions(&shallow, &args, Kind::Fitness).unwrap_err();
+        for topic in ["body weight", "height", "activity", "diet", "injuries"] {
+            assert!(err.contains(topic), "{topic}: {err}");
+        }
+        let coach = asks(&[
+            ("daily_minutes", "How many minutes a day can you train?"),
+            ("weight_kg", "What is your body weight now?"),
+            ("height_cm", "How tall are you?"),
+            ("activity", "How active are you on a normal day, and have you trained before?"),
+            ("diet", "Do you eat meat, or are you vegetarian or vegan? Do you cook or eat out?"),
+            ("injuries", "Any injuries or pain we should plan around?"),
+        ]);
+        assert_eq!(coach_questions(&coach, &args, Kind::Fitness), Ok(()));
+
+        let shallow = asks(&[("daily_minutes", "Minutes a day?"), ("time", "When do you read?")]);
+        let err = coach_questions(&shallow, &args, Kind::Learning).unwrap_err();
+        assert!(err.contains("progress so far"), "{err}");
+        let coach = asks(&[("daily_minutes", "Minutes a day?"), ("chapters_done", "How many chapters have you read so far?")]);
+        assert_eq!(coach_questions(&coach, &args, Kind::Learning), Ok(()));
+
+        let shallow = asks(&[("daily_minutes", "Minutes a day for money tasks?"), ("goal", "What are you saving for?")]);
+        let err = coach_questions(&shallow, &args, Kind::Finance).unwrap_err();
+        for topic in ["income", "spending", "savings so far"] {
+            assert!(err.contains(topic), "{topic}: {err}");
+        }
+        let coach = asks(&[
+            ("daily_minutes", "Minutes a day for money tasks?"),
+            ("income", "What is your take-home pay a month?"),
+            ("spend", "About how much do you spend a month on rent, bills and food?"),
+            ("saved", "How much have you saved so far?"),
+        ]);
+        assert_eq!(coach_questions(&coach, &args, Kind::Finance), Ok(()));
+
+        let lookalike = asks(&[("daily_minutes", "Minutes a day?"), ("great", "Great, what will you install at home to train with before you start?")]);
+        let err = coach_questions(&lookalike, &args, Kind::Fitness).unwrap_err();
+        assert!(err.contains("diet") && err.contains("height"), "great and install are not eat and tall: {err}");
+        let no_cap = asks(&[("time", "Morning or evening?")]);
+        assert!(coach_questions(&no_cap, &args, Kind::General).unwrap_err().contains("daily_minutes"));
+        assert!(coach_questions(&coach, &[], Kind::General).is_err());
+        assert!(registry().get("coach_questions").is_some());
+    }
+
+    #[test]
+    fn notes_filled_rejects_a_new_action_without_session_content() {
+        let args = [json!("items")];
+        let item = |notes: Value| json!({"title": "Chest and triceps", "start": "2026-11-24T07:00:00", "minutes": 45, "rrule": null, "notes": notes});
+        let ok = json!({"items": [item(json!("Bench press 4x8, 90 s rest; incline dumbbell press 3x10; dips 3x8"))]});
+        assert_eq!(notes_filled(&ok, &args), Ok(()));
+        for empty in [json!(null), json!(""), json!("   ")] {
+            let bad = json!({"items": [item(empty)]});
+            assert!(notes_filled(&bad, &args).unwrap_err().contains("Chest and triceps"));
+        }
+        let deletion = json!({"items": [{"title": "Old", "start": null, "minutes": null, "rrule": null, "notes": null}]});
+        assert_eq!(notes_filled(&deletion, &args), Ok(()), "a deletion has no session");
+        assert!(notes_filled(&ok, &[]).is_err());
     }
 }

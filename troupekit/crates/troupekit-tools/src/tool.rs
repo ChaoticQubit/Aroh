@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use serde_json::Value;
+use std::sync::Arc;
 use troupekit_core::http::{HttpError, HttpErrorKind};
 use troupekit_core::ids::RunId;
-use troupekit_core::tool::ToolSpec;
+use troupekit_core::tool::{HostedTool, ToolSpec};
 
 /// Per-call context handed to every tool.
 /// Cheap to clone, so typed tool closures can own a copy across awaits.
@@ -108,6 +109,38 @@ pub trait Tool: Send + Sync {
     /// Runs the tool with JSON `args` and the per-call `ctx`.
     /// Returns the model-facing output or a `ToolError`.
     async fn call(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError>;
+}
+
+struct Hosted {
+    inner: Arc<dyn Tool>,
+    spec: ToolSpec,
+}
+
+#[async_trait]
+impl Tool for Hosted {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    async fn call(&self, args: Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+        self.inner.call(args, ctx).await
+    }
+}
+
+/// Marks local tool `inner` as standing in for server-side tool `kind`:
+/// vendors that host it run theirs, every other vendor calls `inner`.
+/// Panics when `inner` is not named as `kind` requires.
+pub fn hosted(inner: Arc<dyn Tool>, kind: HostedTool) -> Arc<dyn Tool> {
+    assert_eq!(
+        inner.spec().name,
+        kind.name(),
+        "a hosted stand-in carries the hosted tool's name"
+    );
+    let spec = ToolSpec {
+        hosted: Some(kind),
+        ..inner.spec().clone()
+    };
+    Arc::new(Hosted { inner, spec })
 }
 
 #[cfg(test)]

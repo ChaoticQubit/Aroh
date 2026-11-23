@@ -26,6 +26,8 @@ pub enum MediaSource {
 
 /// One piece of a message. A message holds several, so text, images,
 /// tool calls and tool results are never squeezed into one string.
+/// `Hosted` is a vendor block of a server-side tool (call or result),
+/// kept unchanged so it can be sent back; `tool` names the tool of a call.
 /// Serializes with a `type` tag in snake case.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -34,6 +36,7 @@ pub enum ContentPart {
     Image { media_type: String, source: MediaSource },
     ToolCall { id: String, name: String, arguments: Value },
     ToolResult { call_id: String, content: String, is_error: bool },
+    Hosted { tool: Option<String>, block: Value },
 }
 
 /// A provider-neutral chat message: a role and one or more content parts.
@@ -60,6 +63,9 @@ impl Message {
                 }
                 ContentPart::ToolResult { .. } if role != Role::Tool => {
                     return Err(CoreError::InvalidMessage("tool result outside tool message".into()))
+                }
+                ContentPart::Hosted { .. } if role != Role::Assistant => {
+                    return Err(CoreError::InvalidMessage("hosted tool block outside assistant message".into()))
                 }
                 _ => {}
             }
@@ -88,6 +94,29 @@ impl Message {
             .join("\n")
     }
 
+    /// Joins the text parts after the last hosted part with no separator:
+    /// the answer a model wrote once its server-side tools were done.
+    /// Equals the joined text of a message without hosted parts.
+    /// Returns an empty string when no text follows.
+    pub fn final_text(&self) -> String {
+        let from = self.parts.iter().rposition(|p| matches!(p, ContentPart::Hosted { .. })).map_or(0, |i| i + 1);
+        self.parts[from..]
+            .iter()
+            .filter_map(|p| match p {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Counts the hosted calls of server-side tool `name` in the message,
+    /// such as the web searches one reply ran.
+    /// Returns 0 for a message without hosted parts.
+    pub fn hosted_calls(&self, name: &str) -> u64 {
+        let n = self.parts.iter().filter(|p| matches!(p, ContentPart::Hosted { tool: Some(t), .. } if t == name)).count();
+        u64::try_from(n).expect("part count fits in u64")
+    }
+
     /// Iterates over the message's tool calls in part order.
     /// Yields `(id, name, arguments)` borrowed from each call;
     /// other parts are skipped.
@@ -103,6 +132,30 @@ impl Message {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn hosted_parts_are_assistant_only_and_counted() {
+        let call = |name: &str| ContentPart::Hosted { tool: Some(name.into()), block: json!({"type": "server_tool_use"}) };
+        let result = ContentPart::Hosted { tool: None, block: json!({"type": "web_search_tool_result"}) };
+        assert!(Message::new(Role::User, vec![call("web_search")]).is_err());
+        let m = Message::new(Role::Assistant, vec![
+            ContentPart::Text { text: "Let me search.".into() },
+            call("web_search"),
+            result.clone(),
+            ContentPart::Text { text: "Found it.".into() },
+            call("web_search"),
+            call("web_fetch"),
+            result,
+            ContentPart::Text { text: "{\"a\":".into() },
+            ContentPart::Text { text: "1}".into() },
+        ]).unwrap();
+        assert_eq!(m.hosted_calls("web_search"), 2);
+        assert_eq!(m.hosted_calls("web_fetch"), 1);
+        assert_eq!(m.final_text(), "{\"a\":1}");
+        assert_eq!(Message::text(Role::Assistant, "plain").final_text(), "plain");
+        let back: Message = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+        assert_eq!(back, m);
+    }
 
     #[test]
     fn json_shape_is_tagged() {
