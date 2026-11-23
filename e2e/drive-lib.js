@@ -36,6 +36,32 @@ window.AROH_LIB = (() => {
     el.dispatchEvent(new Event('input', { bubbles: true }));
     if (commit) el.dispatchEvent(new Event('change', { bubbles: true }));
   };
+  const keys = async (el, value) => {
+    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+    el.focus();
+    document.execCommand('selectAll');
+    document.execCommand('delete');
+    if (el.value) {
+      setter.call(el, '');
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    }
+    await sleep(100);
+    let forced = 0;
+    for (const ch of value) {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true, cancelable: true }));
+      const before = el.value;
+      if (!document.execCommand('insertText', false, ch) || el.value === before) {
+        forced++;
+        setter.call(el, before + ch);
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
+      }
+      el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+      await sleep(40);
+    }
+    await sleep(300);
+    return { value: el.value, forced };
+  };
   const button = (name) => {
     const b = [...document.querySelectorAll('button')].find((x) => x.textContent.trim() === name || x.getAttribute('aria-label') === name);
     if (!b) throw new Error(`no button ${name}`);
@@ -140,5 +166,5 @@ window.AROH_LIB = (() => {
     await invoke('app_dev_mark', { mark: `fail ${String(e.message ?? e).replace(/[^\x20-\x7e]/g, '?').slice(0, 70)}` }).catch(() => {});
     await mark('shot 99-failure');
   };
-  return { cfg, invoke, sleep, mark, text, until, go, field, type, button, show, openTomorrow, say, started, signUp, saveKey, createGoal, planGoal, fail, useLocalStack, skipSetup };
+  return { cfg, invoke, sleep, mark, text, until, go, field, type, keys, button, show, openTomorrow, say, started, signUp, saveKey, createGoal, planGoal, fail, useLocalStack, skipSetup };
 })();

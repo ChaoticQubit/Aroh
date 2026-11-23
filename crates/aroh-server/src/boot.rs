@@ -14,12 +14,23 @@ use troupekit_providers::reqwest_transport::ReqwestTransport;
 use troupekit_providers::Catalog;
 use troupekit_tools::{GuardedHttp, HttpLimits, Transport};
 
+/// Connections one engine instance may hold. The Supabase session pooler
+/// allows 15 clients in all, and Vercel runs several instances at once, so
+/// each keeps few and drops idle ones after 10 seconds.
+pub const MAX_DB_CONNECTIONS: u32 = 3;
+
 /// Builds the engine state from `config`: the Postgres pool, vault,
 /// catalog, real transports, optional APNs pusher and JWT verifier.
 /// Shared by the `aroh-server` bin and the Vercel entry, so every host
 /// runs the same engine. Errors name the failing setting or connection.
 pub async fn app(config: Config) -> Result<AppState, ServerError> {
-    let pool = PgPoolOptions::new().max_connections(10).connect(&config.database_url).await?;
+    let pool = PgPoolOptions::new()
+        .max_connections(MAX_DB_CONNECTIONS)
+        .min_connections(0)
+        .idle_timeout(std::time::Duration::from_secs(10))
+        .acquire_timeout(std::time::Duration::from_secs(20))
+        .connect(&config.database_url)
+        .await?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let http: Arc<dyn Transport> = Arc::new(ReqwestTransport::new().map_err(|e| ServerError::Config(e.to_string()))?);
     let (models, web) = transports(http.clone())?;
