@@ -121,7 +121,7 @@ pub const NAMED: &[NamedType] = &[
 pub const KINDS: &[Kind] = &[
     Kind {
         name: "number_input",
-        props: &[LABEL, req("unit", UNIT), req("value", Ty::Null(&Ty::Num)), req("step", Ty::Num), opt("min", Ty::Num), opt("max", Ty::Num)],
+        props: &[LABEL, req("unit", Ty::Str), req("value", Ty::Null(&Ty::Num)), req("step", Ty::Num), opt("min", Ty::Num), opt("max", Ty::Num)],
     },
     Kind { name: "rating", props: &[LABEL, req("min", Ty::Num), req("max", Ty::Num), req("value", Ty::Null(&Ty::Num))] },
     Kind { name: "choice", props: &[LABEL, req("options", Ty::Arr(&Ty::Str)), req("multi", Ty::Bool), req("value", Ty::Arr(&Ty::Str))] },
