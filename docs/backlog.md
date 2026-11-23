@@ -13,3 +13,6 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B7 | PR #1 CodeRabbit | `apps/aroh/src-tauri/src/commands/engine.rs:88` | Concurrent `send_zone` calls can deliver an older zone after a newer one | medium | open |
 | B8 | PR #1 CodeRabbit | `apps/aroh/src/routes/inbox/+page.svelte:62` | Dismissed cards are not retained for the combined Inbox card limit | low | open |
 | B9 | PR #1 CodeRabbit | `crates/aroh-server/src/triggers.rs:738` | `scan_reviews` can overwrite a `set_timezone` change with a value from the old zone | medium | open |
+| B10 | Pod 20 DONE | `e2e/pod20.sh` | Simulator steps 7 to 10 (fixed clash note, edit-sheet switch, coaches card) and server checks never ran; steps 1 to 6 passed once, screenshots lost | medium | open, check on build 2 |
+| B11 | Pod 20 DONE | `e2e/up.sh` | 20-minute engine wait too short for a cold build on a loaded Mac | low | open |
+| B12 | Pod 20 DONE | action series | Repeating plan items get no Fixed time switch at approval; needs a locked column on action series | medium | open |
