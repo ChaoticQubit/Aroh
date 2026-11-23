@@ -33,3 +33,4 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B27 | PR #3 review (P2) | `apps/aroh/src-tauri/src/commands/goals.rs:112` | Snapshot not reloaded after profile edits, so the profile screen can show stale facts until the next refresh | medium | open |
 | B28 | Owner, build 3 | plan node request | New goal run stopped at node "plan": HTTP 400 "messages: text content blocks must be non-empty" | critical | open, pod 29 first |
 | B29 | Owner, build 3 | Today action rows | Action rows overflow the screen width; checkbox only visible after scrolling right | high | open, pod 31 |
+| B30 | Owner, build 3 | Inbox run cards | Stopped goal-planner cards still show a spinning blue circle | medium | open, pod 31 |
