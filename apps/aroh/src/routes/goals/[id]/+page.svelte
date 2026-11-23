@@ -11,7 +11,7 @@
 	import { goalHeader, goalView } from '$lib/app/views';
 	import { engine, progressLines } from '$lib/app/engine';
 	import { GoalChat } from '$lib/app/chat.svelte';
-	import { answersReason, goalStatus } from '$lib/app/goalcard';
+	import { answersReason, goalStatus, planWaits } from '$lib/app/goalcard';
 	import type { AgentSettings } from '$lib/app/newgoal';
 	import { speech } from '$lib/app/speech.svelte';
 	import { activeVersion, enablePlugin, listPlugins, type PluginVersion } from '$lib/plugins/api';
@@ -132,6 +132,7 @@
 	);
 	const controls = $derived<AgentSettings | null>(goal ? { autonomy: goal.autonomy, reminders: goal.reminders, useCalendars: goal.use_calendars, runLimit: goal.run_limit_minutes } : null);
 	const status = $derived(goalStatus(chat.view, goal?.run_limit_minutes ?? settingsLimit, now));
+	const blocked = $derived(planWaits(chat.view));
 	const planContext = $derived<PlanContext | undefined>(
 		s && goal ? { busy: s.busy ?? [], actions: s.actions, goalId: goal.id, deadline: goal.deadline, knownUntil: shiftDay(formatYmd(clock.now, clock.zone), AHEAD_DAYS) } : undefined
 	);
@@ -159,6 +160,12 @@
 
 	let askRunAgain = $state(false);
 	let rerun = $state(false);
+
+	$effect(() => {
+		if (!blocked) return;
+		askRunAgain = false;
+		rerun = false;
+	});
 
 	/** Syncs first, so the engine plans from the newest rows, then runs the goal again (Q74) with `answers`, or the saved ones. */
 	async function runAgain(answers?: RunAnswer[]) {
@@ -221,6 +228,7 @@
 			onanswers={(changed) => chat.handle({ type: 'send', text: answersReason(changed) })}
 			{rerun}
 			onrerun={(answers) => void runAgain(answers)}
+			oncancelrerun={() => (rerun = false)}
 			files={[...goalAttachments(s.files ?? [], goal.id), ...failed]}
 			{upload}
 			onfiles={(list) => void uploadFiles(list)}
@@ -232,11 +240,14 @@
 	{/key}
 	{#if places && goal.id !== places.routines_goal}
 		<div class="flex flex-col gap-2 px-4 pt-2 pb-6">
-			{#if !status.stop}<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-fg outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => (askRunAgain = true)}>Run again</button>{/if}
+			{#if !status.stop}
+				<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-fg outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:text-muted disabled:opacity-60" disabled={blocked} aria-describedby={blocked ? 'run-again-blocked' : undefined} onclick={() => (askRunAgain = true)}>Run again</button>
+				{#if blocked}<p id="run-again-blocked" class="text-sm text-muted">Approve or decline the waiting plan first.</p>{/if}
+			{/if}
 			<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-muted outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => (confirmDelete = true)}>Delete goal</button>
 		</div>
 	{/if}
-	{#if askRunAgain}
+	{#if askRunAgain && !blocked}
 		<RunAgainSheet title={goal.title} answers={(chat.origin?.answers ?? []).length > 0} onkeep={() => void runAgain()} onedit={() => ((askRunAgain = false), (rerun = true))} onclose={() => (askRunAgain = false)} />
 	{/if}
 	{#if confirmDelete}

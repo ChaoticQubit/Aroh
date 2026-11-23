@@ -27,7 +27,7 @@
 	 * The one goal card: header, a status card saying what agents do or wait for (Stop, Retry,
 	 * Change time limit), research steps or what research found, the goal's view sections
 	 * (progress, Upcoming, plugin dashboards), the answers given (editable, `onanswers` gets the
-	 * changed ones; with `rerun`, `onrerun` gets all of them for Run again), the attachments (`files`; Photo and File with `upload`, `onfiles`, `onlink`,
+	 * changed ones; with `rerun`, `onrerun` gets all of them for Run again and `oncancelrerun` drops the edits), the attachments (`files`; Photo and File with `upload`, `onfiles`, `onlink`,
 	 * `onretryfile` for a failed upload, `onremove`), the goal chat with its questions and plan, and an agents row opening a sheet
 	 * with per-goal controls (`oncontrols`) and coaches.
 	 */
@@ -54,6 +54,7 @@
 		onanswers,
 		rerun = false,
 		onrerun,
+		oncancelrerun,
 		files = [],
 		upload = false,
 		onfiles,
@@ -85,6 +86,7 @@
 		onanswers?: (changed: RunAnswer[]) => void;
 		rerun?: boolean;
 		onrerun?: (answers: RunAnswer[]) => void;
+		oncancelrerun?: () => void;
 		files?: Attachment[];
 		upload?: boolean;
 		onfiles?: (files: File[]) => void;
@@ -120,6 +122,12 @@
 	function again() {
 		onrerun?.(answers.map((a) => (edits[a.id] === undefined ? a : { ...a, answer: edits[a.id].trim() || null })));
 		edits = {};
+	}
+
+	/** Leaves Run again edit mode with the saved answers back in the fields. */
+	function cancelAgain() {
+		edits = {};
+		oncancelrerun?.();
 	}
 
 	$effect(() => {
@@ -205,7 +213,7 @@
 				{/each}
 			</ul>
 			{#if rerun}
-				<div class="flex"><Button size="touch" onclick={again}>Run again with these answers</Button></div>
+				<div class="flex flex-wrap gap-2"><Button size="touch" onclick={again}>Run again with these answers</Button><Button variant="outline" size="touch" onclick={cancelAgain}>Cancel</Button></div>
 			{:else}
 				<div class="flex"><Button variant="outline" size="touch" disabled={!changed.length} onclick={send}>Replan with these answers</Button></div>
 			{/if}

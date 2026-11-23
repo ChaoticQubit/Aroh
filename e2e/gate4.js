@@ -22,6 +22,7 @@
   let six, piano, save, reading, snap, hooked, work, list;
   let signedIn = true;
   let transient = false;
+  let decided = false;
   const setup = async () => {
   const range = { from: new Date(Date.now() - 30 * 864e5).toISOString(), to: new Date(Date.now() + 30 * 864e5).toISOString() };
   snap = await invoke('app_snapshot', range);
@@ -82,9 +83,10 @@
   const fake = async (method, path, body) => {
     const [p, q] = path.split('?');
     const qs = new URLSearchParams(q ?? '');
-    if (method === 'GET' && p === '/v1/runs') return { status: 200, body: RUNS.filter((r) => (!qs.get('goal_id') || r.goal_id === qs.get('goal_id')) && (!qs.get('state') || r.state === qs.get('state'))) };
+    if (method === 'GET' && p === '/v1/runs') return { status: 200, body: RUNS.map((r) => (r.run_id === RP && decided ? { ...r, state: 'done' } : r)).filter((r) => (!qs.get('goal_id') || r.goal_id === qs.get('goal_id')) && (!qs.get('state') || r.state === qs.get('state'))) };
     const one = p.match(/^\/v1\/runs\/([^/]+)$/);
     if (one && method === 'GET' && one[1] === RS && transient) return { status: 200, body: { ...VIEWS[RS], status: { status: 'failed', retryable: true, error: 'the model provider did not answer after 3 tries' } } };
+    if (one && method === 'GET' && one[1] === RP && decided) return { status: 200, body: { ...VIEWS[RP], status: { status: 'done' }, waiting: [] } };
     if (/^\/v1\/goals\/[^/]+\/run-again$/.test(p) && method === 'POST') return { status: 202, body: { goal_id: p.split('/')[3], run_id: RA } };
     if (one && method === 'GET') return VIEWS[one[1]] ? { status: 200, body: VIEWS[one[1]] } : { status: 404, body: { error: 'no run' } };
     if (/^\/v1\/runs\/[^/]+\/(answers|cancel|retry)$/.test(p)) return { status: 202, body: { run_id: p.split('/')[3] } };
@@ -193,6 +195,25 @@
     [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Edit answers first')?.click();
     await sleep(1500);
   };
+  const runAgainCancel = async () => {
+    await runAgain(true)();
+    const first = () => [...document.querySelectorAll('main input[id*="-a-"]')].find(visible);
+    const saved = first()?.value ?? '';
+    L.type(first(), 'Changed my mind', false);
+    await sleep(600);
+    const again = [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Run again with these answers');
+    [...(again?.parentElement?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === 'Cancel')?.click();
+    await sleep(1200);
+    const left = !text().includes('Run again with these answers') && text().includes('Replan with these answers');
+    await result('run-again-cancel', left && first()?.value === saved, `saved "${saved}" now "${first()?.value}" left ${left}`);
+  };
+  const runAgainBlocked = async () => {
+    const b = [...document.querySelectorAll('main button')].find((x) => x.textContent.trim() === 'Run again');
+    const line = 'Approve or decline the waiting plan first.';
+    await result('run-again-blocked', !!b?.disabled && text().includes(line), `disabled ${b?.disabled} line ${text().includes(line)}`);
+    L.show(line);
+    await sleep(800);
+  };
   let SCREENS = [];
   const screenList = () => {
   const persona = 'nutrition-coach';
@@ -207,8 +228,10 @@
     { name: '08-goal-stopped', path: `/goals/${piano?.id}`, wait: 'Stopped', max: 3 },
     { name: '09-goal-working', path: `/goals/${reading?.id}`, wait: 'Working', max: 3 },
     { name: '08b-goal-failed-retry', path: `/goals/${piano?.id}`, wait: 'Failed', max: 3, before: () => (transient = true) },
-    { name: '09b-run-again-sheet', path: `/goals/${save?.id}`, wait: 'Plan to approve', one: true, prep: runAgain(false) },
-    { name: '09c-run-again-edit', path: `/goals/${save?.id}`, wait: 'Plan to approve', max: 5, prep: runAgain(true) },
+    { name: '09b-run-again-sheet', path: `/goals/${save?.id}`, wait: 'Agents are idle', one: true, before: () => (decided = true), prep: runAgain(false) },
+    { name: '09c-run-again-edit', path: `/goals/${save?.id}`, wait: 'Agents are idle', max: 5, before: () => (decided = true), prep: runAgain(true) },
+    { name: '09e-run-again-cancel', path: `/goals/${save?.id}`, wait: 'Agents are idle', one: true, before: () => (decided = true), prep: runAgainCancel },
+    { name: '09f-run-again-plan-waiting', path: `/goals/${save?.id}`, wait: 'Plan to approve', one: true, prep: runAgainBlocked },
     { name: '09d-run-again-no-answers', path: `/goals/${six?.id}`, wait: 'questions to answer', one: true, prep: runAgain(false) },
     { name: '10-new-goal', path: '/goals/new', wait: 'Create goal' },
     { name: '11-new-goal-category', path: '/goals/new', prep: () => newGoal(true) },
@@ -242,6 +265,7 @@
   const open = async (s) => {
     signedIn = true;
     transient = false;
+    decided = false;
     s.before?.();
     await go(s.path === '/inbox' ? '/today' : '/inbox');
     await go(s.path);
@@ -392,7 +416,9 @@
     const gs = given().length;
     await note(`given answers ${gs}`);
     for (let i = 0; i < gs; i++) await kbField(n++, `given-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i]);
+    decided = true;
     for (let i = 0; i < gs; i++) await kbField(n++, `run-again-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i], runAgain(true));
+    decided = false;
     const start = async () => {
       [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Start session')?.click();
       await sleep(1200);

@@ -129,7 +129,7 @@
 
 			{#each card.blocks as b, i (i)}
 				<section class="flex flex-col gap-2" aria-labelledby="block-{i}">
-					<h3 id="block-{i}" class="flex items-baseline justify-between text-sm font-semibold">
+					<h3 id="block-{i}" class="flex items-baseline justify-between text-sm font-semibold {oncard && mode === 'plan' && b.kind !== 'workout' ? 'sr-only' : ''}">
 						{heading(b)}
 						{#if b.kind === 'workout' && mode === 'log'}<span class="text-xs font-normal text-muted">Tick a set, tap a number to change it</span>{/if}
 					</h3>

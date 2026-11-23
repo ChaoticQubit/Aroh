@@ -78,7 +78,7 @@
 	const when = $derived(action ? `${formatDay(action.start_at, clock.zone)}, ${formatTime(action.start_at, clock.zone)} to ${formatTime(action.end_at, clock.zone)}` : '');
 </script>
 
-<div class="flex h-full min-h-[calc(100dvh-8rem)] flex-col">
+<div class="flex h-full flex-col">
 	<CardChat coach={COACH} {entries} onsend={ask} onundo={undo} />
 	{#if busy}<p class="px-4 pb-2 text-sm text-muted" role="status">The coach is changing the card.</p>{/if}
 </div>

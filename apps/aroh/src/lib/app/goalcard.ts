@@ -80,6 +80,11 @@ export function goalStatus(view: RunView | null, limitMin: number, now: number):
 	return { ...idle, detail: `Last run ${cost}.` };
 }
 
+/** True while the followed run `view` waits for the owner to approve or decline a plan; Run again is blocked then. */
+export function planWaits(view: RunView | null): boolean {
+	return view?.status.status === 'waiting_human' && view.waiting.some((w) => w.node === 'approve' && !!w.data.plan);
+}
+
 /** The replan reason for answers the owner changed on the goal card: each question with its new answer. */
 export function answersReason(changed: RunAnswer[]): string {
 	console.assert(changed.length > 0, 'only changed answers replan');

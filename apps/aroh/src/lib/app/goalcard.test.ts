@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeMs, answersReason, goalStatus, originRun, pickRun } from './goalcard';
+import { activeMs, answersReason, goalStatus, originRun, pickRun, planWaits } from './goalcard';
 import type { RunEvent, RunSummary, RunView } from './engine';
 
 const at = (seq: number, ms: number, type: string, step: string): RunEvent => ({ seq, at_ms: ms, body: { type, step } });
@@ -64,5 +64,16 @@ describe('changed answers', () => {
 		expect(answersReason([{ id: 'pace', text: 'Minutes a day?', answer: '45' }, { id: 'when', text: 'When?', answer: null }])).toBe(
 			'I changed my answers. Minutes a day?: 45. When?: skipped. Update the plan to fit.'
 		);
+	});
+});
+
+describe('run again while a plan waits', () => {
+	it('is blocked only while the followed run waits for approval of a plan', () => {
+		const plan = { node: 'approve', ask: 'approval' as const, prompt: null, data: { plan: { items: [], timezone: 'UTC' } } };
+		expect(planWaits(null)).toBe(false);
+		expect(planWaits(view({ status: { status: 'waiting_human' }, waiting: [plan] }))).toBe(true);
+		expect(planWaits(view({ status: { status: 'waiting_human' }, waiting: [{ node: 'questions', ask: 'question', prompt: null, data: {} }] }))).toBe(false);
+		expect(planWaits(view({ status: { status: 'done' }, waiting: [] }))).toBe(false);
+		expect(planWaits(view({ status: { status: 'running' }, waiting: [plan] }))).toBe(false);
 	});
 });
