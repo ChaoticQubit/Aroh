@@ -1,5 +1,6 @@
 <script lang="ts">
 	import CircleCheck from '@lucide/svelte/icons/circle-check';
+	import Circle from '@lucide/svelte/icons/circle';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import Mic from '@lucide/svelte/icons/mic';
 	import Send from '@lucide/svelte/icons/send';
@@ -93,7 +94,7 @@
 					<div class="flex flex-col gap-1.5 border-l-2 border-border py-1 pl-3" role="status" aria-label="Research progress">
 						{#each m.lines as line (line.text)}
 							<p class="flex items-center gap-2 text-sm {line.done ? 'text-muted' : 'text-fg'}">
-								{#if line.done}<CircleCheck class="size-4 text-status-done" />{:else}<LoaderCircle class="size-4 animate-spin text-status-planned" />{/if}
+								{#if line.done}<CircleCheck class="size-4 text-status-done" />{:else if m.working}<LoaderCircle class="size-4 animate-spin text-status-planned" />{:else}<Circle class="size-4 text-status-skipped" />{/if}
 								{line.text}
 							</p>
 						{/each}

@@ -166,8 +166,22 @@ describe('views', () => {
 		const run = (run_id: string, goal_id: string | null, state: string) => ({ run_id, goal_id, workflow: 'new-goal', state, created_at: '', updated_at: '' });
 		const { runs } = inboxView(fixture(), [run('r1', 'g-not-synced', 'waiting_human'), run('r2', null, 'running')], [], 'UTC', '2026-11-26T08:00:00Z', { r1: '3 questions to answer' });
 		expect(runs).toEqual([
-			{ persona: 'Goal planner', title: 'Planning a new goal (r1)', step: 'Waiting for you: 3 questions to answer', progress: 100, href: '/goals/g-not-synced/chat' },
-			{ persona: 'Goal planner', title: 'Planning a new goal (r2)', step: 'Working', progress: 50 }
+			{ persona: 'Goal planner', title: 'Planning a new goal (r1)', step: 'Waiting for you: 3 questions to answer', progress: 100, tone: 'warn', working: false, href: '/goals/g-not-synced/chat' },
+			{ persona: 'Goal planner', title: 'Planning a new goal (r2)', step: 'Working', progress: 50, tone: 'planned', working: true }
+		]);
+	});
+
+	it('spins only for runs that still work: stopped is grey, waiting and paused are amber', () => {
+		const run = (run_id: string, workflow: string, state: string) => ({ run_id, goal_id: null, workflow, state, created_at: '', updated_at: '' });
+		const states = ['failed', 'waiting_human', 'waiting_budget', 'queued', 'running', 'checkpointed'];
+		const { runs } = inboxView(fixture(), states.map((st, i) => run(`r${i}`, `w${i}`, st)));
+		expect(runs.map((r) => [r.step, r.tone, r.working])).toEqual([
+			['Stopped', 'skipped', false],
+			['Waiting for you', 'warn', false],
+			['Paused at a budget', 'warn', false],
+			['Waiting to start', 'planned', true],
+			['Working', 'planned', true],
+			['Working', 'planned', true]
 		]);
 	});
 

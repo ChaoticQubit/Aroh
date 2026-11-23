@@ -31,7 +31,9 @@ function view(status: RunView['status'], waiting: Waiting[] = []): RunView {
 describe('engine client', () => {
 	it('maps a run view to chat messages', () => {
 		const asking = chatFromRun(view({ status: 'waiting_human' }, [questions]));
-		expect(asking[0]).toEqual({ type: 'progress', lines: [{ text: 'Reading your goal', done: true }, { text: 'Researching how to reach it', done: false }] });
+		expect(asking[0]).toEqual({ type: 'progress', working: false, lines: [{ text: 'Reading your goal', done: true }, { text: 'Researching how to reach it', done: false }] });
+		expect(chatFromRun(view({ status: 'failed', reason: { kind: 'cancelled' } }))[0]).toMatchObject({ type: 'progress', working: false });
+		expect(chatFromRun(view({ status: 'running' }))[0]).toMatchObject({ type: 'progress', working: true });
 		expect(asking.filter((m) => m.type === 'card')).toHaveLength(0);
 		expect(waitLabel(view({ status: 'waiting_human' }, [questions]))).toBe('2 questions to answer');
 		expect(waitLabel(view({ status: 'waiting_human' }, [approve]))).toBe('Plan to approve');

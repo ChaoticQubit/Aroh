@@ -145,8 +145,8 @@ export const sixpackInbox = {
 	] satisfies ComponentSpec[],
 	questions: [weightCheckIn],
 	runs: [
-		{ persona: 'Fitness coach', title: 'Weekly review of training load', step: 'Reading the last 7 days of sessions', progress: 60 },
-		{ persona: 'Nutritionist', title: 'Meal plan for next week', step: 'Waiting for the weekly review', progress: 10 }
+		{ persona: 'Fitness coach', title: 'Weekly review of training load', step: 'Reading the last 7 days of sessions', progress: 60, tone: 'planned', working: true },
+		{ persona: 'Nutritionist', title: 'Meal plan for next week', step: 'Waiting for the weekly review', progress: 10, tone: 'planned', working: true }
 	]
 };
 
@@ -188,6 +188,7 @@ export const sixpackChat: ChatMessage[] = [
 	},
 	{
 		type: 'progress',
+		working: true,
 		lines: [
 			{ text: 'Reading 3 sources on fat loss rates', done: true },
 			{ text: 'Nutritionist setting a protein and calorie target', done: true },

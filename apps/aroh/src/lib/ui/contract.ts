@@ -70,7 +70,7 @@ export type OnChange = (value: unknown) => void;
 export type ChatMessage =
 	| { type: 'message'; from: 'owner' | 'persona'; name: string; text: string }
 	| { type: 'card'; spec: ComponentSpec }
-	| { type: 'progress'; lines: { text: string; done: boolean }[] }
+	| { type: 'progress'; lines: { text: string; done: boolean }[]; working: boolean }
 	| { type: 'plan'; title: string; items: string[]; fixable?: boolean[] }
 	| { type: 'working'; step: string | null; cost: string }
 	| { type: 'stopped'; text: string; retry: boolean }

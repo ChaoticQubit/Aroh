@@ -192,7 +192,7 @@ export function fixedActionIds(actions: Action[], goalId: string, items: PlanIte
 export function chatFromRun(view: RunView): ChatMessage[] {
 	const out: ChatMessage[] = [];
 	const lines = progressLines(view.events);
-	if (lines.length) out.push({ type: 'progress', lines });
+	if (lines.length) out.push({ type: 'progress', lines, working: ACTIVE.includes(view.status.status) });
 	const stop = stopMessage(view.status);
 	if (stop) return [...out, { type: 'stopped', text: stop, retry: true }];
 	if (ACTIVE.includes(view.status.status)) {

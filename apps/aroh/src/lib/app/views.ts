@@ -4,7 +4,8 @@ import { daysBetween, formatDate, formatDay, formatYmd, minuteOfDay, mondayOf, s
 import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, ProfileView, RunView, SettingsView } from '$lib/ui/screens/types';
 import { catalog } from './catalog';
 import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerEntry, TrackerField } from './client';
-import type { Insight, RunSummary } from './engine';
+import { ACTIVE, type Insight, type RunSummary } from './engine';
+import type { Tone } from '$lib/ui/components/StatusChip.svelte';
 
 const SEEDED_SLOTS: Record<string, CategorySlot> = { Learning: 1, 'Health and Fitness': 2, Financial: 3, 'Hobby and Skill': 4, 'Career and Projects': 5, Habit: 6 };
 
@@ -253,17 +254,18 @@ const WORKFLOW: Record<string, { title: string; persona: string }> = {
 	'calendar-triage': { title: 'Sorting your calendar', persona: 'Calendar triage' }
 };
 
-const RUN_STATE: Record<string, string> = {
-	queued: 'Waiting to start',
-	running: 'Working',
-	checkpointed: 'Working',
-	waiting_human: 'Waiting for you',
-	waiting_budget: 'Paused at a budget',
-	failed: 'Stopped'
+const RUN_STATE: Record<string, { step: string; tone: Tone }> = {
+	queued: { step: 'Waiting to start', tone: 'planned' },
+	running: { step: 'Working', tone: 'planned' },
+	checkpointed: { step: 'Working', tone: 'planned' },
+	waiting_human: { step: 'Waiting for you', tone: 'warn' },
+	waiting_budget: { step: 'Paused at a budget', tone: 'warn' },
+	failed: { step: 'Stopped', tone: 'skipped' }
 };
 
 /**
- * Runs not done, newest first, one per goal and workflow, titled by workflow and goal. Progress is
+ * Runs not done, newest first, one per goal and workflow, titled by workflow and goal, with a
+ * status tone and `working` (spins) only while the run still moves on its own. Progress is
  * coarse by state: 0 queued, 50 working, 100 stopped at a wait, a pause or a failure. A run that
  * waits for the owner says what for (`waits`, by run id, such as "3 questions to answer") and
  * links to its goal's chat.
@@ -279,9 +281,12 @@ function openRuns(s: Snapshot, runs: RunSummary[], waits: Record<string, string>
 		const kind = WORKFLOW[r.workflow] ?? { title: r.workflow, persona: 'Aroh' };
 		const progress = r.state === 'queued' ? 0 : r.state === 'running' || r.state === 'checkpointed' ? 50 : 100;
 		const wait = r.state === 'waiting_human' ? waits[r.run_id] : undefined;
-		const step = wait ? `Waiting for you: ${wait}` : (RUN_STATE[r.state] ?? r.state);
+		const state = RUN_STATE[r.state] ?? { step: r.state, tone: 'skipped' };
+		const step = wait ? `Waiting for you: ${wait}` : state.step;
+		const working = ACTIVE.includes(r.state);
+		console.assert(!working || state.tone === 'planned', 'only a working run is drawn as working');
 		const href = r.state === 'waiting_human' && r.goal_id ? `/goals/${r.goal_id}/chat` : undefined;
-		out.push({ persona: kind.persona, title: goal ? `${kind.title}: ${goal.title}` : `${kind.title} (${r.run_id.slice(0, 8)})`, step, progress, ...(href ? { href } : {}) });
+		out.push({ persona: kind.persona, title: goal ? `${kind.title}: ${goal.title}` : `${kind.title} (${r.run_id.slice(0, 8)})`, step, progress, tone: state.tone, working, ...(href ? { href } : {}) });
 	}
 	return out;
 }

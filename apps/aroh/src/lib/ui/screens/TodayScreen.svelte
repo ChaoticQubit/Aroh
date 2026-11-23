@@ -107,7 +107,7 @@
 			{/if}
 		</div>
 		{#if asking && onchoose}<AllDayChoice event={asking} onchoose={choose} onclose={reopened ? () => (choosing = null) : undefined} />{/if}
-		<div class="grid gap-4 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
+		<div class="grid grid-cols-1 gap-4 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
 			<div class="flex flex-col gap-4">
 				<ActionList spec={{ kind: 'action_list', label: "Today's actions", actions: today }} onchange={onaction} onopen={onedit ? (id) => (editing = id) : undefined} />
 			</div>

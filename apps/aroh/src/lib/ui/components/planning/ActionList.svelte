@@ -5,16 +5,22 @@
 	import StatusChip, { DOT } from '../StatusChip.svelte';
 	import { getClock } from '$lib/ui/clock';
 	import { formatTime } from '$lib/ui/format';
+	import { actionStyle } from '$lib/ui/status';
 	import type { ActionView, OnChange, SpecOf } from '$lib/ui/contract';
 
 	/**
 	 * Actions in time order with a done toggle. Emits `{ id, status }` when one is ticked or unticked.
-	 * With `onopen`, tapping a row's time and title opens that action by id.
+	 * With `onopen`, tapping a row's time and title opens that action by id. Titles wrap to two
+	 * lines and goal names to one, breaking anywhere, so a row never grows past its container.
 	 */
 	let { spec, onchange, onopen }: { spec: SpecOf<'action_list'>; onchange?: OnChange; onopen?: (id: string) => void } = $props();
 
 	const { zone } = getClock();
 	let overrides = $state<Record<string, ActionView['status']>>({});
+	$effect.pre(() => {
+		void spec.actions;
+		overrides = {};
+	});
 	const items = $derived(spec.actions.map((a) => ({ ...a, status: overrides[a.id] ?? a.status })));
 	const done = $derived(items.filter((a) => a.status === 'done').length);
 
@@ -43,8 +49,8 @@
 						<span class="w-12 shrink-0 text-xs leading-4 text-muted tabular-nums">{formatTime(a.start, zone)}<br />{formatTime(a.end, zone)}</span>
 						<span class="size-2 shrink-0 rounded-full {DOT[a.status]}" aria-hidden="true"></span>
 						<span class="flex min-w-0 flex-1 flex-col">
-							<span class="truncate text-sm font-medium {a.status === 'done' ? 'text-muted line-through' : 'text-fg'}">{a.title}</span>
-							<span class="truncate text-xs text-muted">{a.goalTitle}</span>
+							<span class="line-clamp-2 text-sm font-medium wrap-anywhere {actionStyle(a.status).title}">{a.title}</span>
+							<span class="line-clamp-1 text-xs text-muted wrap-anywhere">{a.goalTitle}</span>
 						</span>
 					</svelte:element>
 					{#if a.locked}<Lock class="size-4 shrink-0 text-muted" aria-label="Locked" />{/if}
