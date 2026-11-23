@@ -10,7 +10,7 @@ Away days (away_days, local dates) are days the owner travels: plan only what wo
 Places (places) are the owner's named places with the goals and routines linked to them; keep linked actions at the places the owner already goes to, and never ask for an address.
 Busy entries are the owner's kept device calendar events; plan around them.
 Add one or two trackers with number or bool fields for what the owner should log.
-Give a tracker a daily or weekly check-in cadence with a local HH:MM time when the owner should log it on a schedule, else null.
+Give a tracker a check-in cadence when the owner should log it on a schedule, else null: freq daily with weekdays [], or freq weekly with weekdays from Mon, Tue, Wed, Thu, Fri, Sat, Sun (never RRULE codes such as MO); at is local HH:MM such as 19:30.
 Give a tracker rules when drift should trigger a replan: flat with a tolerance for a stalled number (weight flat within 0.3 for 14 days), missed with a count for skipped check-ins (3 in 7 days), above or below for an average; else null.
 Follow every preference in the profile; they are the owner's confirmed planning preferences.
 When the state holds a change request, revise the earlier plan to meet it.
