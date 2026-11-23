@@ -27,15 +27,11 @@ export type RunView = { persona: string; title: string; step: string; progress: 
 /** One model provider of the Settings dropdown. */
 export type ProviderView = { id: string; name: string; protocol: string; models: string[]; keySet: boolean; last4: string | null; selfHosted: boolean };
 
-/** One configured web search provider, in fallback order. */
-export type SearchView = { name: string; detail: string; keySet: boolean };
-
 /** Everything the Settings screen shows. Numbers are US dollars. */
 export type SettingsView = {
 	providers: ProviderView[];
 	providerId: string;
 	model: string;
-	search: SearchView[];
 	serverUrl: string;
 	budgetAll: number | null;
 	budgetGoal: number | null;

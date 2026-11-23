@@ -72,7 +72,7 @@ const DENIED: Partial<Record<SpeechErrorCode, string>> = {
 	speech_denied: 'Speech recognition is off for Aroh. Turn it on in Settings.'
 };
 
-/** Opens Aroh's page in the iPhone Settings app, where microphone and speech access are turned on. */
+/** Opens Aroh's page in the iPhone Settings app, where microphone, speech and location access are turned on. */
 export const openSettings = () => invoke<void>('plugin:aroh-speech|open_settings');
 
 /**

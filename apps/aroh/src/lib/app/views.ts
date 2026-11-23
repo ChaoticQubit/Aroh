@@ -390,7 +390,6 @@ export function settingsView(s: Snapshot, last4: Record<string, string | null> =
 		providers: catalog.map((p) => ({ ...p, keySet: Boolean(last4[p.id]), last4: last4[p.id] ?? null })),
 		providerId: known?.id ?? catalog[0].id,
 		model: known && chosen ? chosen.model : catalog[0].models[0],
-		search: [...s.search].sort((a, b) => a.priority - b.priority).map((x) => ({ name: x.label, detail: x.base_url ?? 'API key', keySet: false })),
 		serverUrl: s.settings.server_url ?? '',
 		budgetAll: all ? all.limit_usd_micros / 1_000_000 : null,
 		budgetGoal: s.settings.goal_budget_usd !== undefined && Number.isFinite(perGoal) ? perGoal : null,

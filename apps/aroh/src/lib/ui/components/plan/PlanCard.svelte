@@ -101,8 +101,8 @@
 <Card.Root size="sm" class="gap-3 px-4">
 	<Persona name="Orchestrator" note={approved ? 'Plan approved' : 'Plan ready'} />
 	<div class="flex flex-col gap-0.5">
-		<p class="text-md font-semibold tabular-nums">{summaryLine(sum)}</p>
-		<p class="text-sm text-muted tabular-nums">{title}{sum.sessions ? ` ${sum.sessions} sessions.` : ''}{early !== null && early > 0 ? ` ${early} days before your date.` : early !== null && early < 0 ? ` ${-early} days after your date.` : ''}</p>
+		<p class="text-md font-semibold tabular-nums">{summaryLine(sum, today)}</p>
+		<p class="text-sm text-muted tabular-nums">{title}{sum.sessions ? ` ${sum.sessions} ${sum.sessions === 1 ? 'session' : 'sessions'}.` : ''}{early !== null && early > 0 ? ` ${early} ${early === 1 ? 'day' : 'days'} before your date.` : early !== null && early < 0 ? ` ${-early} ${early === -1 ? 'day' : 'days'} after your date.` : ''}</p>
 	</div>
 
 	<div class="-my-1 flex items-center justify-between gap-2">

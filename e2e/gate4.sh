@@ -6,7 +6,7 @@ state="$here/.local-state"
 device="${AROH_E2E_DEVICE:-aroh-gate4}"
 port="${AROH_DEV_PORT:-1439}"
 bundle=io.aroh.app
-shots="$root/docs/screenshots/gate4"
+shots="${AROH_GATE_SHOTS:-$root/docs/screenshots/gate4}"
 results="$state/gate4-results.txt"
 taps="$state/gate4-taps.txt"
 mkdir -p "$state" "$shots/light" "$shots/dark" "$shots/keyboard"

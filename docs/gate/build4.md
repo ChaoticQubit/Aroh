@@ -137,3 +137,24 @@ Each control on each screen is tapped once. Labels with digits are collapsed, so
   - **Effect on the dark set:** a dark file can show a neighbouring step. Every dark screen was still captured and reviewed for theme defects, and none was found.
 - **New `AROH_GATE_NOKB` and `AROH_GATE_NOTAPS`** skip the keyboard and tap passes on a targeted rerun.
 - **Lost hour on the first merged run.** A vite server from before the merge was still running. It served hot-reloaded modules (`?t=`), so the drivers' imports patched a second copy of the data and engine modules, and pod30 and pod31 failed. A fresh vite fixed it. Restart vite after every merge.
+
+## Re-gate (pod 35)
+
+Date: 2026-11-23. Branch `fix/gate4-defects`, simulator `aroh-p35` (iPhone 15 Pro), vite on port 1441, restarted before each run. Only the checks that the defects touch were rerun. Shots are in `docs/screenshots/gate4/regate/`. Results are in `docs/gate/build4-regate-results.txt` and taps in `docs/gate/build4-regate-taps.txt`.
+
+| What ran | Result |
+|---|---|
+| `AROH_GATE_SHOTS=.../regate AROH_GATE_ONLY=[02, 03, 06, 07, 08, 14, 17b, 21, 22] sh e2e/gate4.sh` | 51 of 51 results pass: overflow 0 and inputs at least 16 px on 9 screens in light and dark, all 29 keyboard fields |
+| `AROH_FLOW=pod30-app.js AROH_P30_KB=true sh e2e/pod30.sh`, light and dark | can't-fit number field passes. Back label "Back to Today", goal scroll restored 400 of 400 |
+| `sh e2e/pod31.sh` overflow guard, light and dark | 0 routes overflow. Goals tab, done style and week swipe ok |
+| Taps on the 9 screens | 134 taps. The 7 that did nothing are all expected (already-selected Today, Day, Week, Calendar and Mon controls; coach Add with an empty rule) |
+
+| Defect | Verdict | Commit | Evidence |
+|---|---|---|---|
+| D4 | PASS | 3d4c7fb | Keyboard fields 30 of 30. The intake answers (`question-1` to `question-4`, `number-question`) and the can't-fit number are clear of the composer and above the keyboard. While another field is focused, the composer is hidden through `[data-composer]:not(:focus-within)`, and it comes back on blur. |
+| D5 | PASS | ff9888c | "Open iOS Settings" calls `plugin:aroh-speech\|open_settings` (the gate stubs it, so the simulator stays in the app). The Search providers section was removed rather than wired: research uses Claude's hosted web search (Q63), and the app has no way to add a search setting. Search setting rows, sync and the server fallback for other vendors are unchanged. |
+| D1 | PASS | 413aac3 | `regate/light/02-calendar-day-2.png`: "Strength session" 18:00 and "Strength session B" 18:15 sit side by side. |
+| D6 | PASS | 9ec0916 | `regate/light/07-goal-plan-4.png`: "15-30 min, 1 day a week · 12:00 · finishes 26 Nov 2027". The plan card's session and day counts are pluralized too. |
+| D2 | PASS | f1e96d8, 67e7596 | `regate/light/08-goal-stopped-2.png` shows "Tue 24" on the session tomorrow. 67e7596 then labels every row of a list that spans days, using "Today" for today's rows. Today's own list is unchanged. 67e7596 came after the harness run and is covered by its unit test only. |
+
+**Not rechecked:** screens other than the 9 above, controls inside sheets, and the pod 32 and pod 33 guards (no code they cover changed).

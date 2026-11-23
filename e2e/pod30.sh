@@ -46,7 +46,7 @@ mkdir -p "$container/Library/Application Support/$bundle"
 log="$container/Library/Application Support/$bundle/dev-marks.log"
 rm -f "$log"
 xcrun simctl ui "$udid" appearance "$theme"
-{ echo "window.AROH_E2E = { theme: '$theme' };"; cat "$here/drive-lib.js" "$here/${AROH_FLOW:-pod30.js}"; } > "$state/pod30-drive.js"
+{ echo "window.AROH_E2E = { theme: '$theme', kb: ${AROH_P30_KB:-false} };"; cat "$here/drive-lib.js" "$here/${AROH_FLOW:-pod30.js}"; } > "$state/pod30-drive.js"
 SIMCTL_CHILD_AROH_DEV_SCRIPT="$state/pod30-drive.js" xcrun simctl launch --console --terminate-running-process "$udid" "$bundle" > "$state/pod30-app.log" 2>&1 &
 launcher=$!
 seen=0

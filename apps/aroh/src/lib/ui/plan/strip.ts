@@ -191,13 +191,18 @@ export function summarize(sessions: StripBlock[]): Summary {
 	const dates = [...new Set(sessions.map((s) => s.date))].sort();
 	const span = Math.round((Date.parse(`${dates[dates.length - 1]}T12:00:00Z`) - Date.parse(`${dates[0]}T12:00:00Z`)) / 86_400_000) + 1;
 	const weeksTouched = new Set(dates.map(mondayOf)).size;
-	const cadence = dates.length === span ? 'daily' : `${Math.round(dates.length / weeksTouched)} days a week`;
+	const perWeek = Math.round(dates.length / weeksTouched);
+	const cadence = dates.length === span ? 'daily' : `${perWeek} ${perWeek === 1 ? 'day' : 'days'} a week`;
 	return { minutes: lo === hi ? `${lo} min` : `${lo}-${hi} min`, cadence, time: hhmm(mode(sessions.map((s) => s.start))), finish: dates[dates.length - 1], sessions: sessions.length };
 }
 
-/** The summary as one line, for example "20 min daily · 18:00 · finishes 15 Dec". */
-export function summaryLine(s: Summary): string {
+/**
+ * The summary as one line, for example "20 min daily · 18:00 · finishes 15 Dec". `today` is
+ * "YYYY-MM-DD"; a finish in another year than today carries its year ("finishes 26 Nov 2027").
+ */
+export function summaryLine(s: Summary, today: string): string {
 	if (!s.sessions || !s.finish) return 'No sessions';
 	const amount = s.cadence === 'daily' ? `${s.minutes} daily` : `${s.minutes}, ${s.cadence}`;
-	return `${amount} · ${s.time} · finishes ${formatDate(s.finish, { day: 'numeric', month: 'short' })}`;
+	const year = s.finish.slice(0, 4) === today.slice(0, 4) ? {} : { year: 'numeric' as const };
+	return `${amount} · ${s.time} · finishes ${formatDate(s.finish, { day: 'numeric', month: 'short', ...year })}`;
 }

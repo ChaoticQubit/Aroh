@@ -79,6 +79,26 @@
     await sleep(500);
     show('Plan with this');
     await shot('06-cant-fit-raise');
+    if (window.AROH_E2E.kb) {
+      const el = [...document.querySelectorAll('main input[inputmode="decimal"]')].find((x) => x.getBoundingClientRect().height > 0);
+      el?.scrollIntoView({ block: 'center' });
+      await sleep(500);
+      el?.focus();
+      await until('keyboard', () => window.visualViewport.height < innerHeight - 150, 5000).catch(() => {});
+      await sleep(900);
+      const vv = window.visualViewport;
+      const kbTop = vv.offsetTop + vv.height;
+      const r = el?.getBoundingClientRect();
+      const hit = r && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      const clear = !!hit && (hit === el || el.contains(hit));
+      const above = !!r && r.bottom <= kbTop + 1 && r.top >= vv.offsetTop - 1;
+      const opened = vv.height < innerHeight - 150;
+      await shot('30-cant-fit-number');
+      const ok = !!el && opened && document.activeElement === el && clear && above;
+      await say(`keyboard cant-fit-number ${ok ? 'pass' : 'fail'} kb=${opened} clear=${clear ? 'yes' : hit?.tagName} f=${Math.round(r?.top)}-${Math.round(r?.bottom)}/${Math.round(kbTop)}`);
+      el?.blur();
+      await sleep(900);
+    }
 
     await go('/today');
     const m = main();

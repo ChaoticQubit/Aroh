@@ -9,7 +9,8 @@
 	/**
 	 * Settings > Location: iOS access, pause tracking, nudges, quiet hours, links to Places and the
 	 * location log, ignored places and clearing the raw visit history on this phone.
-	 * `onsetting` reports a switch; `onunignore`, `onclear`, `onplaces`, `onlog` report taps.
+	 * `onsetting` reports a switch; `onunignore`, `onclear`, `onplaces`, `onlog` and `onopensettings`
+	 * (Open iOS Settings) report taps.
 	 */
 	let {
 		settings,
@@ -17,7 +18,8 @@
 		onunignore,
 		onclear,
 		onplaces,
-		onlog
+		onlog,
+		onopensettings
 	}: {
 		settings: LocationSettingsView;
 		onsetting?: (key: 'paused' | 'nudges', on: boolean) => void;
@@ -25,6 +27,7 @@
 		onclear?: () => void;
 		onplaces?: () => void;
 		onlog?: () => void;
+		onopensettings?: () => void;
 	} = $props();
 
 	const id = $props.id();
@@ -57,7 +60,7 @@
 				<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Location</span><span class="text-xs text-muted">Always lets Aroh notice arrivals while it is closed.</span></span>
 				<StatusChip tone={access.tone} label={access.label} />
 			</div>
-			<div><Button variant="outline" size="touch">Open iOS Settings</Button></div>
+			<div><Button variant="outline" size="touch" onclick={() => onopensettings?.()}>Open iOS Settings</Button></div>
 		</Card.Root>
 	</section>
 

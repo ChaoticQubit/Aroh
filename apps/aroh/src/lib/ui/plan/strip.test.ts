@@ -129,16 +129,27 @@ describe('summarize', () => {
 		const blocks = days.map((d, i) => ({ ...block(d, i === 1 ? 1230 : 1080, (i === 1 ? 1230 : 1080) + 20), item: i, fixable: true }));
 		const s = summarize(blocks);
 		expect(s).toEqual({ minutes: '20 min', cadence: 'daily', time: '18:00', finish: '2026-11-29', sessions: 4 });
-		expect(summaryLine(s)).toBe('20 min daily · 18:00 · finishes 29 Nov');
+		expect(summaryLine(s, '2026-11-23')).toBe('20 min daily · 18:00 · finishes 29 Nov');
 	});
 
 	it('says how many days a week and a range of minutes when they vary', () => {
 		const blocks = ['2026-11-23', '2026-11-25', '2026-11-27', '2026-11-30', '2026-12-02', '2026-12-04'].map((d, i) => ({ ...block(d, 420, 420 + (i % 2 ? 45 : 30)), item: 0, fixable: false }));
-		expect(summaryLine(summarize(blocks))).toBe('30-45 min, 3 days a week · 07:00 · finishes 4 Dec');
+		expect(summaryLine(summarize(blocks), '2026-11-23')).toBe('30-45 min, 3 days a week · 07:00 · finishes 4 Dec');
+	});
+
+	it('says one day a week, not one days (gate 4 D6)', () => {
+		const blocks = ['2026-11-23', '2026-11-30', '2026-12-07'].map((d) => ({ ...block(d, 720, 750), item: 0, fixable: false }));
+		expect(summarize(blocks).cadence).toBe('1 day a week');
+	});
+
+	it('adds the year to a finish in another year than today (gate 4 D6)', () => {
+		const blocks = ['2027-11-19', '2027-11-26'].map((d) => ({ ...block(d, 720, 750), item: 0, fixable: false }));
+		expect(summaryLine(summarize(blocks), '2026-11-23')).toBe('30 min, 1 day a week · 12:00 · finishes 26 Nov 2027');
+		expect(summaryLine(summarize(blocks), '2027-01-02')).toBe('30 min, 1 day a week · 12:00 · finishes 26 Nov');
 	});
 
 	it('has no finish line without sessions', () => {
 		expect(summarize([])).toEqual({ minutes: null, cadence: null, time: null, finish: null, sessions: 0 });
-		expect(summaryLine(summarize([]))).toBe('No sessions');
+		expect(summaryLine(summarize([]), '2026-11-23')).toBe('No sessions');
 	});
 });

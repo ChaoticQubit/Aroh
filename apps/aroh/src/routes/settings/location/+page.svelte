@@ -5,6 +5,7 @@
 	import LocationSettingsScreen from '$lib/ui/screens/LocationSettingsScreen.svelte';
 	import { data } from '$lib/app/data.svelte';
 	import * as location from '$lib/app/location';
+	import { openSettings } from '$lib/app/speech.svelte';
 
 	let v = $state<location.LocationView | null>(null);
 	let status = $state<string | null>(null);
@@ -33,5 +34,6 @@
 		onclear={() => void data.run(location.clear)}
 		onplaces={() => void goto('/settings/places')}
 		onlog={() => void goto('/settings/location/log')}
+		onopensettings={() => void openSettings().catch((e) => (data.error = String(e)))}
 	/>
 {/if}

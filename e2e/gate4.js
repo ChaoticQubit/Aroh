@@ -104,6 +104,7 @@
       called.push(cmd);
       if (cmd === 'app_account' && signedIn) return ok({ signed_in: true, email: 'owner.with.a.long.address@example.com', user_id: snap.goals[0]?.user_id ?? null });
       if (cmd === 'app_sync') return ok({ pushed: 0, pulled: 0 });
+      if (cmd === 'plugin:aroh-speech|open_settings') return ok(null);
       if (cmd === 'app_engine') {
         const a = JSON.parse(init?.body ?? '{}');
         try {

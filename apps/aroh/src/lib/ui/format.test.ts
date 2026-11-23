@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { daysUntil, formatDuration, formatNumber, formatTime, formatYmd, minuteOfDay, shiftDay, shiftMonth, mondayOf, daysBetween, formatDate, sliderRange, snap, stepNumber, typedNumber } from './format';
+import { daysUntil, dayLabels, formatDuration, formatNumber, formatTime, formatYmd, minuteOfDay, shiftDay, shiftMonth, mondayOf, daysBetween, formatDate, sliderRange, snap, stepNumber, typedNumber } from './format';
 
 describe('format', () => {
 	it('formats numbers with units', () => {
@@ -59,5 +59,15 @@ describe('format', () => {
 	});
 	it('counts whole days to a deadline', () => {
 		expect(daysUntil('2027-02-01T00:00:00Z', '2026-11-21T00:00:00Z')).toBe(72);
+	});
+});
+
+describe('dayLabels (gate 4 D2)', () => {
+	it('labels nothing when every action is today, so the Today list shows times alone', () => {
+		expect(dayLabels(['2026-11-23T11:00:00Z', '2026-11-23T15:00:00Z'], 'Europe/Berlin', '2026-11-23')).toEqual([null, null]);
+	});
+
+	it('labels every action with its day when the list spans days, today as Today', () => {
+		expect(dayLabels(['2026-11-23T11:00:00Z', '2026-11-24T11:00:00Z', '2026-11-23T23:30:00Z'], 'Europe/Berlin', '2026-11-23')).toEqual(['Today', 'Tue 24', 'Tue 24']);
 	});
 });

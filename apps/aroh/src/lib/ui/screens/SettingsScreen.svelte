@@ -1,6 +1,5 @@
 <script lang="ts">
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
-	import Plus from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/ui/primitives/button';
 	import * as Card from '$lib/ui/primitives/card';
 	import { Input } from '$lib/ui/primitives/input';
@@ -13,7 +12,7 @@
 
 	/**
 	 * Settings: account sign-in, model provider, model and key (the key goes to the server, never
-	 * stored on the device), search providers, server URL, budgets, the run time limit, and calendar and Apple
+	 * stored on the device), server URL, budgets, the run time limit, and calendar and Apple
 	 * Health access. `ontest`, `onsignin` and `onhealth` resolve to a status line; the rest report edits.
 	 * With `oncoaches`, a Coaches row opens the coach (persona) library; `onlocation` adds a Location row;
 	 * `agents` renders the new-goal agent defaults.
@@ -195,29 +194,6 @@
 			</Card.Root>
 		</section>
 	{/if}
-
-	<section class="flex flex-col gap-3" aria-labelledby="{id}-search">
-		<div class="flex items-center justify-between">
-			<h2 id="{id}-search" class="text-sm font-semibold text-fg">Search providers</h2>
-			<Button variant="outline" size="touch" class="@3xl:h-8"><Plus />Add</Button>
-		</div>
-		{#if settings.search.length}
-			<Card.Root size="sm" class="gap-0 divide-y divide-border px-4 py-0">
-				{#each settings.search as s, i (s.name)}
-					<div class="flex min-h-14 items-center gap-3 py-2">
-						<span class="w-5 text-xs text-muted tabular-nums">{i + 1}</span>
-						<div class="flex flex-1 flex-col">
-							<span class="text-sm font-medium">{s.name}</span>
-							<span class="text-xs text-muted">{s.detail}</span>
-						</div>
-						<StatusChip tone={s.keySet ? 'done' : 'warn'} label={s.keySet ? 'Ready' : 'Needs key'} />
-					</div>
-				{/each}
-			</Card.Root>
-		{:else}
-			<p class="text-sm text-muted">No search providers yet.</p>
-		{/if}
-	</section>
 
 	<section class="flex flex-col gap-3" aria-labelledby="{id}-server">
 		<h2 id="{id}-server" class="text-sm font-semibold text-fg">Server and budget</h2>

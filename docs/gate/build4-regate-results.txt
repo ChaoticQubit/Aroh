@@ -1,0 +1,51 @@
+setup pass three steps skipped
+harness-hook pass account owner.with.a.long.address@example.com via ipc f
+overflow-02-calendar-day pass 393:none 375:none
+inputs16-02-calendar-day pass all >= 16px
+overflow-03-calendar-week pass 393:none 375:none
+inputs16-03-calendar-week pass all >= 16px
+overflow-06-goal-questions pass 393:none 375:none
+inputs16-06-goal-questions pass all >= 16px
+overflow-07-goal-plan pass 393:none 375:none
+inputs16-07-goal-plan pass all >= 16px
+overflow-08-goal-stopped pass 393:none 375:none
+inputs16-08-goal-stopped pass all >= 16px
+overflow-14-settings pass 393:none 375:none
+inputs16-14-settings pass all >= 16px
+overflow-17b-settings-location-on pass 393:none 375:none
+inputs16-17b-settings-location-on pass all >= 16px
+overflow-21-coach pass 393:none 375:none
+inputs16-21-coach pass all >= 16px
+overflow-22-settings-signed-out pass 393:none 375:none
+inputs16-22-settings-signed-out pass all >= 16px
+overflow-all pass 0 screens with overflow
+inbox-waiting-link pass /goals/01a2083f-ae58-77ee-a73c-350c8d89b0bd/chat 
+keyboard-goal-chat pass kb=403 stayed=true clear=yes tab=off f=405-449/44
+keyboard-new-goal-title pass kb=403 stayed=true clear=yes tab=off f=175-2
+keyboard-new-goal-description pass kb=403 stayed=true clear=yes tab=off f
+keyboard-number-question pass kb=376 stayed=true clear=yes tab=off f=416-
+keyboard-log-quick-log pass kb=403 stayed=true clear=yes tab=off f=397-44
+keyboard-today-quick-log pass kb=403 stayed=true clear=yes tab=off f=397-
+keyboard-new-category-name pass kb=403 stayed=true clear=yes tab=off f=40
+keyboard-attach-link pass kb=376 stayed=true clear=yes tab=off f=416-460/
+keyboard-places-search pass kb=403 stayed=true clear=yes tab=off f=132-17
+keyboard-coach-rule pass kb=403 stayed=true clear=yes tab=off f=405-449/4
+keyboard-question-1 pass kb=376 stayed=true clear=yes tab=off f=416-460/4
+keyboard-question-2 pass kb=376 stayed=true clear=yes tab=off f=416-460/4
+keyboard-question-3 pass kb=403 stayed=true clear=yes tab=off f=353-449/4
+keyboard-question-4 pass kb=403 stayed=true clear=yes tab=off f=353-449/4
+keyboard-settings-project-url pass kb=376 stayed=true clear=yes tab=off f
+keyboard-settings-anon-key pass kb=403 stayed=true clear=yes tab=off f=20
+keyboard-settings-api-key pass kb=403 stayed=true clear=yes tab=off f=405
+keyboard-settings-server-url pass kb=376 stayed=true clear=yes tab=off f=
+keyboard-settings-monthly-budget-all-goals pass kb=376 stayed=true clear=
+keyboard-settings-monthly-budget-per-goal pass kb=376 stayed=true clear=y
+keyboard-settings-time-limit-per-run-minutes pass kb=376 stayed=true clea
+keyboard-settings-out-project-url pass kb=376 stayed=true clear=yes tab=o
+keyboard-settings-out-anon-key pass kb=403 stayed=true clear=yes tab=off 
+keyboard-settings-out-email pass kb=403 stayed=true clear=yes tab=off f=2
+keyboard-settings-out-password pass kb=403 stayed=true clear=yes tab=off 
+keyboard-settings-out-api-key pass kb=403 stayed=true clear=yes tab=off f
+keyboard-settings-out-server-url pass kb=376 stayed=true clear=yes tab=of
+keyboard-settings-out-monthly-budget-all-goals pass kb=376 stayed=true cl
+keyboard-settings-out-monthly-budget-per-goal pass kb=376 stayed=true cle

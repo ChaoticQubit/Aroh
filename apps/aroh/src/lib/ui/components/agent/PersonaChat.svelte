@@ -171,7 +171,7 @@
 			</li>
 		{/each}
 	</ol>
-	<div class={inline ? 'sticky bottom-0 z-10 -mx-4 @3xl:-mx-6' : ''}>
+	<div data-composer class={inline ? 'sticky bottom-0 z-10 -mx-4 @3xl:-mx-6' : ''}>
 		{#if dictation}<DictationNotice {dictation} />{/if}
 		<form
 			class="flex items-end gap-1 border-t border-border bg-bg p-2"
