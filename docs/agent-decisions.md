@@ -160,3 +160,49 @@ Delete a goal from its screen through a native-style action sheet: "Delete goal 
 ### Unresolved
 
 - None.
+
+## Dashboard (pod 34, 2026-11-23, branch `feat/dashboard`, Q69)
+
+### Goal
+
+Build the Dashboard tab at `/dashboard` matching the approved pod 30 mockup: filter chips (All, each category, On track, Behind, Ahead), combined tiles, each goal's done vs planned to date with its projected finish, minutes done per week stacked by goal or category, streaks and completion rate, and each goal's tracker trend.
+
+### Constraints
+
+- The snapshot holds actions within 45 days of now and entries of the last 90 days, and series are only materialized 14 days ahead, so full-history figures cannot come from the snapshot.
+- Do not touch the shell, top bar, plan card or goal screen; pod 30 owns the tab and may add a placeholder route.
+- Do not change `--cat-*` or `--series-*`; other screens use them.
+
+### Decisions
+
+- Aggregation is a pure function in `aroh-domain::dashboard` over all live actions, series, trackers and entries of the dashboard goals, read by `aroh-app::dashboard` and exposed by one Tauri command `app_dashboard` in `commands/dashboard.rs`. It returns raw counts per goal; the app joins titles and category slots from the snapshot and sums the filtered goals for the combined tiles, so a chip never needs a new call.
+- Dashboard goals: every goal that is not draft or archived, except the built-in Routines goal. No such goal shows the empty state.
+- Days and weeks are local to the device zone; weeks start Monday. The minutes chart shows the last 6 weeks, the trends the last 7 weeks.
+- Due to date: an action whose slot has ended or whose status is no longer planned. Done to date: due actions marked done. Skipped counts as not done for done-to-date and completion. Each goal row also shows its missed and skipped counts in the shared status colours (`status.ts`).
+- Completion rate: done over due for actions starting in this local week, and this local month. The tile reads "76% this week · 82% this month", and "None due" for a window with nothing due.
+- Streak: the run of local days, newest first, on which every due action of the goal was done. Days with no due action, or only skipped ones, neither count nor break it; today counts only once all its due actions are done, and a still-open today never breaks it. Best is the longest such run ever. The combined tile shows the largest current and best streak of the shown goals.
+- Plan end: the date of the goal's last session, as in the pod 30 plan view: the latest action, or the last occurrence of a bounded series. A goal with an unbounded series has no plan end and shows "Ongoing".
+- Projected finish: the sessions owed (due minus done), each taking the plan's average gap between sessions (one day when the goal has under 2 actions), added from the later of the plan end and today, so a finish with sessions owed is never in the past. No actions and no series: no finish. Changed 2026-11-23 from "plan end plus owed sessions": a goal that missed its last session showed a past finish.
+- Pace: Behind when done is under 85 % of due, or the finish falls after the deadline. Ahead when nothing is owed, a deadline is set and the finish is at least 7 days before it. Otherwise On track. Without a deadline or a finish, only the 85 % rule applies and a goal is never Ahead. The On track tile and the On track chip both count Ahead goals; the Ahead chip shows only Ahead goals.
+- Minutes per week: the slot length of done actions, bucketed by the local week of their start. The readout shows the current week; bars stay full colour until a week is tapped, then the other weeks dim.
+- Tracker trend: the goal's first number field that has a target in its active plugin version, else its first number field, trackers taken by name; one point per week with an entry, the last value logged that week, with a dot on the latest. The dashed target line uses that plugin field target, else no line.
+- Chart colours: goals take new `--chart-1..6` tokens in a stable goal order (created, then id), so a filter never repaints a goal; goals past the sixth fold into "Other" in the muted ink. The order red, cyan, green, amber, violet, pink passes the dataviz validator in light and dark (CVD at the 6 to 8 floor, so the legend and 2 px gaps stay). Stacking by category uses new `--chart-cat-1..6` tokens: the category hues in light, and in dark the same hues capped at OKLCH L 0.66, which pass the validator where the `--cat-*` dark values fail the lightness band.
+
+### Rejected alternatives
+
+- Aggregating in TS from the snapshot: misses history older than 45 days and series beyond 14 days.
+- A pace-based finish (done per day extrapolated): unstable for new goals with few sessions.
+
+### Risks
+
+- The projected finish ignores occurrences of bounded series beyond the materialized window when averaging the gap.
+- Light category hues fail the CVD check on the green and amber pair; the legend, the 2 px gaps and the tap readout carry identity.
+
+### Acceptance criteria
+
+- Rust unit tests for on track and pace, projected finish, streaks, weekly minutes and the zone week boundary; vitest for the chart helpers; `pnpm check` clean.
+- Simulator screenshots with seeded long data in `docs/screenshots/pod34/` light and dark, made by `e2e/pod34.sh` with the debug-only `app_dev_dashboard_seed` (the sample goals plus four goals with up to 120 days of history and one finance plugin target); `/dashboard` is in the `e2e/pod31.sh` overflow guard route list and passes.
+
+### Unresolved
+
+- None.

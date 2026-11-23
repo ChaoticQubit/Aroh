@@ -6,7 +6,7 @@
   };
   const LONG = 'with the extra long name that keeps going past the phone edge';
   const WORD = 'Supercalifragilisticexpialidocious-checklist';
-  const ROUTES = ['/today', '/calendar', '/goals', 'goal', '/inbox', '/log', '/settings', '/settings/location', '/settings/location/log', '/settings/places', '/settings/profile', '/personas'];
+  const ROUTES = ['/today', '/calendar', '/goals', 'goal', '/dashboard', '/inbox', '/log', '/settings', '/settings/location', '/settings/location/log', '/settings/places', '/settings/profile', '/personas'];
   let goals = [];
 
   const lengthen = (s) => {

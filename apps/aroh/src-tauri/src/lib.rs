@@ -112,6 +112,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_snapshot,
+            commands::dashboard::app_dashboard,
+            commands::dashboard::app_dev_dashboard_seed,
             commands::app::app_tick,
             commands::app::app_set_action_status,
             commands::app::app_add_entry,
