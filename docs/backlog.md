@@ -22,4 +22,11 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B16 | Pod 27 (B1 fix) | `crates/aroh-domain/src/travel.rs` `settle` | An old-zone occurrence edited elsewhere (locked, done or re-stamped) before the device pulls it after a zone change is left as is, so it can sit beside the new-zone occurrence of the same slot | medium | open |
 | B17 | Owner, build 2 | provider key status | Claude provider key missing after updating build 1 to build 2 | critical | closed, not a bug: owner confirmed the key was kept (2026-11-22) |
 | B18 | Owner, build 2 | `apps/aroh/src/lib/app/questions.ts` | Number slider capped at 100 (fallback bounds); typing 315 clamps to 100 | high | closed, 9f402c1 |
-| B19 | Owner, build 2 | chat composer | Opening the keyboard breaks the whole layout | high | open, pod 26 |
+| B19 | Owner, build 2 | chat composer | Opening the keyboard breaks the whole layout | high | closed, f5e5a1c (simulator; confirm on phone) |
+| B20 | Pod 26 DONE | attachments | Photo and File upload unverified until the prod storage migration is applied; check on build 3 | high | open |
+| B21 | Pod 26 DONE | personas | A copied intake coach misses the lasting/known instruction lines, so no profile facts for that owner | medium | open |
+| B22 | Pod 26 DONE | replan | Files added later on the goal card reach only future new-goal runs; replan does not read files | medium | open |
+| B23 | Pod 26 DONE | attachments | Removing an attachment does not delete its storage object | medium | open |
+| B24 | Pod 26 DONE | mockups | Point the mockup GoalCard at the real card | low | open |
+| B25 | Pod 26 DONE | goal card | Top bar says "Goals" instead of the goal name | low | open |
+| B26 | Pod 26 DONE | chat composer | Placeholder says "Message your personas" instead of the lead coach | low | open |
