@@ -17,10 +17,11 @@
 	let { children }: { children: Snippet } = $props();
 
 	const TITLES: Record<TabId | 'settings', string> = { today: 'Today', calendar: 'Calendar', goals: 'Goals', inbox: 'Inbox', log: 'Log', settings: 'Settings' };
+	const SUBTITLES: Record<string, string> = { '/settings/location': 'Location', '/settings/location/log': 'Location log', '/settings/places': 'Places' };
 	const bare = $derived((page.data as { bare?: boolean }).bare === true);
 	const coaches = $derived(page.url.pathname.startsWith('/personas'));
 	const tab = $derived((Object.keys(TITLES) as (TabId | 'settings')[]).find((t) => page.url.pathname.startsWith(`/${t}`)) ?? (coaches ? (page.url.searchParams.has('goal') ? 'goals' : 'settings') : 'today'));
-	const title = $derived(coaches ? 'Coaches' : page.url.pathname === '/goals/new' ? 'New goal' : /^\/goals\/[^/]+\/chat$/.test(page.url.pathname) ? 'Goal chat' : TITLES[tab]);
+	const title = $derived(coaches ? 'Coaches' : page.url.pathname === '/goals/new' ? 'New goal' : /^\/goals\/[^/]+\/chat$/.test(page.url.pathname) ? 'Goal chat' : (SUBTITLES[page.url.pathname] ?? TITLES[tab]));
 	const count = $derived(data.snapshot ? inboxCount(data.snapshot) : 0);
 	const categories = $derived(data.snapshot ? categoryList(data.snapshot) : []);
 	const setup = $derived(data.snapshot ? needsSetup(data.snapshot.settings) : false);

@@ -1,0 +1,12 @@
+[package]
+name = "aroh-location"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+aroh-domain.workspace = true
+serde.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true

@@ -21,4 +21,5 @@ for migration in "$here"/../migrations/*.sql; do
   psql < "$migration"
 done
 psql < "$here/rls_rebuild.sql"
+psql < "$here/rls_places.sql"
 echo "rls: ok"

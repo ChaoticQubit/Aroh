@@ -14,7 +14,7 @@
 	 * Settings: account sign-in, model provider, model and key (the key goes to the server, never
 	 * stored on the device), search providers, server URL, budgets, the run time limit, and calendar and Apple
 	 * Health access. `ontest`, `onsignin` and `onhealth` resolve to a status line; the rest report edits.
-	 * With `oncoaches`, a Coaches row opens the coach (persona) library.
+	 * With `oncoaches`, a Coaches row opens the coach (persona) library; `onlocation` adds a Location row.
 	 */
 	let {
 		settings,
@@ -27,7 +27,8 @@
 		onhealth,
 		oncoaches,
 		runLimit = null,
-		onrunlimit
+		onrunlimit,
+		onlocation
 	}: {
 		settings: SettingsView;
 		onprovider?: (providerId: string, model: string) => void;
@@ -40,6 +41,7 @@
 		oncoaches?: () => void;
 		runLimit?: number | null;
 		onrunlimit?: (minutes: number) => void;
+		onlocation?: () => void;
 	} = $props();
 
 	const id = $props.id();
@@ -135,6 +137,18 @@
 			{#if accountStatus}<p class="text-sm text-muted" role="status">{accountStatus}</p>{/if}
 		</Card.Root>
 	</section>
+
+	{#if onlocation}
+		<section class="flex flex-col gap-3" aria-labelledby="{id}-location">
+			<h2 id="{id}-location" class="text-sm font-semibold text-fg">Location</h2>
+			<Card.Root size="sm" class="gap-0 px-0 py-0">
+				<button type="button" class="flex min-h-14 w-full items-center gap-3 rounded-md px-4 py-2 text-left outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset" onclick={() => onlocation?.()}>
+					<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Location</span><span class="text-xs text-muted">Places, nudges, pause tracking and visit history.</span></span>
+					<ChevronRight class="size-4 shrink-0 text-muted" aria-hidden="true" />
+				</button>
+			</Card.Root>
+		</section>
+	{/if}
 
 	<section class="flex flex-col gap-3" aria-labelledby="{id}-model">
 		<h2 id="{id}-model" class="text-sm font-semibold text-fg">Model provider</h2>

@@ -14,7 +14,20 @@ const ACCOUNT: &str = "account";
 const PENDING: &str = "pending_logs";
 
 /// Settings the owner may write, all stored as text.
-pub const SETTINGS: [&str; 9] = ["server_url", "goal_budget_usd", "calendars", "health", "supabase_url", "supabase_anon_key", "dismissed_insights", "setup_done", "day_suggestions"];
+pub const SETTINGS: [&str; 12] = [
+    "server_url",
+    "goal_budget_usd",
+    "calendars",
+    "health",
+    "supabase_url",
+    "supabase_anon_key",
+    "dismissed_insights",
+    "setup_done",
+    "day_suggestions",
+    "location",
+    "location_paused",
+    "location_nudges",
+];
 
 /// The hosted Supabase project and engine, used while the owner's setting is empty.
 /// The one place these values live; Settings still edits them, and clearing one returns here.

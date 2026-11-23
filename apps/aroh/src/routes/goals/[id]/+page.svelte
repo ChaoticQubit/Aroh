@@ -2,6 +2,9 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import GoalScreen from '$lib/ui/screens/GoalScreen.svelte';
+	import RoutinesScreen from '$lib/ui/screens/RoutinesScreen.svelte';
+	import * as location from '$lib/app/location';
+	import { onMount } from 'svelte';
 	import { getClock } from '$lib/ui/clock';
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
@@ -19,6 +22,10 @@
 	const s = $derived(data.snapshot);
 	const goal = $derived(s?.goals.find((g) => g.id === page.params.id));
 	let plugins = $state<PluginVersion[]>([]);
+	let places = $state<location.LocationView | null>(null);
+	const routines = $derived(!!goal && !!places && goal.id === places.routines_goal);
+
+	onMount(() => location.follow((v) => (places = v), (e) => (data.error = String(e))));
 	let chatStatus = $state<string | null>(null);
 	let coaches = $state<CoachView[]>([]);
 
@@ -81,7 +88,9 @@
 	}
 </script>
 
-{#if s && goal && view}
+{#if s && goal && view && routines && places}
+	<RoutinesScreen goal={goalHeader(s, goal, clock.zone)} view={goalView(s, goal, clock)} routines={location.routineRows(places, clock.now, clock.zone)} />
+{:else if s && goal && view}
 	<GoalScreen goal={goalHeader(s, goal, clock.zone)} {view} {chatStatus} {versions} version={shown?.id ?? DERIVED} {coaches} {onautonomy} {onchat} {onversion} oncoaches={() => void goto(`/personas?goal=${goal.id}`)} />
 {:else if s}
 	<p class="p-4 text-sm text-muted">This goal no longer exists.</p>

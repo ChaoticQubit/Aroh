@@ -284,6 +284,14 @@ pub enum DayKind {
     Away,
 }
 
+/// How a named place was added (Q56): answered from a place prompt, or found by map search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaceSource {
+    Prompt,
+    Search,
+}
+
 /// Level a spend limit applies to (Q32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -511,6 +519,28 @@ synced! {
         output_tokens: i64 => Int,
         cost_usd_micros: i64 => Int,
         occurred_at: DateTime<Utc> => Time,
+    }
+}
+
+synced! {
+    /// A place the owner named (Q56): center in microdegrees, arrival radius in meters.
+    /// Only named places sync; raw visits and unnamed candidates stay on the phone.
+    Place, PLACES, "places" {
+        name: String => Text,
+        address: Option<String> => Text,
+        lat_e6: i64 => Int,
+        lon_e6: i64 => Int,
+        radius_m: i64 => Int,
+        source: PlaceSource => Text,
+    }
+}
+
+synced! {
+    /// A link from a named place to a goal and, for an approved routine, to its series.
+    PlaceLink, PLACE_LINKS, "place_links" {
+        place_id: String => Text,
+        goal_id: String => Text,
+        series_id: Option<String> => Text,
     }
 }
 
@@ -913,6 +943,38 @@ impl Usage {
     }
 }
 
+/// Smallest and largest arrival radius of a place, in meters.
+pub const PLACE_RADIUS_M: std::ops::RangeInclusive<i64> = 50..=1000;
+
+/// Checks a latitude and longitude in microdegrees: within plus or minus 90 and 180 degrees.
+/// Errors with `Invalid` naming `field`.
+pub fn check_coordinate(field: &'static str, lat_e6: i64, lon_e6: i64) -> Result<()> {
+    if !(-90_000_000..=90_000_000).contains(&lat_e6) || !(-180_000_000..=180_000_000).contains(&lon_e6) {
+        return Err(invalid(field, "outside the globe"));
+    }
+    Ok(())
+}
+
+impl Place {
+    fn check_fields(&self) -> Result<()> {
+        check_text("places.name", &self.name, 1, 100)?;
+        check_opt_text("places.address", &self.address, 300)?;
+        check_coordinate("places.lat_e6", self.lat_e6, self.lon_e6)?;
+        if !PLACE_RADIUS_M.contains(&self.radius_m) {
+            return Err(invalid("places.radius_m", "between 50 and 1000"));
+        }
+        Ok(())
+    }
+}
+
+impl PlaceLink {
+    fn check_fields(&self) -> Result<()> {
+        check_uuid("place_links.place_id", &self.place_id)?;
+        check_uuid("place_links.goal_id", &self.goal_id)?;
+        check_opt_uuid("place_links.series_id", &self.series_id)
+    }
+}
+
 /// Valid sample rows of every synced table, for tests in this crate and in
 /// aroh-store (feature `samples`). All rows belong to [`samples::USER`] and
 /// goal [`samples::goal_id`].
@@ -1010,6 +1072,22 @@ pub mod samples {
         }
     }
 
+    /// A valid named gym place with a 150 m radius.
+    pub fn place() -> Place {
+        Place {
+            id: id(20),
+            user_id: USER.into(),
+            name: "Iron Works Gym".into(),
+            address: Some("1200 Market St".into()),
+            lat_e6: 37_776_000,
+            lon_e6: -122_417_000,
+            radius_m: 150,
+            source: PlaceSource::Prompt,
+            updated_at: STAMP.into(),
+            deleted: false,
+        }
+    }
+
     /// One valid row of every synced table as wire JSON, in registry order.
     pub fn all() -> Vec<Value> {
         let user = || USER.to_string();
@@ -1033,6 +1111,8 @@ pub mod samples {
             to(SearchSetting { id: id(17), user_id: user(), label: "Local SearXNG".into(), provider: "searxng".into(), base_url: Some("http://localhost:8888".into()), priority: 0, enabled: true, updated_at: stamp(), deleted: false }),
             to(Budget { id: id(18), user_id: user(), scope: BudgetScope::GoalMonth, goal_id: Some(goal_id()), limit_usd_micros: 5_000_000, updated_at: stamp(), deleted: false }),
             to(Usage { id: id(19), user_id: user(), goal_id: Some(goal_id()), run_id: Some(id(12)), vendor: "anthropic".into(), model: "claude-opus".into(), input_tokens: 1200, output_tokens: 300, cost_usd_micros: 4200, occurred_at: at(8), updated_at: stamp(), deleted: false }),
+            to(place()),
+            to(PlaceLink { id: id(21), user_id: user(), place_id: id(20), goal_id: goal_id(), series_id: Some(id(9)), updated_at: stamp(), deleted: false }),
         ];
         assert_eq!(rows.len(), crate::schema::SYNCED.len());
         rows
@@ -1211,6 +1291,25 @@ mod tests {
         let mut usage: Usage = serde_json::from_value(samples::all()[17].clone()).unwrap();
         usage.output_tokens = -1;
         assert_eq!(field_err(usage), "usage.output_tokens");
+    }
+
+    #[test]
+    fn places_check_coordinates_radius_and_links() {
+        let mut place = samples::place();
+        place.validate().unwrap();
+        place.lat_e6 = 90_000_001;
+        assert_eq!(field_err(place), "places.lat_e6");
+        let mut place = samples::place();
+        place.radius_m = 10;
+        assert_eq!(field_err(place), "places.radius_m");
+        let mut place = samples::place();
+        place.name = String::new();
+        assert_eq!(field_err(place), "places.name");
+        let mut link: PlaceLink = serde_json::from_value(samples::all()[19].clone()).unwrap();
+        link.validate().unwrap();
+        link.goal_id = "gym".into();
+        assert_eq!(field_err(link), "place_links.goal_id");
+        assert_eq!(serde_json::to_value(PlaceSource::Search).unwrap(), "search");
     }
 
     #[test]

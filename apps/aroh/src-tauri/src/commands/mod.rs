@@ -6,6 +6,7 @@ pub mod engine;
 pub mod plugins;
 pub mod health;
 pub mod learning;
+pub mod location;
 pub mod push;
 
 use crate::{AppState, Core};

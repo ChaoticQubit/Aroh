@@ -261,6 +261,73 @@ CREATE TABLE calendar_rules_next (
 INSERT INTO calendar_rules_next SELECT id, user_id, calendar_id, series_key, pattern, group_name, decision, NULL, updated_at, deleted FROM calendar_rules;
 DROP TABLE calendar_rules;
 ALTER TABLE calendar_rules_next RENAME TO calendar_rules;
+"#, r#"
+CREATE TABLE places (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    address TEXT,
+    lat_e6 INTEGER NOT NULL,
+    lon_e6 INTEGER NOT NULL,
+    radius_m INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+CREATE TABLE place_links (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    place_id TEXT NOT NULL,
+    goal_id TEXT NOT NULL,
+    series_id TEXT,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+CREATE INDEX place_links_place ON place_links (place_id);
+CREATE TABLE visits (
+    id TEXT PRIMARY KEY NOT NULL,
+    lat_e6 INTEGER NOT NULL,
+    lon_e6 INTEGER NOT NULL,
+    accuracy_m INTEGER NOT NULL,
+    arrived_at TEXT NOT NULL,
+    left_at TEXT,
+    place_id TEXT
+) STRICT;
+CREATE INDEX visits_arrived ON visits (arrived_at);
+CREATE TABLE place_candidates (
+    id TEXT PRIMARY KEY NOT NULL,
+    lat_e6 INTEGER NOT NULL,
+    lon_e6 INTEGER NOT NULL,
+    poi_name TEXT,
+    poi_kind TEXT,
+    address TEXT,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'ignored')),
+    visit_count INTEGER NOT NULL,
+    last_at TEXT NOT NULL,
+    prompted_at TEXT
+) STRICT;
+CREATE TABLE pattern_candidates (
+    id TEXT PRIMARY KEY NOT NULL,
+    place_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    gap_days INTEGER NOT NULL,
+    weekday INTEGER,
+    local_time TEXT NOT NULL,
+    duration_minutes INTEGER NOT NULL,
+    evidence INTEGER NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'declined', 'approved')),
+    declined_until TEXT,
+    created_at TEXT NOT NULL
+) STRICT;
+CREATE TABLE nudge_sent (
+    place_id TEXT NOT NULL,
+    local_date TEXT NOT NULL,
+    PRIMARY KEY (place_id, local_date)
+) STRICT;
+CREATE TABLE place_kinds (
+    place_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL
+) STRICT;
 "#];
 
 /// Schema version after every migration ran.

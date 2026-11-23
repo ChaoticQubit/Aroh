@@ -92,5 +92,6 @@
 		oncoaches={() => void goto('/personas')}
 		{runLimit}
 		onrunlimit={email ? (m) => void engine.setRunLimit(m).then((r) => (r.ok ? (runLimit = r.value.minutes) : (data.error = r.message))) : undefined}
+		onlocation={() => void goto('/settings/location')}
 	/>
 {/if}

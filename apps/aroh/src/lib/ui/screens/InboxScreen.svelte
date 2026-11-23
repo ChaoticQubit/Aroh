@@ -4,12 +4,15 @@
 	import { Progress } from '$lib/ui/primitives/progress';
 	import Persona from '../components/agent/Persona.svelte';
 	import Render from '../components/Render.svelte';
+	import PlacePrompt from '../components/location/PlacePrompt.svelte';
+	import type { PlacePromptView } from '../components/location/types';
 	import type { InboxItem, RunView } from './types';
 
 	/**
 	 * Inbox: proposals to approve, preference suggestions, insights and agent runs in progress.
 	 * Calendar groups from triage come first. Empty groups are left out. `ondecide` gets the group,
-	 * the item id and the card's decision.
+	 * the item id and the card's decision. `places` are new-place prompts, listed first; `onplace` gets
+	 * the prompt id and its answer.
 	 */
 	let {
 		approvals,
@@ -17,14 +20,18 @@
 		insights,
 		runs,
 		triage = [],
-		ondecide
+		places = [],
+		ondecide,
+		onplace
 	}: {
 		approvals: InboxItem[];
 		suggestions: InboxItem[];
 		insights: InboxItem[];
 		runs: RunView[];
 		triage?: InboxItem[];
+		places?: PlacePromptView[];
 		ondecide?: (group: 'triage' | 'approval' | 'suggestion' | 'insight', id: string, decision: unknown) => void;
+		onplace?: (id: string, decision: unknown) => void;
 	} = $props();
 
 	const groups = $derived(
@@ -38,6 +45,14 @@
 </script>
 
 <div class="flex w-full max-w-3xl flex-col gap-8 p-4 @3xl:p-6">
+	{#if places.length}
+		<section class="flex flex-col gap-2" aria-label="New places">
+			<h2 class="flex items-center gap-2 text-sm font-semibold text-fg">New places <span class="text-xs font-normal text-muted tabular-nums">{places.length}</span></h2>
+			<div class="divide-y divide-border overflow-hidden rounded-md border border-border bg-bg [&_[data-slot=card]]:rounded-none [&_[data-slot=card]]:border-0">
+				{#each places as p (p.id)}<PlacePrompt prompt={p} ondecide={(d) => onplace?.(p.id, d)} />{/each}
+			</div>
+		</section>
+	{/if}
 	{#each groups as g (g.title)}
 		<section class="flex flex-col gap-2" aria-label={g.title}>
 			<h2 class="flex items-center gap-2 text-sm font-semibold text-fg">{g.title} <span class="text-xs font-normal text-muted tabular-nums">{g.items.length}</span></h2>
@@ -68,7 +83,7 @@
 			</Card.Root>
 		</section>
 	{/if}
-	{#if !groups.length && !runs.length}
+	{#if !groups.length && !runs.length && !places.length}
 		<p class="text-sm text-muted">Nothing needs you right now.</p>
 	{/if}
 </div>

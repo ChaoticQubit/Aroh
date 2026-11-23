@@ -149,6 +149,7 @@ name = "aroh-app"
 version = "0.1.0"
 dependencies = [
  "aroh-domain",
+ "aroh-location",
  "aroh-store",
  "chrono",
  "chrono-tz",
@@ -196,6 +197,16 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "uuid",
+]
+
+[[package]]
+name = "aroh-location"
+version = "0.1.0"
+dependencies = [
+ "aroh-domain",
+ "chrono",
+ "chrono-tz",
+ "serde",
 ]
 
 [[package]]

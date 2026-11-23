@@ -4,6 +4,7 @@
 pub mod calendar;
 pub mod health;
 pub mod local;
+pub mod location;
 pub mod remind;
 pub mod sample;
 pub mod snapshot;

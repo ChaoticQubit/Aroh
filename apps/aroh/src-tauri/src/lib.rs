@@ -71,6 +71,7 @@ fn on_start_or_resume(app: &tauri::AppHandle) {
     }
     commands::engine::sync_if_signed_in(app);
     commands::health::import_if_enabled(app);
+    commands::location::drain_if_enabled(app);
 }
 
 /// Debug builds only: three seconds after start, evaluates the JavaScript file at
@@ -142,6 +143,20 @@ pub fn run() {
             commands::learning::app_edit_action,
             commands::learning::app_set_locked,
             realtime::app_realtime_up,
+            commands::location::app_location_enable,
+            commands::location::app_location_disable,
+            commands::location::app_location_setting,
+            commands::location::app_location_view,
+            commands::location::app_location_decide_prompt,
+            commands::location::app_location_unignore,
+            commands::location::app_location_search,
+            commands::location::app_location_snapshot,
+            commands::location::app_location_add_place,
+            commands::location::app_location_link,
+            commands::location::app_location_delete_place,
+            commands::location::app_location_decide_pattern,
+            commands::location::app_location_clear,
+            commands::location::app_dev_location_seed,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

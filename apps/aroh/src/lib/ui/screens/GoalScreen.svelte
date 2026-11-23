@@ -1,5 +1,6 @@
 <script lang="ts">
 	import MessageSquare from '@lucide/svelte/icons/message-square';
+	import type { Snippet } from 'svelte';
 	import { Button } from '$lib/ui/primitives/button';
 	import * as Card from '$lib/ui/primitives/card';
 	import Persona from '../components/agent/Persona.svelte';
@@ -15,6 +16,7 @@
 	 * `onautonomy` gets the picked level, `onchat` fires on the chat button; `chatStatus` shows under it.
 	 * With `versions`, a Dashboard card picks the plugin version shown; `onversion` gets its value.
 	 * The "Coaches on this goal" card lists `coaches`; `oncoaches` opens them in the library.
+	 * `children`, if given, renders between the goal cards and the view sections.
 	 */
 	let {
 		goal,
@@ -26,7 +28,8 @@
 		onchat,
 		onversion,
 		oncoaches,
-		coaches = []
+		coaches = [],
+		children
 	}: {
 		goal: GoalHeader;
 		view: ViewSpec;
@@ -38,6 +41,7 @@
 		onversion?: (value: string) => void;
 		oncoaches?: () => void;
 		coaches?: CoachView[];
+		children?: Snippet;
 	} = $props();
 
 	const { zone } = getClock();
@@ -100,6 +104,8 @@
 			</Card.Root>
 		{/if}
 	</div>
+
+	{@render children?.()}
 
 	{#each view.sections as section (section.title)}
 		<section class="flex flex-col gap-3" aria-label={section.title}>
