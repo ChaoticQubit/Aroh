@@ -1031,7 +1031,14 @@ impl Engine {
                 return Err(e);
             }
         };
-        Ok(self.runner(events, io).process(lease).await?)
+        let processed = self.runner(events, io).process(lease).await?;
+        if row.goal_id.is_some() && matches!(row.workflow.as_str(), NEW_GOAL | REPLAN) {
+            let now = crate::rows::utc(self.deps.clock.now_ms());
+            if let Err(e) = self.fill_new_plans(now, Some(row.id.0)).await {
+                eprintln!("aroh: card fill after plan {} not started: {e}", row.id.0);
+            }
+        }
+        Ok(processed)
     }
 
     /// Step mode: claims due jobs and processes each batch concurrently

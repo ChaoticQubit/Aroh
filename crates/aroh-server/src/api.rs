@@ -8,7 +8,7 @@ use crate::plugins::{PluginView, SavePlugin, Writer};
 use crate::teams::Kind;
 use crate::push::{ApnsEnv, DeviceInfo, Platform, PushSummary, RegisterDevice};
 use crate::triage::{StartTriage, TriageEvent};
-use crate::triggers::{ReviewSchedule, SetReview, SetTimezone, TimezoneSet};
+use crate::triggers::{EditReplan, ReviewSchedule, SetReview, SetTimezone, TimezoneSet};
 use crate::vault::KeyInfo;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRef, Path, Query, State};
@@ -280,6 +280,13 @@ async fn list_insights(State(s): State<AppState>, UserId(user): UserId, Query(q)
     Ok(Json(insights::list(&s.engine.deps().pool, user, q.goal_id).await?))
 }
 
+#[utoipa::path(get, path = "/v1/actions/{action_id}/replan", tag = "runs", security(("bearer" = [])),
+    params(("action_id" = Uuid, Path)),
+    responses((status = 200, description = "Where the replan after the newest owner edit of the action stands", body = EditReplan)))]
+async fn get_edit_replan(State(s): State<AppState>, UserId(user): UserId, Path(action_id): Path<Uuid>) -> Result<Json<EditReplan>, ServerError> {
+    Ok(Json(s.engine.edit_replan(user, action_id).await?))
+}
+
 #[utoipa::path(get, path = "/v1/goals/{goal_id}/review", tag = "insights", security(("bearer" = [])),
     params(("goal_id" = Uuid, Path)),
     responses((status = 200, description = "The goal's weekly review", body = ReviewSchedule), (status = 404, body = ErrorBody)))]
@@ -441,10 +448,10 @@ impl Modify for Bearer {
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
     paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, run_again, card_chat, submit_log, start_triage, list_runs, get_run, answer, cancel_run, retry_run, get_run_limit, set_run_limit, tick, enqueue_hook, register_device, unregister_device, push_tick,
-        list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review, set_timezone,
+        list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review, set_timezone, get_edit_replan,
         list_personas, copy_persona, edit_persona),
     components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, RunAgain, GivenAnswer, CardChat, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, RunLimit, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
-        SavePlugin, PluginView, Insight, ReviewSchedule, SetReview, SetTimezone, TimezoneSet,
+        SavePlugin, PluginView, Insight, ReviewSchedule, SetReview, SetTimezone, TimezoneSet, EditReplan,
         EditPersona, PersonaView, Origin, Kind)),
     modifiers(&Bearer)
 )]
@@ -490,6 +497,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/push/tick", post(push_tick))
         .route("/v1/insights", get(list_insights))
         .route("/v1/goals/{goal_id}/review", get(get_review).put(set_review))
+        .route("/v1/actions/{action_id}/replan", get(get_edit_replan))
         .route("/v1/timezone", put(set_timezone))
         .with_state(state)
 }

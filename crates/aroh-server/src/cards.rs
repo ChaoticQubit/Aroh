@@ -607,6 +607,43 @@ impl Engine {
         }
         Ok(started)
     }
+
+    /// Fills the next two weeks' cards right after a plan is written (B58): every
+    /// finished new-goal or replan run of the last day (or only `run`) whose goal
+    /// has upcoming sessions lacking a full card starts one fill, window
+    /// `fill:plan:<run id>`, so each plan version fills once. A busy goal is
+    /// retried by the next scan. Returns how many fills started.
+    pub(crate) async fn fill_new_plans(&self, now: DateTime<Utc>, run: Option<Uuid>) -> Result<usize, ServerError> {
+        let pool = self.deps().pool.clone();
+        let plans: Vec<(Uuid, Uuid, Uuid)> = db::query_as(
+            "select r.user_id, r.goal_id, r.id from public.runs r
+             where r.state = 'done' and r.workflow in ('new-goal', 'replan') and r.goal_id is not null
+               and r.updated_at > $1 and ($4::uuid is null or r.id = $4)
+               and not exists (select 1 from public.adaptations a where a.user_id = r.user_id and a.goal_id = r.goal_id and a.window_key = 'fill:plan:' || r.id::text)
+               and exists (select 1 from public.actions x where x.user_id = r.user_id and x.goal_id = r.goal_id and not x.deleted
+                 and x.status = 'planned' and x.start_at >= $2 and x.start_at < $3 and (x.card is null or x.card->>'depth' = 'outline'))
+             order by r.updated_at, r.id limit 50",
+        )
+        .bind(now - Duration::days(1))
+        .bind(now)
+        .bind(now + Duration::days(i64::from(DEFAULT_WINDOW_DAYS)))
+        .bind(run)
+        .fetch_all(&pool)
+        .await?;
+        let mut started = 0;
+        for (user, goal_id, run_id) in plans {
+            let Some(goal) = active_goal(&pool, user, goal_id).await? else { continue };
+            if self.start_fill(user, &goal, &plan_fill_window(run_id), now).await? {
+                started += 1;
+            }
+        }
+        Ok(started)
+    }
+}
+
+/// The window key of the card fill right after plan run `run` wrote its actions.
+pub fn plan_fill_window(run: Uuid) -> String {
+    format!("fill:plan:{run}")
 }
 
 #[cfg(test)]

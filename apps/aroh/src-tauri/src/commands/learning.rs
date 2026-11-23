@@ -2,6 +2,7 @@
 //! records it when sync pushes the row and learns a preference from repeated similar edits.
 
 use super::app::{after_write, parse_time};
+use super::engine::sync_if_signed_in;
 use super::with_core;
 use crate::AppState;
 use aroh_app::write;
@@ -9,7 +10,8 @@ use aroh_domain::rows::Action;
 use tauri::{AppHandle, State};
 
 /// Moves or resizes action `id` to `start_at`..`end_at` (RFC 3339), or deletes it when
-/// `delete` is true. The action is locked, then reminders are rescheduled.
+/// `delete` is true. The action is locked, reminders are rescheduled and the edit is
+/// pushed at once, so the server checks it for a replan within a minute (Q77).
 #[tauri::command]
 pub fn app_edit_action(
     app: AppHandle,
@@ -26,6 +28,7 @@ pub fn app_edit_action(
     };
     let action = with_core(&state, |c| write::edit_action(&c.conn, &mut c.clock, &id, span))?;
     after_write(&app);
+    sync_if_signed_in(&app);
     Ok(action)
 }
 

@@ -4,6 +4,7 @@ pub mod auth;
 pub mod boot;
 pub mod checkpoints;
 pub mod config;
+pub mod conflicts;
 pub mod db;
 pub mod engine;
 pub mod error;

@@ -6,7 +6,8 @@ use crate::db;
 use aroh_domain::hlc;
 use aroh_domain::calendar::local_days;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
-use aroh_domain::rows::{Autonomy, CadenceFreq, Goal, GoalStatus, RuleOp, Tracker, TrackerEntry, TrackerField};
+use aroh_domain::rows::{Action, ActionStatus, Autonomy, BusyBlock, CadenceFreq, Goal, GoalStatus, RuleOp, Tracker, TrackerEntry, TrackerField};
+use crate::conflicts;
 use aroh_domain::time::MISSED_GRACE_MIN;
 use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -404,9 +405,11 @@ impl Engine {
         started += self.scan_events(&pool, now).await?;
         started += self.scan_rules(&pool, now).await?;
         started += self.scan_reviews(&pool, now).await?;
+        started += self.scan_edit_conflicts(&pool, now).await?;
         started += self.scan_edits(&pool, now).await?;
         started += self.scan_away(&pool, now).await?;
         started += self.scan_backfill(now).await?;
+        started += self.fill_new_plans(now, None).await?;
         Ok(started)
     }
 
@@ -679,6 +682,130 @@ impl Engine {
             }
         }
         Ok(started)
+    }
+
+    /// Replans after a single owner edit (Q77): every unchecked move, resize
+    /// or delete is checked against the owner's other planned actions, busy
+    /// time and daily minutes (`conflicts::check`); a conflict starts one
+    /// replan per affected goal, window `edit:<event id>`. A goal with a
+    /// replan in flight is retried on a later scan. The learning path keeps
+    /// reading `handled`; this one marks `replan_checked_at` and
+    /// `replan_run_id`. Returns how many runs it started.
+    async fn scan_edit_conflicts(&self, pool: &db::PgPool, now: DateTime<Utc>) -> Result<usize, ServerError> {
+        let rows: Vec<(i64, Uuid, Uuid, String)> = db::query_as(
+            "select id, user_id, goal_id, action_id::text from public.action_events
+             where replan_checked_at is null and kind in ('move', 'resize', 'delete') order by id limit $1",
+        )
+        .bind(EDIT_SCAN_LIMIT)
+        .fetch_all(pool)
+        .await?;
+        let mut started = 0;
+        for (id, user, _, action_id) in rows {
+            let Some(moved) = get_row::<Action>(pool, user, &action_id).await?.filter(|a| !a.deleted && a.status == ActionStatus::Planned && a.end_at > now) else {
+                mark_edit_checked(pool, id, None, now).await?;
+                continue;
+            };
+            let goal_id = Uuid::parse_str(&moved.goal_id).map_err(|_| ServerError::Db("bad goal id".into()))?;
+            let tz = goal_zone(pool, user, goal_id).await?;
+            let item = |a: &Action| conflicts::Item { id: a.id.clone(), goal_id: a.goal_id.clone(), title: a.title.clone(), start_at: a.start_at, end_at: a.end_at, locked: a.locked };
+            let others: Vec<conflicts::Item> = list_rows::<Action>(pool, user, &[], false)
+                .await?
+                .iter()
+                .filter(|a| a.status == ActionStatus::Planned && a.end_at > moved.start_at - Duration::days(1) && a.start_at < moved.end_at + Duration::days(1))
+                .map(item)
+                .collect();
+            let busy_time: Vec<(DateTime<Utc>, DateTime<Utc>)> =
+                list_rows::<BusyBlock>(pool, user, &[], false).await?.iter().filter(|b| !b.all_day).map(|b| (b.start_at, b.end_at)).collect();
+            let mut state = serde_json::Map::new();
+            state.insert("profile".into(), serde_json::to_value(self.profile(user).await?).expect("facts serialize"));
+            let Some(conflict) = conflicts::check(&item(&moved), &others, &busy_time, tz, crate::limits::daily_cap(&state)) else {
+                mark_edit_checked(pool, id, None, now).await?;
+                continue;
+            };
+            let mut deferred = false;
+            let mut first_run = None;
+            for goal_text in &conflict.goals {
+                let goal_id = Uuid::parse_str(goal_text).map_err(|_| ServerError::Db("bad goal id".into()))?;
+                let Some(goal) = active_goal(pool, user, goal_id).await? else { continue };
+                if busy(pool, user, goal_id).await? {
+                    deferred = true;
+                    continue;
+                }
+                let window = format!("edit:{id}");
+                if self.trigger_replan(user, &goal, Source::Edits, &window, &conflict.reason, now).await? {
+                    started += 1;
+                }
+                let run: Option<Uuid> = db::query_scalar("select run_id from public.adaptations where user_id = $1 and goal_id = $2 and window_key = $3")
+                    .bind(user)
+                    .bind(goal_id)
+                    .bind(&window)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten();
+                first_run = first_run.or(run);
+            }
+            if !deferred {
+                mark_edit_checked(pool, id, first_run, now).await?;
+            }
+        }
+        Ok(started)
+    }
+}
+
+const EDIT_SCAN_LIMIT: i64 = 200;
+
+async fn mark_edit_checked(pool: &db::PgPool, event: i64, run: Option<Uuid>, now: DateTime<Utc>) -> Result<(), ServerError> {
+    db::query("update public.action_events set replan_checked_at = $2, replan_run_id = $3 where id = $1")
+        .bind(event)
+        .bind(now)
+        .bind(run)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Where the replan after an owner edit of one action stands (Q77), as
+/// `GET /v1/actions/{action_id}/replan` answers: the newest edit event,
+/// whether the scan checked it, the run it started (none when nothing
+/// conflicted) and, while unchecked, the replan run it waits behind.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct EditReplan {
+    pub event_at: Option<DateTime<Utc>>,
+    pub checked: bool,
+    pub run_id: Option<Uuid>,
+    pub waiting_on: Option<Uuid>,
+}
+
+impl Engine {
+    /// Reads where the replan after `user`'s newest edit of action `action`
+    /// stands. An action with no edit event answers `event_at` null and
+    /// `checked` false. Never reads another user's rows.
+    pub async fn edit_replan(&self, user: Uuid, action: Uuid) -> Result<EditReplan, ServerError> {
+        let pool = &self.deps().pool;
+        let row: Option<(DateTime<Utc>, Uuid, Option<DateTime<Utc>>, Option<Uuid>)> = db::query_as(
+            "select at, goal_id, replan_checked_at, replan_run_id from public.action_events
+             where user_id = $1 and action_id = $2 and kind in ('move', 'resize', 'delete') order by id desc limit 1",
+        )
+        .bind(user)
+        .bind(action)
+        .fetch_optional(pool)
+        .await?;
+        let Some((at, goal, checked_at, run_id)) = row else {
+            return Ok(EditReplan { event_at: None, checked: false, run_id: None, waiting_on: None });
+        };
+        let waiting_on = if checked_at.is_none() {
+            db::query_scalar(&format!(
+                "select id from public.runs where user_id = $1 and goal_id = $2 and workflow = 'replan' and state in {BUSY_STATES}
+                 order by created_at desc limit 1"
+            ))
+            .bind(user)
+            .bind(goal)
+            .fetch_optional(pool)
+            .await?
+        } else {
+            None
+        };
+        Ok(EditReplan { event_at: Some(at), checked: checked_at.is_some(), run_id, waiting_on })
     }
 }
 

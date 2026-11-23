@@ -12,6 +12,7 @@ pub mod remove;
 pub mod sample;
 pub mod snapshot;
 pub mod tick;
+pub mod undo;
 pub mod travel;
 pub mod write;
 

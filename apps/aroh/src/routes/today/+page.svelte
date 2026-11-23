@@ -4,6 +4,8 @@
 	import { getClock } from '$lib/ui/clock';
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
+	import { editStatus } from '$lib/app/replan.svelte';
+	import ReplanStatus from '$lib/ui/components/ReplanStatus.svelte';
 	import { speech } from '$lib/app/speech.svelte';
 	import { actionViews, checkInData, dueCheckIns } from '$lib/app/views';
 	import { allDayViews, confirmDay, refreshSuggestions } from '$lib/app/calendar';
@@ -27,6 +29,9 @@
 	}
 </script>
 
+{#if editStatus.phase}
+	<div class="px-4 pt-3"><ReplanStatus phase={editStatus.phase} onretry={() => editStatus.retry()} onundo={() => editStatus.undo()} ondismiss={() => editStatus.dismiss()} /></div>
+{/if}
 {#if s}
 	<TodayScreen
 		actions={actionViews(s)}
@@ -36,9 +41,9 @@
 		{oncheckin}
 		onlog={(text) => data.run(() => client.logText(text))}
 		voice={speech}
-		onedit={(e) => data.run(() => client.editAction(e.id, e.start, e.end))}
+		onedit={(e) => data.run(() => client.editAction(e.id, e.start, e.end).then(() => editStatus.track(e.id)))}
 		onlock={(id, locked) => data.run(() => client.setLocked(id, locked))}
-		ondelete={(id) => data.run(() => client.deleteAction(id))}
+		ondelete={(id) => data.run(() => client.deleteAction(id).then(() => editStatus.track(id)))}
 		onchoose={(p) => data.run(() => confirmDay(p.id, p.kind))}
 	/>
 {/if}

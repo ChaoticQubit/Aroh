@@ -218,6 +218,7 @@
 						data-no-swipe={active || undefined}
 						data-dragging={(press?.live && press.id === a.id) || undefined}
 						class="absolute overflow-hidden rounded-sm border border-l-3 px-1.5 py-0.5 outline-none select-none {active ? 'z-20 ring-2 ring-fg' : ''} {a.status === 'missed' ? 'border-dashed border-status-missed' : 'border-border'} {onopen ? 'cursor-pointer' : ''}"
+						data-overlap={a.cols > 1 || undefined}
 						style="top: {at.y + 1}px; height: {at.h - 2}px; {lane(a.col, a.cols)}; border-left-color: var(--cat-{a.category}); border-left-style: solid; background: color-mix(in oklch, var(--cat-{a.category}) {active ? 16 : look.tint}%, var(--bg)); touch-action: {a.id === selected ? 'none' : 'pan-y'}"
 						title="{a.title}, {formatTime(at.start, zone)} - {formatTime(at.end, zone)}"
 						onpointerdown={(e) => down(e, a.id, 'move')}
@@ -225,7 +226,7 @@
 						onpointerup={() => up(a)}
 						onpointercancel={cancel}
 					>
-						<p class="truncate text-xs leading-4 font-medium {look.title}">{a.title}</p>
+						<p class="truncate text-xs leading-4 font-medium {look.title}">{#if a.cols > 1}<span class="font-semibold text-status-warn">Overlap</span> · {/if}{a.title}</p>
 						{#if at.h >= 36}<p class="truncate text-xs leading-4 text-muted tabular-nums">{#if look.label}<span class="font-medium {look.labelClass}">{look.label}</span> · {/if}<span class={at.moving ? 'font-medium text-fg' : ''}>{formatTime(at.start, zone)} - {formatTime(at.end, zone)}</span></p>{/if}
 						{#if onopen}
 							<button type="button" class="sr-only" onclick={() => onopen?.(a.id)}>Edit {a.title}</button>

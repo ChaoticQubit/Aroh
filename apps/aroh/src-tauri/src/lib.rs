@@ -162,6 +162,8 @@ pub fn run() {
             commands::calendar_import::app_set_day_kind,
             commands::learning::app_edit_action,
             commands::learning::app_set_locked,
+            commands::replan::app_run_proposals,
+            commands::replan::app_undo_run,
             realtime::app_realtime_up,
             commands::location::app_location_enable,
             commands::location::app_location_disable,

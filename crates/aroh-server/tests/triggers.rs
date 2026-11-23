@@ -550,6 +550,35 @@ async fn a_deleted_goal_stops_its_runs_and_jobs_and_never_comes_back() {
     assert_eq!(w.count("select count(*) from public.runs where user_id = $1").await, 1);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn one_owner_move_into_an_overlap_replans_the_other_goal() {
+    let w = world(json!({"summary": "Nothing to change.", "size": "small", "changes": []})).await;
+    let read = w.goal(Autonomy::Balanced).await;
+    let run = w.goal(Autonomy::Balanced).await;
+    let flexible = w.action(read, "2026-11-24T10:00:00Z").await;
+    let moved = w.action(run, "2026-11-24T08:00:00Z").await;
+    let alone = w.action(run, "2026-11-25T08:00:00Z").await;
+    w.owner_moves(&alone, 1).await;
+    w.tick().await;
+    assert_eq!(w.count("select count(*) from public.runs where user_id = $1 and workflow = 'replan'").await, 0, "no overlap, no run");
+    assert_eq!(w.count("select count(*) from public.action_events where user_id = $1 and replan_checked_at is not null").await, 1);
+
+    w.owner_moves(&moved, 2).await;
+    w.later(31_000);
+    w.tick().await;
+    let (goal, reason, run_id): (Uuid, String, Uuid) =
+        db::query_as("select goal_id, reason, run_id from public.adaptations where user_id = $1 and source = 'edits'").bind(w.user).fetch_one(&w.pool).await.unwrap();
+    assert_eq!(goal, read, "the goal of the flexible action replans");
+    assert!(reason.contains("It now overlaps \"Core workout\""), "{reason}");
+    let state = w.engine.edit_replan(w.user, moved.id.parse().unwrap()).await.unwrap();
+    assert!(state.checked);
+    assert_eq!(state.run_id, Some(run_id));
+    assert_eq!(w.count("select count(*) from public.action_events where user_id = $1 and kind = 'move' and not handled").await, 2, "learning still reads its events");
+    let untouched = w.engine.edit_replan(w.user, flexible.id.parse().unwrap()).await.unwrap();
+    assert_eq!((untouched.event_at, untouched.checked), (None, false));
+}
+
 async fn depth(pool: &PgPool, id: &str) -> Option<String> {
     db::query_scalar("select card->>'depth' from public.actions where id::text = $1").bind(id).fetch_one(pool).await.unwrap()
 }
@@ -592,4 +621,28 @@ async fn backfill_gives_a_goal_without_a_review_its_weekly_review() {
     w.action(goal, "2026-11-23T07:00:00Z").await;
     w.tick().await;
     assert_eq!(w.count("select count(*) from public.review_schedules where user_id = $1 and enabled and weekday = 0 and at = '18:00'").await, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_replan_that_writes_new_actions_fills_their_cards_once_right_away() {
+    let w = world(json!({"summary": "On track.", "size": "small", "changes": []})).await;
+    let goal = w.goal(Autonomy::Balanced).await;
+    w.action(goal, "2026-11-23T07:00:00Z").await;
+    w.tick().await;
+    assert_eq!(w.count("select count(*) from public.adaptations where user_id = $1 and window_key = 'fill:backfill'").await, 1);
+    *w.analyst.lock().unwrap() = json!({"summary": "Add an evening session.", "size": "small",
+        "changes": [{"op": "create", "action_id": null, "title": "Core workout", "start": "2026-11-24T18:00:00", "minutes": 30}]});
+    let run = w.engine.start_replan(w.user, goal, StartReplan { reason: "Run again.".into(), timezone: "Europe/Berlin".into() }).await.unwrap().run_id;
+    w.tick().await;
+    let created: String = db::query_scalar("select id::text from public.actions where user_id = $1 and start_at = '2026-11-24T17:00:00Z' and not deleted")
+        .bind(w.user)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(depth(&w.pool, &created).await.as_deref(), Some("full"), "the new plan has full cards without waiting for the weekly fill");
+    assert_eq!(w.count(&format!("select count(*) from public.adaptations where user_id = $1 and window_key = 'fill:plan:{run}'")).await, 1);
+    w.later(31_000);
+    w.tick().await;
+    assert_eq!(w.count("select count(*) from public.adaptations where user_id = $1 and window_key like 'fill:plan:%'").await, 1, "one fill per plan version");
 }

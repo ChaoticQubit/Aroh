@@ -390,6 +390,11 @@ export class Engine {
 		return this.request('POST', `/v1/goals/${goalId}/replan`, { reason, timezone: deviceZone() });
 	}
 
+	/** Reads where the replan after the newest owner edit of action `actionId` stands (Q77). */
+	editReplan(actionId: string): Promise<EngineResult<import('./replan').EditReplan>> {
+		return this.request('GET', `/v1/actions/${actionId}/replan`);
+	}
+
 	/** Starts the card coach on action `actionId` for `scope` with the owner's `text` (Q71). */
 	cardChat(actionId: string, scope: 'this' | 'future', text: string): Promise<EngineResult<{ goal_id: string; run_id: string }>> {
 		return this.request('POST', `/v1/actions/${actionId}/chat`, { scope, text });

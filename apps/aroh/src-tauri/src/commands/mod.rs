@@ -11,6 +11,7 @@ pub mod health;
 pub mod learning;
 pub mod location;
 pub mod push;
+pub mod replan;
 
 use crate::{AppState, Core};
 

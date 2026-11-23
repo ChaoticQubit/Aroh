@@ -63,6 +63,27 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/actions/{action_id}/replan:
+    get:
+      tags:
+      - runs
+      operationId: get_edit_replan
+      parameters:
+      - name: action_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Where the replan after the newest owner edit of the action stands
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EditReplan'
+      security:
+      - bearer: []
   /v1/calendar/triage:
     post:
       tags:
@@ -1136,6 +1157,33 @@ components:
           - string
           - 'null'
       additionalProperties: false
+    EditReplan:
+      type: object
+      description: |-
+        Where the replan after an owner edit of one action stands (Q77), as
+        `GET /v1/actions/{action_id}/replan` answers: the newest edit event,
+        whether the scan checked it, the run it started (none when nothing
+        conflicted) and, while unchecked, the replan run it waits behind.
+      required:
+      - checked
+      properties:
+        checked:
+          type: boolean
+        event_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        run_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        waiting_on:
+          type:
+          - string
+          - 'null'
+          format: uuid
     ErrorBody:
       type: object
       description: |-

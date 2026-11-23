@@ -61,4 +61,4 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B55 | Owner, build 4 | question answers | Spaces could not be typed in answer boxes: each keystroke was trimmed and bound back | high | closed, see fix(app): keep spaces while typing an answer |
 | B56 | Owner, build 4 | server DB pool | write_plan failed: EMAXCONNSESSION max clients 15; pool max 10 per Vercel instance | critical | closed, fix(server): cap database connections per instance |
 | B57 | Owner, build 4 | profile facts | A workout time fact was offered as known for reading and office-prep questions | high | closed, fix(agents): profile facts answer only questions about the same subject |
-| B58 | Pod 37 DONE | Run again | A Run again plan has no cards until the next weekly fill; owner expects cards right away | high | open |
+| B58 | Pod 37 DONE | Run again | A Run again plan has no cards until the next weekly fill; owner expects cards right away | high | closed: e2d626b (pod 43, fill:plan:<run id> after every new-goal or replan run), PG test pending Kiri |
