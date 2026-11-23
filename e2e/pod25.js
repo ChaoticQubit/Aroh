@@ -1,5 +1,5 @@
 (async () => {
-  const { invoke, sleep, mark, text, until, go, button, show, say, started, signUp, saveKey, fail, useLocalStack } = window.AROH_LIB;
+  const { invoke, sleep, mark, text, until, go, button, show, say, started, signUp, saveKey, createGoal, fail, useLocalStack } = window.AROH_LIB;
   const GOAL = 'Finish reading The Joy of X by next Sunday';
   const composer = () => document.querySelector('textarea[placeholder="Message your personas"]');
 
@@ -27,13 +27,12 @@
     show('Time limit per run, minutes');
     await mark('shot 05-run-limit-setting');
 
-    await go('/goals/new');
+    await createGoal(GOAL);
     if (document.querySelector('button[aria-label="Attach a file"]')) throw new Error('attach is still shown');
     if (!document.querySelector('button[aria-label="Speak a message"]')) throw new Error('no mic in the chat composer');
     composer().focus();
     await sleep(1200);
     await mark('shot 06-composer-focused');
-    await say(GOAL);
     await until('question group', () => text().includes('How many chapters') && text().includes('Send answers'), 120000);
     if (!text().includes('chapters') || !text().includes('minutes per day')) throw new Error('number questions show no unit');
     await sleep(2500);
@@ -49,7 +48,7 @@
     await until('plan', () => text().includes('Approve plan') && text().includes('three chapters each evening'), 120000);
     await mark('shot 09-plan');
     button('Approve plan').click();
-    await until('plan written', () => text().split('The plan is on your calendar').length > 2, 120000);
+    await until('plan written', () => text().includes('The plan is on your calendar'), 120000);
     await sleep(3000);
     await mark('shot 10-approved');
 

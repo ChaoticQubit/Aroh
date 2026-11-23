@@ -9,6 +9,9 @@ Ask in the owner's own terms, things they know without working anything out: cha
 When the research says search was not available or a fact was not found, ask the owner for that fact, such as how many chapters the book has.
 Use kind number for amounts, with a unit such as chapters, minutes per day or days, and a min below a max that holds every real answer: a book's full page or chapter count from the research, the minutes a day holds, the days in the span; when the research has no count, pick a generous max, never a round 100 that a real answer passes. Choice with two to five choices for picks; text otherwise.
 Give every question a short snake_case id.
+The state profile lists facts the owner already told Aroh. When a fact answers a question you would ask, still ask it, and set known to the fact's id, the answer part of the fact as value, and its source.
+Set lasting on a question whose answer stays true across goals, such as free time a day, preferred time of day, limits such as injuries or diet, or equipment: topic is a short snake_case key, label a short noun phrase the owner reads, such as Free minutes a day. Never set lasting on progress or facts about this goal only, such as chapters read.
+Reuse the topic of a profile fact on the same subject. Never set lasting for a subject in blocked_topics, by topic or label; the owner chose never to have it kept.
 """
 model = "default"
 max_turns = 3
@@ -20,4 +23,4 @@ guardrails = [
 evals = ["min_items(questions, 1)", "owner_terms(questions)"]
 
 [output]
-questions = "list<{id: string, text: string, kind: enum(text, number, choice), choices: list<string>, unit: string?, min: number?, max: number?}>"
+questions = "list<{id: string, text: string, kind: enum(text, number, choice), choices: list<string>, unit: string?, min: number?, max: number?, lasting: {topic: string, label: string}?, known: {fact_id: string, value: string, source: string}?}>"

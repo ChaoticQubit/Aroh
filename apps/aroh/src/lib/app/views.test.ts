@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Snapshot } from './client';
 import { formatDay } from '$lib/ui/format';
-import { actionViews, busyDayInsights, checkInData, dueCheckIns, goalHeader, goalView, inboxView } from './views';
+import { actionViews, busyDayInsights, profileView, categoryList, checkInData, dueCheckIns, goalHeader, goalView, inboxView } from './views';
 
 const zone = 'UTC';
 const goalId = 'g1';
@@ -10,11 +10,12 @@ const goalId = 'g1';
 function fixture(): Snapshot {
 	return {
 		user_id: 'u1',
+		files: [],
 		categories: [
 			{ id: 'c-fit', name: 'Health and Fitness', color: '#4f7a5a', seeded: true },
 			{ id: 'c-own', name: 'Music', color: '#000000', seeded: false }
 		],
-		goals: [{ id: goalId, category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: '2027-02-01', status: 'active', autonomy: 'balanced', created_at: '2026-11-01T00:00:00Z' }],
+		goals: [{ id: goalId, category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: '2027-02-01', status: 'active', autonomy: 'balanced', created_at: '2026-11-01T00:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null }],
 		actions: [
 			{ id: 'a1', goal_id: goalId, series_id: null, occurrence: null, title: 'Strength session', notes: null, start_at: '2026-11-26T18:00:00Z', end_at: '2026-11-26T19:00:00Z', status: 'planned', locked: false, done_at: null }
 		],
@@ -34,7 +35,12 @@ function fixture(): Snapshot {
 				created_at: '2026-11-26T06:00:00Z'
 			}
 		],
-		preferences: [{ id: 'f1', fact: 'Plan workouts in the evening?', source: 'Planner', noted_at: '2026-11-26T06:00:00Z', confirmed: false }],
+		preferences: [{ id: 'f1', fact: 'Plan workouts in the evening?', source: 'Planner', noted_at: '2026-11-26T06:00:00Z', confirmed: false, topic: null, goal_id: null, origin: 'edit', blocked: false }],
+		facts: [
+			{ id: 'k1', fact: 'Free minutes a day: 30 min', source: 'answer', noted_at: '2026-11-25T06:00:00Z', confirmed: true, topic: 'daily_minutes', goal_id: goalId, origin: 'answer', blocked: false },
+			{ id: 'k2', fact: 'Prefers evening workouts', source: 'edit-analysis', noted_at: '2026-11-20T06:00:00Z', confirmed: true, topic: null, goal_id: null, origin: 'edit', blocked: false },
+			{ id: 'k3', fact: 'Body weight', source: 'answer', noted_at: '2026-11-19T06:00:00Z', confirmed: true, topic: 'weight', goal_id: goalId, origin: 'answer', blocked: true }
+		],
 		personas: [{ id: 'pe1', goal_id: goalId, name: 'Fitness coach' }],
 		providers: [],
 		search: [],
@@ -45,6 +51,14 @@ function fixture(): Snapshot {
 }
 
 describe('views', () => {
+	it('gives a category the slot of its stored hue, seeded or custom', () => {
+		const s = fixture();
+		s.categories.push({ id: 'c-club', name: 'Reading club', color: '#4A6FA5', seeded: false }, { id: 'c-garden', name: 'Garden', color: '#7a5a4f', seeded: false });
+		const slots = Object.fromEntries(categoryList(s).map((c) => [c.name, c.slot]));
+		expect(slots).toMatchObject({ 'Health and Fitness': 2, 'Reading club': 1, Garden: 6 });
+		expect(slots.Music).toBeGreaterThanOrEqual(1);
+	});
+
 	it('maps an action row to an ActionView with goal title and category slot', () => {
 		const [view] = actionViews(fixture());
 		expect(view).toEqual({ id: 'a1', title: 'Strength session', start: '2026-11-26T18:00:00Z', end: '2026-11-26T19:00:00Z', status: 'planned', locked: false, category: 2, goalTitle: 'Six pack by Feb 1' });
@@ -178,5 +192,16 @@ describe('views', () => {
 		for (const z of ['America/Los_Angeles', 'Pacific/Auckland', 'Pacific/Kiritimati', 'Pacific/Pago_Pago']) {
 			expect(formatDay(goalHeader(s, s.goals[0], z).deadline ?? '', z)).toContain('1 Feb');
 		}
+	});
+});
+
+describe('what Aroh knows about you', () => {
+	it('lists kept facts with their source and blocked topics apart, newest first', () => {
+		const p = profileView(fixture());
+		expect(p.facts).toEqual([
+			{ id: 'k1', text: 'Free minutes a day: 30 min', source: 'From your answer on Six pack by Feb 1', date: '2026-11-25T06:00:00Z', blockable: true },
+			{ id: 'k2', text: 'Prefers evening workouts', source: 'From your edits', date: '2026-11-20T06:00:00Z', blockable: false }
+		]);
+		expect(p.blocked).toEqual([{ id: 'k3', label: 'Body weight' }]);
 	});
 });

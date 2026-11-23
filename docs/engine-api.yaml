@@ -1330,6 +1330,21 @@ components:
           type: integer
           format: int32
           minimum: 0
+    RunAnswer:
+      type: object
+      description: One question of a run with the owner's answer, `None` when skipped.
+      required:
+      - id
+      - text
+      properties:
+        answer:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+        text:
+          type: string
     RunLimit:
       type: object
       description: |-
@@ -1394,7 +1409,13 @@ components:
       - waiting
       - usage
       - events
+      - answers
       properties:
+        answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunAnswer'
+          description: The submitted answers with their question text.
         events:
           type: array
           items:
@@ -1404,6 +1425,11 @@ components:
           - string
           - 'null'
           format: uuid
+        research:
+          type:
+          - object
+          - 'null'
+          description: What research found (`summary`, `sources`), once written.
         run_id:
           type: string
           format: uuid
@@ -1502,7 +1528,9 @@ components:
       description: |-
         Body of `POST /v1/goals`: the goal to plan. Without `goal_id`, or when
         the server has no such goal yet, a draft goal row is created with it.
-        `timezone` is the owner's IANA zone, used for every local time.
+        `timezone` is the owner's IANA zone, used for every local time. The
+        agent controls (`reminders`, `use_calendars`, `run_limit_minutes`) are
+        optional: left out, the goal keeps the Settings defaults.
       required:
       - title
       - timezone
@@ -1530,10 +1558,23 @@ components:
           - string
           - 'null'
           format: uuid
+        reminders:
+          type:
+          - boolean
+          - 'null'
+        run_limit_minutes:
+          type:
+          - integer
+          - 'null'
+          format: int64
         timezone:
           type: string
         title:
           type: string
+        use_calendars:
+          type:
+          - boolean
+          - 'null'
       additionalProperties: false
     StartReplan:
       type: object

@@ -1,6 +1,7 @@
 //! Aroh Tauri app: opens the rebuild store, runs the start-up tick and registers the commands.
 
 mod commands;
+mod files;
 mod notify;
 mod realtime;
 
@@ -131,6 +132,16 @@ pub fn run() {
             commands::engine::app_engine,
             commands::engine::app_save_key,
             commands::engine::app_logs_sent,
+            commands::goals::guess_category,
+            commands::goals::add_category,
+            commands::goals::set_goal_controls,
+            commands::goals::edit_fact,
+            commands::goals::block_topic,
+            commands::goals::allow_topic,
+            commands::goals::files_available,
+            commands::goals::attach_file,
+            commands::goals::attach_link,
+            commands::goals::remove_goal_file,
             commands::plugins::plugins_list,
             commands::plugins::plugins_enable,
             commands::plugins::plugins_save,

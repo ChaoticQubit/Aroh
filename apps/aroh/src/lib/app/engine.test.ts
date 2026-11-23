@@ -107,7 +107,7 @@ describe('engine client', () => {
 
 	it('maps a missing session or server URL to needs_engine', async () => {
 		const e = new Engine(() => Promise.reject('needs_engine: sign in first'));
-		await expect(e.startGoal('six pack by Feb 1')).resolves.toMatchObject({ ok: false, reason: 'needs_engine' });
+		await expect(e.startGoal({ title: 'six pack by Feb 1', autonomy: 'balanced', reminders: true, use_calendars: true, timezone: 'UTC' })).resolves.toMatchObject({ ok: false, reason: 'needs_engine' });
 	});
 
 	it('reads insights, optionally of one goal', async () => {

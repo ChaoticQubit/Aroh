@@ -1,6 +1,6 @@
 mod common;
 
-use aroh_domain::rows::{Goal, Preference, Usage};
+use aroh_domain::rows::{Goal, Preference, PreferenceOrigin, Usage};
 use aroh_server::checkpoints::{events_after, EventBuffer, PgCheckpoints};
 use aroh_server::db::{self, PgPool};
 use aroh_server::error::ServerError;
@@ -280,6 +280,9 @@ async fn rows_read_through_a_column_added_after_this_build() {
         status: aroh_domain::rows::GoalStatus::Active,
         autonomy: aroh_domain::rows::Autonomy::Ask,
         created_at: utc(T0),
+        reminders: true,
+        use_calendars: true,
+        run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,
     };
@@ -291,6 +294,10 @@ async fn rows_read_through_a_column_added_after_this_build() {
         source: "chat".into(),
         noted_at: utc(T0),
         confirmed: true,
+        topic: None,
+        goal_id: None,
+        origin: PreferenceOrigin::Edit,
+        blocked: false,
         updated_at: String::new(),
         deleted: false,
     };
@@ -320,6 +327,9 @@ async fn ledger_sums_the_calendar_month_by_goal_and_user() {
         status: aroh_domain::rows::GoalStatus::Active,
         autonomy: aroh_domain::rows::Autonomy::Balanced,
         created_at: utc(T0),
+        reminders: true,
+        use_calendars: true,
+        run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,
     };

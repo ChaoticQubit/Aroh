@@ -22,4 +22,7 @@ for migration in "$here"/../migrations/*.sql; do
 done
 psql < "$here/rls_rebuild.sql"
 psql < "$here/rls_places.sql"
+psql < "$here/stub_storage.sql"
+psql < "$here/../migrations/20261127020000_goal_files_bucket.sql"
+psql < "$here/rls_storage.sql"
 echo "rls: ok"

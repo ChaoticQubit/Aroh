@@ -1,12 +1,17 @@
 import type { Clock } from '$lib/ui/clock';
 import type { ActionView, CategorySlot, ChangeView, ComponentSpec, Point, SpecOf, Unit, ViewSpec } from '$lib/ui/contract';
 import { daysBetween, formatDate, formatDay, formatYmd, minuteOfDay, mondayOf, shiftDay } from '$lib/ui/format';
-import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, RunView, SettingsView } from '$lib/ui/screens/types';
+import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, ProfileView, RunView, SettingsView } from '$lib/ui/screens/types';
 import { catalog } from './catalog';
 import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerEntry, TrackerField } from './client';
 import type { Insight, RunSummary } from './engine';
 
 const SEEDED_SLOTS: Record<string, CategorySlot> = { Learning: 1, 'Health and Fitness': 2, Financial: 3, 'Hobby and Skill': 4, 'Career and Projects': 5, Habit: 6 };
+
+/** The 6 category hues as stored on category rows (`#rrggbb`, the seeded colors), in slot order 1 to 6. */
+export const SLOT_HUES: Record<CategorySlot, string> = { 1: '#4a6fa5', 2: '#4f7a5a', 3: '#a5803a', 4: '#8a6a9a', 5: '#5a6b7a', 6: '#7a5a4f' };
+
+const HUE_SLOT: Record<string, CategorySlot> = Object.fromEntries(Object.entries(SLOT_HUES).map(([slot, hue]) => [hue, Number(slot) as CategorySlot]));
 const UNITS: readonly Unit[] = ['kg', 'lb', 'cm', 'kcal', 'g', 'ml', 'L', 'min', 'reps', 'steps', 'usd', 'count'];
 const OPS: readonly ChangeView['op'][] = ['move', 'resize', 'create', 'delete'];
 const NO_CATEGORY: CategoryView = { name: 'No category', slot: 6 };
@@ -18,12 +23,23 @@ export const AUTONOMY_LABEL: Record<Goal['autonomy'], AutonomyLabel> = { ask: 'A
 /** A check-in the owner owes now: its tracker, the field it asks and the question card. */
 export type DueCheckIn = { trackerId: string; key: string; spec: ComponentSpec };
 
-/** Every category with its colour slot: seeded names by the fixed table, others by id order. */
+/** The slot of a stored category color, or undefined for a color outside the 6 hues. */
+export function hueSlot(color: string): CategorySlot | undefined {
+	return HUE_SLOT[color.toLowerCase()];
+}
+
+/** Every category with its colour slot: by its stored hue, else seeded names by the fixed table, else id order. */
 export function categoryViews(s: Snapshot): Map<string, CategoryView> {
-	const own = s.categories.filter((c) => !(c.name in SEEDED_SLOTS)).map((c) => c.id).sort();
+	const own = s.categories.filter((c) => !hueSlot(c.color) && !(c.name in SEEDED_SLOTS)).map((c) => c.id).sort();
 	return new Map(
-		s.categories.map((c) => [c.id, { name: c.name, slot: SEEDED_SLOTS[c.name] ?? (((own.indexOf(c.id) % 6) + 1) as CategorySlot) }])
+		s.categories.map((c) => [c.id, { name: c.name, slot: hueSlot(c.color) ?? SEEDED_SLOTS[c.name] ?? (((own.indexOf(c.id) % 6) + 1) as CategorySlot) }])
 	);
+}
+
+/** The categories the New Goal picker offers, with ids, in slot order then name. */
+export function categoryChoices(s: Snapshot): { id: string; name: string; slot: CategorySlot }[] {
+	const views = categoryViews(s);
+	return s.categories.map((c) => ({ id: c.id, ...views.get(c.id)! })).sort((a, b) => a.slot - b.slot || a.name.localeCompare(b.name));
 }
 
 /** The categories in slot order, for filters and the desktop sidebar. */
@@ -387,5 +403,25 @@ export function logView(s: Snapshot, clock: Clock): { checkIns: DueCheckIn[]; wa
 		checkIns: dueCheckIns(s, clock),
 		waiting: { kind: 'log_list', label: 'Waiting for the engine', entries: [...s.pending_logs].reverse().map((p) => ({ at: p.at, text: p.text })) },
 		recent: { kind: 'log_list', label: 'Recent entries', entries: recent }
+	};
+}
+
+/**
+ * "What Aroh knows about you" from the snapshot's kept facts: each fact with its source (the
+ * goal whose answer it came from, or the owner's edits) and date, newest first, and the blocked
+ * topics apart with their label.
+ */
+export function profileView(s: Snapshot): ProfileView {
+	const title = (id: string | null) => s.goals.find((g) => g.id === id)?.title;
+	const live = [...s.facts].sort((a, b) => b.noted_at.localeCompare(a.noted_at));
+	return {
+		facts: live
+			.filter((f) => !f.blocked)
+			.map((f) => {
+				const goal = f.origin === 'answer' ? title(f.goal_id) : undefined;
+				const source = f.origin === 'edit' ? 'From your edits' : goal ? `From your answer on ${goal}` : 'From your answers';
+				return { id: f.id, text: f.fact, source, date: f.noted_at, blockable: f.topic !== null };
+			}),
+		blocked: live.filter((f) => f.blocked).map((f) => ({ id: f.id, label: f.fact }))
 	};
 }

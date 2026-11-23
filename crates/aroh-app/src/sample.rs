@@ -5,7 +5,7 @@ use crate::Result;
 use aroh_domain::hlc::Hlc;
 use aroh_domain::rows::{
     Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, Cadence, CadenceFreq, EntrySource, FieldKind, Goal, GoalStatus,
-    Persona, Preference, Proposal, ProposalSize, ProposalStatus, Tracker, TrackerEntry, TrackerField,
+    Persona, Preference, PreferenceOrigin, Proposal, ProposalSize, ProposalStatus, Tracker, TrackerEntry, TrackerField,
 };
 use aroh_store::repo;
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
@@ -35,6 +35,9 @@ fn goal(conn: &Connection, clock: &mut Hlc, user_id: &str, title: &str, category
         status: GoalStatus::Active,
         autonomy,
         created_at: now,
+        reminders: true,
+        use_calendars: true,
+        run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,
     };
@@ -181,6 +184,10 @@ fn extras(conn: &Connection, clock: &mut Hlc, goal: &Goal, now: DateTime<Utc>) -
         source: "Planner".into(),
         noted_at: now,
         confirmed: false,
+        topic: None,
+        goal_id: None,
+        origin: PreferenceOrigin::Edit,
+        blocked: false,
         updated_at: String::new(),
         deleted: false,
     };

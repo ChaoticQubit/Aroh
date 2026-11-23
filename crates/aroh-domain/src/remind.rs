@@ -62,14 +62,16 @@ fn next_check_in(tracker: &Tracker, now: DateTime<Utc>, zone: Tz) -> Option<Date
 
 /// Plans the notifications after `now` from live rows: soon, start and nudge for planned
 /// actions and the next check-in of each tracker with a cadence, all within
-/// [`HORIZON_HOURS`] (local times in `zone`). Output: at most [`CAP`], earliest first.
+/// [`HORIZON_HOURS`] (local times in `zone`); goals with reminders off get none.
+/// Output: at most [`CAP`], earliest first.
 pub fn plan(goals: &[Goal], actions: &[Action], trackers: &[Tracker], now: DateTime<Utc>, zone: Tz) -> Vec<Planned> {
     let titles: HashMap<&str, &str> = goals.iter().filter(|g| !g.deleted).map(|g| (g.id.as_str(), g.title.as_str())).collect();
     let goal_title = |id: &str| truncate(titles.get(id).copied().unwrap_or_default().to_string());
+    let quiet: std::collections::HashSet<&str> = goals.iter().filter(|g| !g.reminders).map(|g| g.id.as_str()).collect();
     let until = now + Duration::hours(HORIZON_HOURS) + Duration::minutes(i64::from(SETTINGS.lead_min));
     let live: Vec<&Action> = actions
         .iter()
-        .filter(|a| !a.deleted && a.status == ActionStatus::Planned)
+        .filter(|a| !a.deleted && a.status == ActionStatus::Planned && !quiet.contains(a.goal_id.as_str()))
         .filter(|a| a.end_at + Duration::minutes(i64::from(SETTINGS.missed_grace_min)) > now && a.start_at < until)
         .collect();
     let slots: Vec<ActionSlot> = live
@@ -89,7 +91,7 @@ pub fn plan(goals: &[Goal], actions: &[Action], trackers: &[Tracker], now: DateT
             Planned { id: r.id, fire_at: r.fire_at, title: truncate(title), body: goal_title(&action.goal_id), kind: PlannedKind::Action, row_id: r.action_id }
         })
         .collect();
-    for tracker in trackers.iter().filter(|t| !t.deleted) {
+    for tracker in trackers.iter().filter(|t| !t.deleted && !quiet.contains(t.goal_id.as_str())) {
         if let Some(fire_at) = next_check_in(tracker, now, zone) {
             out.push(Planned {
                 id: reminder_id(&tracker.id, ReminderKind::Start),
@@ -158,6 +160,18 @@ mod tests {
         assert_eq!(check_in[0].row_id, tracker.id);
         assert_eq!(check_in[0].fire_at, Utc.with_ymd_and_hms(2026, 11, 21, 20, 0, 0).unwrap());
         assert_eq!(planned.len(), 4);
+    }
+
+    #[test]
+    fn a_goal_with_reminders_off_gets_no_reminders_or_check_ins() {
+        let mut goal = samples::goal();
+        goal.reminders = false;
+        let mut tracker = samples::tracker();
+        tracker.cadence = Some(Cadence { freq: CadenceFreq::Daily, weekdays: vec![], at: "20:00".into() });
+        let soon = action_at(1, 2);
+        assert!(plan(&[goal.clone()], &[soon.clone()], &[tracker.clone()], now(), Tz::UTC).is_empty());
+        goal.reminders = true;
+        assert_eq!(plan(&[goal], &[soon], &[tracker], now(), Tz::UTC).len(), 4);
     }
 
     #[test]

@@ -114,6 +114,9 @@ impl Api {
             status: GoalStatus::Active,
             autonomy,
             created_at: utc(T0),
+            reminders: true,
+            use_calendars: true,
+            run_limit_minutes: None,
             updated_at: String::new(),
             deleted: false,
         };
@@ -261,7 +264,7 @@ fn goal_models_with(builder: impl Fn(&str) -> Reply + Send + Sync + 'static) -> 
                 "stop_reason": "max_tokens", "usage": {"input_tokens": 5, "output_tokens": 1}}));
         }
         if body.contains("You are Intake interviewer") {
-            return sse_text(&json!({"questions": [{"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7}]}).to_string());
+            return sse_text(&json!({"questions": [{"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7, "lasting": null, "known": null}]}).to_string());
         }
         if body.contains("You are Goal researcher") {
             if body.contains("tool_result") {
@@ -707,7 +710,7 @@ async fn planner_repairs_a_plan_over_busy_time() {
     let models = FnTransport::new(|req| {
         let body = body_text(req);
         if body.contains("You are Intake interviewer") {
-            return sse_text(&json!({"questions": [{"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7}]}).to_string());
+            return sse_text(&json!({"questions": [{"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7, "lasting": null, "known": null}]}).to_string());
         }
         if body.contains("You are Goal researcher") {
             return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
@@ -914,7 +917,7 @@ fn music_models() -> Arc<FnTransport> {
             return builder_reply(aroh_plugins::template("music").unwrap());
         }
         if body.contains("You are Intake interviewer") {
-            return sse_text(&json!({"questions": [{"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null}]}).to_string());
+            return sse_text(&json!({"questions": [{"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null}]}).to_string());
         }
         if body.contains("You are Instrument teacher") {
             return sse_text(&json!({"summary": "Learn it in four sections, slow practice first.", "sources": [{"title": "Clair de Lune guide", "url": "https://example.org/clair"}]}).to_string());
@@ -1086,7 +1089,7 @@ async fn persona_fields_edit_the_copy_and_keep_safety_rules() {
 /// The six intake questions of the owner's stuck build 1 run, with the unit and slider bounds new runs carry.
 fn reading_intake() -> Value {
     let q = |id: &str, kind: &str, text: &str, choices: Value, unit: Value, min: Value, max: Value| {
-        json!({"id": id, "kind": kind, "text": text, "choices": choices, "unit": unit, "min": min, "max": max})
+        json!({"id": id, "kind": kind, "text": text, "choices": choices, "unit": unit, "min": min, "max": max, "lasting": null, "known": null})
     };
     json!({"questions": [
         q("chapters_done", "number", "How many chapters of The Joy of X have you finished?", json!([]), json!("chapters"), json!(0), json!(30)),
@@ -1265,6 +1268,261 @@ async fn a_run_stops_at_its_active_time_limit_and_the_owner_can_stop_and_retry_i
     assert_eq!(api.run(&t, &run).await["waiting"][0]["node"], "approve", "a cancelled run retried waits where it was");
 }
 
+
+/// Facts of `user` as `(topic, fact, goal_id, blocked)`, live rows only, by topic.
+async fn facts(api: &Api, user: Uuid) -> Vec<(Option<String>, String, Option<String>, bool)> {
+    db::query_as("select topic, fact, goal_id::text, blocked from public.preferences where user_id = $1 and not deleted and confirmed order by topic")
+        .bind(user)
+        .fetch_all(&api.pool)
+        .await
+        .unwrap()
+}
+
+/// Models for the profile flow: the intake marks lasting questions, and once the profile
+/// holds the minutes fact it asks that one as a known question under a made-up id, which
+/// the server resolves by topic.
+fn profile_models() -> Arc<FnTransport> {
+    FnTransport::new(move |req| {
+        let body = body_text(req);
+        if body.contains("You are Intake interviewer") {
+            let minutes = if body.contains("Free minutes a day: 30 min") {
+                json!({"id": "minutes", "text": "Minutes a day?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "known": {"fact_id": "a-made-up-id", "value": "30 min", "source": "your answer on Run a 5k"}, "lasting": {"topic": "daily_minutes", "label": "Free minutes a day"}})
+            } else {
+                json!({"id": "minutes", "text": "Minutes a day?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": {"topic": "daily_minutes", "label": "Free minutes a day"}, "known": null})
+            };
+            let questions = json!([
+                minutes,
+                {"id": "runs_done", "text": "Runs done so far?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null},
+                {"id": "when", "text": "When do you run?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": {"topic": "time_of_day", "label": "Running time of day"}, "known": null},
+                {"id": "weight", "text": "Your weight?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": {"topic": "weight", "label": "Body weight"}, "known": null},
+            ]);
+            return sse_text(&json!({"questions": questions}).to_string());
+        }
+        if body.contains("You are Goal researcher") {
+            return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
+        }
+        if body.contains("You are Goal planner") {
+            let plan = json!({"summary": "One run.", "timezone": "UTC", "trackers": [],
+                "items": [{"title": "Easy run", "start": "2026-11-23T09:15:00", "minutes": 30, "rrule": null, "notes": null}]});
+            return sse_text(&plan.to_string());
+        }
+        json_reply(400, json!({}))
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn lasting_answers_become_facts_and_known_questions_update_them() {
+    let models = profile_models();
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let mut blocked = aroh_domain::rows::Preference {
+        id: Uuid::now_v7().to_string(),
+        user_id: u.to_string(),
+        fact: "Body weight".into(),
+        source: "answer".into(),
+        noted_at: utc(T0),
+        confirmed: true,
+        topic: Some("weight".into()),
+        goal_id: None,
+        origin: aroh_domain::rows::PreferenceOrigin::Answer,
+        blocked: true,
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&api.pool, &api.hlc, u, &mut blocked).await.unwrap();
+
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "UTC"}))).await;
+    let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
+    api.tick().await;
+    let answers = json!([{"id": "minutes", "answer": "30 min"}, {"id": "runs_done", "answer": "2"}, {"id": "when", "answer": null}, {"id": "weight", "answer": "70 kg"}]);
+    api.answer(&t, &run, "questions", answers).await;
+    api.tick().await;
+    assert_eq!(api.run(&t, &run).await["waiting"][0]["node"], "approve");
+    assert_eq!(
+        facts(&api, u).await,
+        vec![
+            (Some("daily_minutes".into()), "Free minutes a day: 30 min".into(), Some(goal.clone()), false),
+            (Some("weight".into()), "Body weight".into(), None, true),
+        ],
+        "a lasting answer is kept; one-off, skipped and blocked ones are not"
+    );
+    let intake = models.sent().iter().map(body_text).find(|b| b.contains("You are Intake interviewer")).expect("the intake ran");
+    assert!(intake.contains("Body weight"), "the intake is told the blocked topics");
+
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 10k", "timezone": "UTC"}))).await;
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["data"]["intake"]["questions"][0]["known"]["value"], "30 min", "the intake read the profile: {view}");
+    api.clock.advance(86_400_000);
+    api.answer(&t, &run, "questions", json!([{"id": "minutes", "answer": "45 min"}, {"id": "runs_done", "answer": null}, {"id": "when", "answer": null}, {"id": "weight", "answer": null}])).await;
+    api.tick().await;
+    assert_eq!(api.run(&t, &run).await["waiting"][0]["node"], "approve");
+    let kept = facts(&api, u).await;
+    assert_eq!(kept.len(), 2, "an edited known answer updates its fact, never adds one: {kept:?}");
+    assert_eq!(kept[0].1, "Free minutes a day: 45 min");
+    let noted: DateTime<Utc> = db::query_scalar("select noted_at from public.preferences where topic = 'daily_minutes'").fetch_one(&api.pool).await.unwrap();
+    assert!(noted >= utc(T0 + 86_400_000), "the fact is dated at the new answer: {noted}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_run_waiting_before_the_profile_node_resumes_on_its_own_graph() {
+    let models = reading_models();
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let run = api.reading_goal(&t).await;
+    let (step, mut state): (i64, Value) = db::query_as("select step, state from public.run_checkpoints where run_id::text = $1 order by step desc limit 1")
+        .bind(&run)
+        .fetch_one(&api.pool)
+        .await
+        .unwrap();
+    let wf = &mut state["workflow"];
+    wf["nodes"].as_array_mut().unwrap().retain(|n| n["id"] != "save_facts");
+    wf["edges"].as_array_mut().unwrap().retain(|e| e["from"] != "save_facts");
+    for e in wf["edges"].as_array_mut().unwrap().iter_mut().filter(|e| e["to"] == "save_facts") {
+        e["to"] = json!("plan");
+    }
+    wf["state"].as_object_mut().unwrap().remove("facts_saved");
+    wf["state"]["profile"] = json!({"type": "array", "items": {"type": "string"}});
+    state["state"]["profile"] = json!(["Prefers mornings"]);
+    db::query("update public.run_checkpoints set state = $3 where run_id::text = $1 and step = $2").bind(&run).bind(step).bind(&state).execute(&api.pool).await.unwrap();
+
+    let answers = json!([
+        {"id": "chapters_done", "answer": "4"},
+        {"id": "daily_reading_minutes", "answer": "30"},
+        {"id": "preferred_reading_time", "answer": "Evening"},
+        {"id": "reading_days", "answer": "5"},
+        {"id": "book_format", "answer": null},
+        {"id": "busy_days_limits", "answer": null},
+    ]);
+    assert_eq!(api.post_answers(&t, &run, answers).await, 202);
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "approve", "a run deployed onto the new server keeps its graph: {view}");
+    let planner = models.sent().iter().map(body_text).find(|b| b.contains("You are Practice planner")).expect("the planner ran");
+    assert!(planner.contains("Prefers mornings"), "the old string profile still reaches the planner");
+    assert!(facts(&api, u).await.is_empty(), "the old graph keeps no facts");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_goal_run_limit_overrides_the_settings_limit() {
+    let slot = Arc::new(std::sync::OnceLock::new());
+    let models = slow_reading_models(slot.clone(), 70_000);
+    let api = api(models.clone(), offline()).await;
+    let (_u, t) = api.signed_up().await;
+    assert_eq!(api.call(Method::Put, "/v1/settings/run-limit", Some(&t), Some(json!({"minutes": 1}))).await.0, 200);
+    slot.set(api.clock.clone()).unwrap();
+    let body = json!({"title": "Finish reading The Joy of X by next Sunday", "timezone": "UTC", "run_limit_minutes": 10, "reminders": false});
+    let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(body)).await;
+    assert_eq!(status, 202, "{started}");
+    let goal = started["goal_id"].as_str().unwrap().to_string();
+    let run = started["run_id"].as_str().unwrap().to_string();
+    let stored: (Option<i32>, bool, bool) = db::query_as("select run_limit_minutes, reminders, use_calendars from public.goals where id::text = $1")
+        .bind(&goal)
+        .fetch_one(&api.pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, (Some(10), false, true));
+    api.tick().await;
+    let skips: Vec<Value> = ["chapters_done", "daily_reading_minutes", "preferred_reading_time", "reading_days", "book_format", "busy_days_limits"]
+        .iter()
+        .map(|id| json!({"id": id, "answer": null}))
+        .collect();
+    assert_eq!(api.post_answers(&t, &run, json!(skips)).await, 202);
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "approve", "a 70 s call fits the goal's 10 min, not the 1 min default: {view}");
+    assert!(view["research"]["summary"].is_string(), "the card shows what research found: {view}");
+    let answers = view["answers"].as_array().unwrap();
+    assert_eq!(answers.len(), 6, "{view}");
+    assert!(answers.iter().all(|a| a["answer"].is_null() && a["text"].is_string()), "{view}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_goal_that_skips_calendars_plans_without_busy_time() {
+    let models = FnTransport::new(|req| {
+        let body = body_text(req);
+        if body.contains("You are Intake interviewer") {
+            return sse_text(&json!({"questions": [{"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7, "lasting": null, "known": null}]}).to_string());
+        }
+        if body.contains("You are Goal researcher") {
+            return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
+        }
+        if body.contains("You are Goal planner") {
+            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [],
+                "items": [{"title": "Easy run", "start": "2026-11-23T09:15:00", "minutes": 30, "rrule": null, "notes": null}]});
+            return sse_text(&plan.to_string());
+        }
+        json_reply(400, json!({}))
+    });
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    busy_block(&api, u, "Standup", "2026-11-23T08:00:00Z", 30).await;
+    let body = json!({"title": "Run a 5k", "timezone": "Europe/Berlin", "use_calendars": false});
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(body)).await;
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+    api.tick().await;
+    assert_eq!(api.run(&t, &run).await["waiting"][0]["node"], "approve");
+    let planner: Vec<String> = models.sent().iter().map(body_text).filter(|b| b.contains("You are Goal planner")).collect();
+    assert_eq!(planner.len(), 1, "no busy time, so no repair round");
+    assert!(!planner[0].contains("Standup"), "{}", planner[0]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn attached_text_and_links_reach_research_from_the_database() {
+    let models = FnTransport::new(|req| {
+        let body = body_text(req);
+        if body.contains("You are Goal researcher") {
+            return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
+        }
+        if body.contains("You are Intake interviewer") {
+            return sse_text(&json!({"questions": []}).to_string());
+        }
+        json_reply(400, json!({}))
+    });
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let goal = Uuid::now_v7().to_string();
+    let file = |name: &str, kind, path: Option<String>, url: Option<&str>, text: Option<&str>, status| aroh_domain::rows::GoalFile {
+        id: Uuid::now_v7().to_string(),
+        user_id: u.to_string(),
+        goal_id: goal.clone(),
+        name: name.into(),
+        kind,
+        storage_path: path,
+        url: url.map(str::to_string),
+        mime: None,
+        size_bytes: 10,
+        ingest_status: status,
+        extracted_text: text.map(str::to_string),
+        updated_at: String::new(),
+        deleted: false,
+    };
+    use aroh_domain::rows::{FileKind, IngestStatus};
+    for mut f in [
+        file("training-log.txt", FileKind::Document, Some(format!("goals/{goal}/a-training-log.txt")), None, Some("Ran 3 km on Monday"), IngestStatus::Done),
+        file("example.org/couch-to-5k", FileKind::Link, None, Some("https://example.org/couch-to-5k"), None, IngestStatus::Pending),
+        file("scan.pdf", FileKind::Document, Some(format!("goals/{goal}/b-scan.pdf")), None, None, IngestStatus::Failed),
+    ] {
+        put_row(&api.pool, &api.hlc, u, &mut f).await.unwrap();
+    }
+    let body = json!({"goal_id": goal, "title": "Run a 5k", "timezone": "Europe/Berlin"});
+    let (status, _) = api.call(Method::Post, "/v1/goals", Some(&t), Some(body)).await;
+    assert_eq!(status, 202);
+    api.tick().await;
+    let research = models.sent().iter().map(body_text).find(|b| b.contains("You are Goal researcher")).expect("research ran");
+    assert!(research.contains("Ran 3 km on Monday") && research.contains("training-log.txt"), "{research}");
+    assert!(research.contains("https://example.org/couch-to-5k"));
+    assert!(research.contains("scan.pdf"), "a file that could not be read still shows by name");
+    assert!(research.contains("untrusted"), "file text is fenced as data");
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs AROH_TEST_PG"]

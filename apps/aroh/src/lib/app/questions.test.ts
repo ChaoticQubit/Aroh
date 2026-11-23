@@ -34,6 +34,20 @@ describe('question inputs', () => {
 	});
 });
 
+describe('still true checks', () => {
+	it('a question the profile answers shows its known value and source, and Yes sends that value', () => {
+		const known = { fact_id: 'f1', value: '30 min', source: 'your answer on Run a 5k' };
+		const g: QuestionGroup = { runId: 'r1', prompt: 'Answer these.', questions: [{ id: 'minutes', text: 'Minutes a day?', kind: 'text', choices: [], known }, { id: 'old', text: 'Old?', kind: 'text', choices: [] }], values: {}, skipped: [], sending: false, error: null };
+		const m = groupMessage(g);
+		expect(m.items[0].known).toEqual({ value: '30 min', source: 'From your answer on Run a 5k' });
+		expect(m.items[1].known).toBeUndefined();
+		expect(m.status).toBe('0 of 2 answered. 2 still open, 1 to confirm.');
+		const yes = groupMessage(withAnswer(g, 'minutes', '30 min'));
+		expect(yes.missing).toEqual(['old']);
+		expect(yes.status).toBe('1 of 2 answered. 1 still open.');
+	});
+});
+
 describe('chat scroll around a question group (build 1 feedback)', () => {
 	it('shows a new group from its first question, stays put while the owner answers, and follows later messages', () => {
 		const q = (id: string) => ({ id, text: `${id}?`, kind: 'number' as const, choices: [], unit: 'chapters', min: 0, max: 30 });

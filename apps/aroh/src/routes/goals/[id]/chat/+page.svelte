@@ -1,14 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import NewGoalScreen from '$lib/ui/screens/NewGoalScreen.svelte';
-	import { GoalChat } from '$lib/app/chat.svelte';
-	import { speech } from '$lib/app/speech.svelte';
+	import { goto } from '$app/navigation';
 
-	const chat = $derived(new GoalChat(page.params.id ?? null, 'What changed? Tell me and I will look at the plan.'));
-
-	$effect(() => void chat.resume());
+	$effect(() => void goto(`/goals/${page.params.id}`, { replaceState: true }));
 </script>
-
-{#key chat}
-	<NewGoalScreen messages={chat.messages} onchange={(e) => chat.handle(e)} echo={false} voice={speech} />
-{/key}

@@ -8,8 +8,12 @@
 	import { engine, keyStatus } from '$lib/app/engine';
 	import { settingsView } from '$lib/app/views';
 	import { syncCalendars } from '$lib/app/calendar';
+	import AgentControls from '$lib/ui/components/goal/AgentControls.svelte';
+	import { agentDefaults, defaultsValue } from '$lib/app/newgoal';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 
 	const s = $derived(data.snapshot);
+	const facts = $derived(s?.facts.filter((f) => !f.blocked).length ?? 0);
 	let email = $state<string | null>(null);
 	let last4 = $state<Record<string, string | null>>({});
 	let runLimit = $state<number | null>(null);
@@ -93,5 +97,13 @@
 		{runLimit}
 		onrunlimit={email ? (m) => void engine.setRunLimit(m).then((r) => (r.ok ? (runLimit = r.value.minutes) : (data.error = r.message))) : undefined}
 		onlocation={() => void goto('/settings/location')}
-	/>
+	>
+		{#snippet agents()}
+			<AgentControls value={agentDefaults(s.settings.agent_defaults)} onchange={(v) => data.run(() => client.setSetting('agent_defaults', defaultsValue(v)))} />
+			<button type="button" class="flex min-h-14 w-full items-center gap-3 rounded-sm border border-border bg-bg px-3 py-2 text-left outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => void goto('/settings/profile')}>
+				<span class="flex flex-1 flex-col"><span class="text-sm font-medium">What Aroh knows about you</span><span class="text-xs text-muted tabular-nums">{facts === 1 ? '1 fact' : `${facts} facts`}</span></span>
+				<ChevronRight class="size-4 shrink-0 text-muted" aria-hidden="true" />
+			</button>
+		{/snippet}
+	</SettingsScreen>
 {/if}

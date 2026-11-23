@@ -7,6 +7,7 @@ pub mod config;
 pub mod engine;
 pub mod realtime;
 pub mod rest;
+pub mod storage;
 
 pub use auth::Session;
 pub use config::Config;

@@ -115,6 +115,14 @@ pub enum Autonomy {
     Auto,
 }
 
+/// Where a profile fact came from: an owner edit pattern (Q37) or a goal answer (Q62).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreferenceOrigin {
+    Edit,
+    Answer,
+}
+
 /// Type of a link between two goals (Q7). For `Parent`, `from_goal_id` is the parent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -312,8 +320,10 @@ synced! {
 }
 
 synced! {
-    /// A goal: one category, free-form context, optional deadline (`YYYY-MM-DD`)
-    /// and the autonomy level agents follow when changing its plan.
+    /// A goal: one category, free-form context, optional deadline (`YYYY-MM-DD`),
+    /// the autonomy level agents follow when changing its plan, and its agent
+    /// controls: local reminders, calendar reads and a run time limit in minutes
+    /// (`None` uses the Settings default).
     Goal, GOALS, "goals" {
         category_id: Option<String> => Text,
         title: String => Text,
@@ -322,6 +332,9 @@ synced! {
         status: GoalStatus => Text,
         autonomy: Autonomy => Text,
         created_at: DateTime<Utc> => Time,
+        reminders: bool => Bool,
+        use_calendars: bool => Bool,
+        run_limit_minutes: Option<i64> => Int,
     }
 }
 
@@ -338,7 +351,8 @@ synced! {
 
 synced! {
     /// A file in a goal's virtual folder (Q10): bytes in Storage under
-    /// `goals/<goal_id>/`, or a fetched `https` link.
+    /// `goals/<goal_id>/`, or a fetched `https` link. `extracted_text` is the
+    /// text the device read from the file, at most the first 50,000 characters.
     GoalFile, GOAL_FILES, "goal_files" {
         goal_id: String => Text,
         name: String => Text,
@@ -348,6 +362,7 @@ synced! {
         mime: Option<String> => Text,
         size_bytes: i64 => Int,
         ingest_status: IngestStatus => Text,
+        extracted_text: Option<String> => Text,
     }
 }
 
@@ -440,12 +455,19 @@ synced! {
 }
 
 synced! {
-    /// A user profile fact with its source and date, confirmed by the owner (Q37).
+    /// A user profile fact with its source and date (Q37, Q62): learned from
+    /// edits (`origin` edit, confirmed by the owner) or from goal answers
+    /// (`origin` answer, `topic` and source `goal_id`). A `blocked` row is a
+    /// "never learn this" topic, never shown or read as a fact.
     Preference, PREFERENCES, "preferences" {
         fact: String => Text,
         source: String => Text,
         noted_at: DateTime<Utc> => Time,
         confirmed: bool => Bool,
+        topic: Option<String> => Text,
+        goal_id: Option<String> => Text,
+        origin: PreferenceOrigin => Text,
+        blocked: bool => Bool,
     }
 }
 
@@ -653,6 +675,11 @@ impl Goal {
             NaiveDate::parse_from_str(deadline, "%Y-%m-%d")
                 .map_err(|_| invalid("goals.deadline", "must be YYYY-MM-DD"))?;
         }
+        if let Some(minutes) = self.run_limit_minutes {
+            if !(1..=120).contains(&minutes) {
+                return Err(invalid("goals.run_limit_minutes", "must be 1..=120"));
+            }
+        }
         Ok(())
     }
 }
@@ -668,12 +695,16 @@ impl GoalLink {
     }
 }
 
+/// Most characters of a goal file's extracted text that are stored and synced.
+pub const FILE_TEXT_LIMIT: usize = 50_000;
+
 impl GoalFile {
     fn check_fields(&self) -> Result<()> {
         check_uuid("goal_files.goal_id", &self.goal_id)?;
         check_text("goal_files.name", &self.name, 1, 255)?;
         check_opt_text("goal_files.mime", &self.mime, 255)?;
         check_non_negative("goal_files.size_bytes", self.size_bytes)?;
+        check_opt_text("goal_files.extracted_text", &self.extracted_text, FILE_TEXT_LIMIT)?;
         match (self.kind, &self.storage_path, &self.url) {
             (FileKind::Link, None, Some(url)) => {
                 if !url.starts_with("https://") {
@@ -872,7 +903,13 @@ impl Proposal {
 impl Preference {
     fn check_fields(&self) -> Result<()> {
         check_text("preferences.fact", &self.fact, 1, 1000)?;
-        check_text("preferences.source", &self.source, 1, 60)
+        check_text("preferences.source", &self.source, 1, 60)?;
+        check_opt_text("preferences.topic", &self.topic, 60)?;
+        check_opt_uuid("preferences.goal_id", &self.goal_id)?;
+        if self.blocked && self.topic.is_none() {
+            return Err(invalid("preferences.topic", "a blocked preference names its topic"));
+        }
+        Ok(())
     }
 }
 
@@ -1006,6 +1043,27 @@ pub mod samples {
             status: GoalStatus::Active,
             autonomy: Autonomy::Balanced,
             created_at: at(8),
+            reminders: true,
+            use_calendars: true,
+            run_limit_minutes: None,
+            updated_at: STAMP.into(),
+            deleted: false,
+        }
+    }
+
+    /// A valid confirmed preference learned from edits.
+    pub fn preference() -> Preference {
+        Preference {
+            id: id(13),
+            user_id: USER.into(),
+            fact: "Prefers morning workouts".into(),
+            source: "edit-analysis".into(),
+            noted_at: at(8),
+            confirmed: true,
+            topic: None,
+            goal_id: None,
+            origin: PreferenceOrigin::Edit,
+            blocked: false,
             updated_at: STAMP.into(),
             deleted: false,
         }
@@ -1096,7 +1154,7 @@ pub mod samples {
             to(Category { id: id(1), user_id: user(), name: "Health and Fitness".into(), color: "#4f7a5a".into(), seeded: true, updated_at: stamp(), deleted: false }),
             to(goal()),
             to(GoalLink { id: id(3), user_id: user(), from_goal_id: goal_id(), to_goal_id: id(0x92), kind: LinkKind::Supports, confirmed: false, updated_at: stamp(), deleted: false }),
-            to(GoalFile { id: id(4), user_id: user(), goal_id: goal_id(), name: "plan.pdf".into(), kind: FileKind::Document, storage_path: Some(format!("goals/{}/plan.pdf", goal_id())), url: None, mime: Some("application/pdf".into()), size_bytes: 1024, ingest_status: IngestStatus::Pending, updated_at: stamp(), deleted: false }),
+            to(GoalFile { id: id(4), user_id: user(), goal_id: goal_id(), name: "plan.pdf".into(), kind: FileKind::Document, storage_path: Some(format!("goals/{}/plan.pdf", goal_id())), url: None, mime: Some("application/pdf".into()), size_bytes: 1024, ingest_status: IngestStatus::Pending, extracted_text: None, updated_at: stamp(), deleted: false }),
             to(Persona { id: id(5), user_id: user(), goal_id: Some(goal_id()), name: "coach".into(), toml: "role = \"coach\"".into(), updated_at: stamp(), deleted: false }),
             to(Plugin { id: id(6), user_id: user(), goal_id: Some(goal_id()), name: "fitness".into(), version: 1, bundle_toml: "name = \"fitness\"".into(), enabled: true, updated_at: stamp(), deleted: false }),
             to(tracker()),
@@ -1104,7 +1162,7 @@ pub mod samples {
             to(series()),
             to(action()),
             to(Proposal { id: id(11), user_id: user(), goal_id: goal_id(), run_id: Some(id(12)), summary: "Move Friday workout".into(), diff: serde_json::json!([{"action_id": id(10), "op": "move"}]), size: ProposalSize::Small, status: ProposalStatus::Proposed, undo: None, created_at: at(8), updated_at: stamp(), deleted: false }),
-            to(Preference { id: id(13), user_id: user(), fact: "Prefers morning workouts".into(), source: "edit-analysis".into(), noted_at: at(8), confirmed: true, updated_at: stamp(), deleted: false }),
+            to(preference()),
             to(BusyBlock { id: id(14), user_id: user(), calendar_id: "work".into(), event_id: "evt-1".into(), title: "Standup".into(), start_at: at(9), end_at: at(10), all_day: true, group_name: Some("Work".into()), day_kind: Some(DayKind::Busy), updated_at: stamp(), deleted: false }),
             to(CalendarRule { id: id(15), user_id: user(), calendar_id: Some("work".into()), series_key: None, pattern: None, group_name: "Work".into(), decision: RuleDecision::Keep, day_kind: None, updated_at: stamp(), deleted: false }),
             to(ProviderSetting { id: id(16), user_id: user(), label: "Claude".into(), vendor: "anthropic".into(), model: "claude-opus".into(), base_url: None, is_default: true, updated_at: stamp(), deleted: false }),
@@ -1163,6 +1221,44 @@ mod tests {
         let mut row = samples::all()[1].clone();
         row["autonomy"] = "reckless".into();
         assert!((GOALS.check)(&row).is_err());
+    }
+
+    #[test]
+    fn goal_controls_and_profile_columns_are_checked() {
+        let goal = samples::goal();
+        assert!(goal.reminders && goal.use_calendars && goal.run_limit_minutes.is_none());
+        for minutes in [1, 120] {
+            let mut ok = samples::goal();
+            ok.run_limit_minutes = Some(minutes);
+            ok.validate().unwrap();
+        }
+        for minutes in [0, 121] {
+            let mut bad = samples::goal();
+            bad.run_limit_minutes = Some(minutes);
+            assert_eq!(field_err(bad), "goals.run_limit_minutes");
+        }
+
+        let pref = samples::preference();
+        assert_eq!((pref.origin, pref.blocked, pref.topic.as_deref()), (PreferenceOrigin::Edit, false, None));
+        let mut learned = samples::preference();
+        learned.origin = PreferenceOrigin::Answer;
+        learned.topic = Some("reading time".into());
+        learned.goal_id = Some(samples::goal_id());
+        learned.validate().unwrap();
+        let mut blocked = learned.clone();
+        blocked.blocked = true;
+        blocked.validate().unwrap();
+        blocked.topic = None;
+        assert_eq!(field_err(blocked), "preferences.topic");
+        let mut bad = learned.clone();
+        bad.goal_id = Some("not-a-uuid".into());
+        assert_eq!(field_err(bad), "preferences.goal_id");
+        let mut bad = learned;
+        bad.topic = Some("x".repeat(61));
+        assert_eq!(field_err(bad), "preferences.topic");
+        let mut row = serde_json::to_value(samples::preference()).unwrap();
+        row["origin"] = "guess".into();
+        assert!((PREFERENCES.check)(&row).is_err());
     }
 
     #[test]
@@ -1264,6 +1360,13 @@ mod tests {
         link.validate().unwrap();
         link.url = Some("http://example.com/plan".into());
         assert_eq!(field_err(link), "goal_files.url");
+        let mut read = file.clone();
+        read.extracted_text = Some("é".repeat(FILE_TEXT_LIMIT));
+        read.validate().unwrap();
+        read.extracted_text = Some("é".repeat(FILE_TEXT_LIMIT + 1));
+        assert_eq!(field_err(read.clone()), "goal_files.extracted_text");
+        read.extracted_text = Some(String::new());
+        assert_eq!(field_err(read), "goal_files.extracted_text");
 
         assert!(check_url("u", "https://api.example.com/v1").is_ok());
         assert!(check_url("u", "http://localhost:11434").is_ok());

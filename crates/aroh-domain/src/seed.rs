@@ -41,6 +41,12 @@ pub fn routines_id() -> String {
     derived_id("aroh", "goal:routines", 0)
 }
 
+/// Returns the id of `user_id`'s seeded category `slug`, the same id
+/// [`categories`] gives it. `None` for a slug that is not seeded.
+pub fn category_id(user_id: &str, slug: &str) -> Option<String> {
+    SEEDED.iter().any(|(s, _, _)| *s == slug).then(|| derived_id(user_id, slug, 0))
+}
+
 /// The built-in Routines goal of `user_id` in the seeded Habit category: autonomy Ask,
 /// a fixed creation instant and [`SEED_STAMP`]. The app writes it with its own stamp on
 /// first use, so it syncs like any goal the owner made.
@@ -57,6 +63,9 @@ pub fn routines_goal(user_id: &str) -> Goal {
         status: GoalStatus::Active,
         autonomy: Autonomy::Ask,
         created_at: DateTime::<Utc>::UNIX_EPOCH,
+        reminders: true,
+        use_calendars: true,
+        run_limit_minutes: None,
         updated_at: SEED_STAMP.to_string(),
         deleted: false,
     }
