@@ -55,3 +55,6 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B49 | Gate 4 D1 | Calendar day and week | Overlapping blocks draw on top of each other | medium | closed, 413aac3 (re-gate PASS) |
 | B50 | Gate 4 D6 | plan card summary | "1 days a week"; finish date has no year when it is in another year | low | closed, 9ec0916 (re-gate PASS) |
 | B51 | Gate 4 D2 | goal Next sessions | Times shown without the day, so sessions look duplicated | low | closed, f1e96d8 (re-gate PASS) and 67e7596 (Today label, unit test only) |
+| B52 | PR #6 review | server limits | When the workload exceeds the 366-day horizon, finish is None and "Move the date" returns fits true with no move_to | medium | open |
+| B53 | PR #6 review | plan card | Open-ended recurrences (FREQ=DAILY) show the 366-day preview end as "finishes" with a finish flag | medium | open |
+| B54 | PR #6 review | back bar | Cold start at a deep route: replaceState Back pushes the parent on the synthetic stack, so the next Back is mislabelled and calls history.back() | medium | open |
