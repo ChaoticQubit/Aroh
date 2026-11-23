@@ -376,7 +376,9 @@ impl AgentRun {
             })
             .collect();
         let answer = reply.message.text_content();
-        self.messages.push(reply.message);
+        if !calls.is_empty() || !answer.trim().is_empty() {
+            self.messages.push(reply.message);
+        }
         self.state = if calls.is_empty() {
             RunState::Check { answer }
         } else {

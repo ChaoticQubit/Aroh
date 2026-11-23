@@ -16,7 +16,7 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B10 | Pod 20 DONE | `e2e/pod20.sh` | Simulator steps 7 to 10 (fixed clash note, edit-sheet switch, coaches card) and server checks never ran; steps 1 to 6 passed once, screenshots lost | medium | open, check on build 2 |
 | B11 | Pod 20 DONE | `e2e/up.sh` | 20-minute engine wait too short for a cold build on a loaded Mac | low | open |
 | B12 | Pod 20 DONE | action series | Repeating plan items get no Fixed time switch at approval; needs a locked column on action series | medium | open |
-| B13 | Pod 25 DONE | chat composer | Keyboard keeps composer visible: not verified, needs a manual tap on simulator or device | medium | open, check on build 2 |
+| B13 | Pod 25 DONE | chat composer | Keyboard keeps composer visible: not verified, needs a manual tap on simulator or device | medium | closed, f5e5a1c (same fix as B19, keyboard shown on simulator) |
 | B14 | Pod 25 DONE | `docs/decisions.md` | Research before questions not yet recorded in decisions.md (foundation) | low | open |
 | B15 | PR #2 review (P2) | `apps/aroh/src/lib/app/chat.svelte.ts:179` | Stopped runs not restored when reopening a goal chat, so Retry is missing after reopen | medium | open |
 | B16 | Pod 27 (B1 fix) | `crates/aroh-domain/src/travel.rs` `settle` | An old-zone occurrence edited elsewhere (locked, done or re-stamped) before the device pulls it after a zone change is left as is, so it can sit beside the new-zone occurrence of the same slot | medium | open |
@@ -30,3 +30,11 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B24 | Pod 26 DONE | mockups | Point the mockup GoalCard at the real card | low | open |
 | B25 | Pod 26 DONE | goal card | Top bar says "Goals" instead of the goal name | low | open |
 | B26 | Pod 26 DONE | chat composer | Placeholder says "Message your personas" instead of the lead coach | low | open |
+| B27 | PR #3 review (P2) | `apps/aroh/src-tauri/src/commands/goals.rs:112` | Snapshot not reloaded after profile edits, so the profile screen can show stale facts until the next refresh | medium | open |
+| B28 | Owner, build 3 | plan node request | New goal run stopped at node "plan": HTTP 400 "messages: text content blocks must be non-empty" | critical | open, pod 29 first |
+| B29 | Owner, build 3 | Today action rows | Action rows overflow the screen width; checkbox only visible after scrolling right | high | open, pod 31 |
+| B30 | Owner, build 3 | Inbox run cards | Stopped goal-planner cards still show a spinning blue circle | medium | open, pod 31 |
+| B31 | Owner, build 3 | composer mic, attach Photo | Mic, camera and every attachment (Link, Photo, File) in New Goal do nothing on iPhone; Info.plist lacks NSCameraUsageDescription and NSPhotoLibraryUsageDescription | high | open, pod 32 |
+| B32 | Owner, build 3 | Goals tab | Tapping Goals from inside a goal shows a blank screen until another tab is visited | high | open, pod 31 |
+| B33 | Owner, build 3 | write_plan tool | First goal's later run stopped: write_plan invalid arguments "bad cadence for quizzes score" after the plan was applied | high | open, pod 29 |
+| B34 | Owner, build 3 | Calendar status | Action checked done on Today still shows blue (planned) on the Calendar, not marked done | high | open, pod 31 |
