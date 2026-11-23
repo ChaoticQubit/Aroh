@@ -31,3 +31,4 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B25 | Pod 26 DONE | goal card | Top bar says "Goals" instead of the goal name | low | open |
 | B26 | Pod 26 DONE | chat composer | Placeholder says "Message your personas" instead of the lead coach | low | open |
 | B27 | PR #3 review (P2) | `apps/aroh/src-tauri/src/commands/goals.rs:112` | Snapshot not reloaded after profile edits, so the profile screen can show stale facts until the next refresh | medium | open |
+| B28 | Owner, build 3 | plan node request | New goal run stopped at node "plan": HTTP 400 "messages: text content blocks must be non-empty" | critical | open, pod 29 first |
