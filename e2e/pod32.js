@@ -9,8 +9,9 @@ window.AROH_E2E = window.AROH_E2E ?? {};
 
   try {
     await until('app or setup rendered', () => text().includes('Skip for now') || text().includes('Dashboard'), 120000);
-    for (let i = 0; i < 40 && !(text().includes('Dashboard') && !text().includes('Skip for now')); i++) {
+    for (let i = 0, settled = 0; i < 60 && settled < 5; i++) {
       if (text().includes('Skip for now')) button('Skip for now').click();
+      settled = text().includes('Dashboard') && !text().includes('Skip for now') ? settled + 1 : 0;
       await sleep(750);
     }
     await invoke('app_dev_seed');

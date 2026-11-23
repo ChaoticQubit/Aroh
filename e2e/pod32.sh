@@ -62,6 +62,10 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     line="$(printf '%s\n' "$lines" | sed -n "${seen}p")"
     echo "$line"
     case "$line" in
+      *"aroh-dev: shot 99-failure"*)
+        xcrun simctl io "$udid" screenshot "$shots/99-failure.png" >/dev/null 2>&1
+        break 2
+        ;;
       *"aroh-dev: shot "*)
         xcrun simctl io "$udid" screenshot "$shots/${line##*aroh-dev: shot }.png" >/dev/null 2>&1
         ;;
@@ -79,9 +83,6 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
         ;;
       *"aroh-dev: done"*)
         code=0
-        break 2
-        ;;
-      *"aroh-dev: shot 99-failure"*)
         break 2
         ;;
     esac

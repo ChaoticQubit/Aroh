@@ -1,0 +1,280 @@
+tap 01-today ok Inbox, # new
+tap 01-today ok Settings
+tap 01-today ok Edit Mobility warm-up: cat-cow, bird dog, dead bug
+tap 01-today ok Mark not done: Mobility warm-up: cat-cow, bird dog
+tap 01-today ok Edit Write tomorrow's lunch and dinner plan in the
+tap 01-today ok Mark not done: Write tomorrow's lunch and dinner p
+tap 01-today ok Edit Check https://www.example.org/progressive-ove
+tap 01-today ok Edit Review last week's grocery receipts and tag e
+tap 01-today ok Edit Lunch walk around the lake with the long loop
+tap 01-today ok Mark done: Lunch walk around the lake with the lon
+tap 01-today ok Edit Hammer curls, farmer carries and a slow plank
+tap 01-today ok Mark done: Hammer curls, farmer carries and a slow
+tap 01-today ok Edit Scales in C, G and D major hands together at 
+tap 01-today ok Mark done: Scales in C, G and D major hands togeth
+tap 01-today ok Edit Strength session with the full warm-up and th
+tap 01-today ok Mark done: Strength session with the full warm-up 
+tap 01-today ok Edit Strength session B: goblet squats, Romanian d
+tap 01-today ok Mark done: Strength session B: goblet squats, Roma
+tap 01-today ok Edit Clair de Lune bars one to fourteen, left hand
+tap 01-today ok Mark done: Clair de Lune bars one to fourteen, lef
+tap 01-today ok Edit Piano practice with the full warm-up and the 
+tap 01-today ok Mark done: Piano practice with the full warm-up an
+tap 01-today ok Edit Read one chapter of The Joy of X and write a 
+tap 01-today ok Mark done: Read one chapter of The Joy of X and wr
+tap 01-today phone-only Speak a log entry
+tap 01-today nothing Today
+tap 01-today ok Calendar
+tap 01-today ok Goals
+tap 01-today ok Dashboard
+tap 01-today ok Log
+tap 02-calendar-day nothing Today
+tap 02-calendar-day ok Previous
+tap 02-calendar-day ok Next
+tap 02-calendar-day nothing Day
+tap 02-calendar-day ok Week
+tap 02-calendar-day ok Month
+tap 02-calendar-day ok Learning
+tap 02-calendar-day ok Health and Fitness
+tap 02-calendar-day ok Financial
+tap 02-calendar-day ok Hobby and Skill
+tap 02-calendar-day ok Edit Mobility warm-up: cat-cow, bird dog, dead bug
+tap 02-calendar-day ok Edit Write tomorrow's lunch and dinner plan in the
+tap 02-calendar-day ok Edit Check https://www.example.org/progressive-ove
+tap 02-calendar-day ok Edit Review last week's grocery receipts and tag e
+tap 02-calendar-day ok Edit Lunch walk around the lake with the long loop
+tap 02-calendar-day ok Edit Hammer curls, farmer carries and a slow plank
+tap 02-calendar-day ok Edit Scales in C, G and D major hands together at 
+tap 02-calendar-day ok Edit Strength session with the full warm-up and th
+tap 02-calendar-day ok Edit Strength session B: goblet squats, Romanian d
+tap 02-calendar-day ok Edit Clair de Lune bars one to fourteen, left hand
+tap 02-calendar-day ok Edit Piano practice with the full warm-up and the 
+tap 02-calendar-day ok Edit Read one chapter of The Joy of X and write a 
+tap 03-calendar-week nothing Today
+tap 03-calendar-week ok Previous
+tap 03-calendar-week ok Next
+tap 03-calendar-week ok Day
+tap 03-calendar-week nothing Week
+tap 03-calendar-week ok Month
+tap 03-calendar-week ok Learning
+tap 03-calendar-week ok Health and Fitness
+tap 03-calendar-week ok Financial
+tap 03-calendar-week ok Hobby and Skill
+tap 03-calendar-week nothing Mon #
+tap 03-calendar-week ok Tue #
+tap 03-calendar-week ok Wed #
+tap 03-calendar-week ok Thu #
+tap 03-calendar-week ok Fri #
+tap 03-calendar-week ok Sat #
+tap 03-calendar-week ok Sun #
+tap 03-calendar-week ok Edit Mobility warm-up: cat-cow, bird dog, dead bug
+tap 03-calendar-week ok Edit Write tomorrow's lunch and dinner plan in the
+tap 03-calendar-week ok Edit Check https://www.example.org/progressive-ove
+tap 03-calendar-week ok Edit Review last week's grocery receipts and tag e
+tap 03-calendar-week ok Edit Lunch walk around the lake with the long loop
+tap 03-calendar-week ok Edit Hammer curls, farmer carries and a slow plank
+tap 03-calendar-week ok Edit Scales in C, G and D major hands together at 
+tap 03-calendar-week ok Edit Strength session with the full warm-up and th
+tap 03-calendar-week ok Edit Strength session B: goblet squats, Romanian d
+tap 03-calendar-week ok Edit Clair de Lune bars one to fourteen, left hand
+tap 03-calendar-week ok Edit Piano practice with the full warm-up and the 
+tap 03-calendar-week ok Edit Read one chapter of The Joy of X and write a 
+tap 04-calendar-month nothing Today
+tap 04-calendar-month ok Previous
+tap 04-calendar-month ok Next
+tap 04-calendar-month ok Day
+tap 04-calendar-month ok Week
+tap 04-calendar-month nothing Month
+tap 04-calendar-month ok Learning
+tap 04-calendar-month ok Health and Fitness
+tap 04-calendar-month ok Financial
+tap 04-calendar-month ok Hobby and Skill
+tap 04-calendar-month ok #-#-#, # actions
+tap 05-goals ok New goal
+tap 05-goals ok Learning
+tap 05-goals ok Health and Fitness
+tap 05-goals ok Financial
+tap 05-goals ok Hobby and Skill
+tap 05-goals ok Six pack by Feb # with a stronger lower back and b
+tap 05-goals ok Learn piano well enough to play Clair de Lune for 
+tap 05-goals ok Save $#k for the emergency fund before the lease 
+tap 05-goals ok Read The Joy of X by Steven Strogatz cover to cove
+tap 06-goal-questions ok Back to Inbox
+tap 06-goal-questions external-link Core training for people who sit all day: a 
+tap 06-goal-questions external-link How fast can you lose body fat safely
+tap 06-goal-questions ok Mark done: Mobility warm-up: cat-cow, bird dog, de
+tap 06-goal-questions ok Mark done: Write tomorrow's lunch and dinner plan 
+tap 06-goal-questions ok Mark done: Core session with the full warm-up and 
+tap 06-goal-questions ok Mark done: Hammer curls, farmer carries and a slow
+tap 06-goal-questions ok Link
+tap 06-goal-questions ok Agents and coaches Balanced ? Reminders on ? Calen
+tap 06-goal-questions ok Skip question #
+tap 06-goal-questions ok Decrease Your answer
+tap 06-goal-questions ok Increase Your answer
+tap 06-goal-questions ok Early morning before work
+tap 06-goal-questions ok Lunch break at the office gym
+tap 06-goal-questions ok Evening after the kids are asleep
+tap 06-goal-questions ok Yes
+tap 06-goal-questions ok Edit
+tap 06-goal-questions phone-only Speak a message
+tap 06-goal-questions ok Delete goal
+tap 07-goal-plan external-link Core training for people who sit all day: a pract
+tap 07-goal-plan external-link How fast can you lose body fat safely
+tap 07-goal-plan ok Mark done: Weekly budget review with the full warm
+tap 07-goal-plan ok Link
+tap 07-goal-plan ok Agents and coaches Balanced ? Reminders on ? Calen
+tap 07-goal-plan ok Next week
+tap 07-goal-plan ok Busy: Mobility warm-up: cat-cow, bird dog, dead bu
+tap 07-goal-plan ok Busy: Write tomorrow's lunch and dinner plan in th
+tap 07-goal-plan ok Busy: Core session with the full warm-up and the c
+tap 07-goal-plan ok Busy: Hammer curls, farmer carries and a slow plan
+tap 07-goal-plan ok Busy: Scales in C, G and D major hands together at
+tap 07-goal-plan ok Busy: Strength session B: goblet squats, Romanian 
+tap 07-goal-plan ok Busy: Piano practice with the full warm-up and the
+tap 07-goal-plan ok Busy: Strength session with the full warm-up and t
+tap 07-goal-plan ok Busy: Clair de Lune bars one to fourteen, left han
+tap 07-goal-plan ok Set up the automatic transfer of $#,# to the hig
+tap 07-goal-plan ok Busy: Lunch walk around the lake with the long loo
+tap 07-goal-plan ok Cancel the two streaming subscriptions nobody watc
+tap 07-goal-plan ok Weekly budget review with the spreadsheet and the 
+tap 07-goal-plan ok Busy: Meal prep with the full warm-up and the cool
+tap 07-goal-plan ok Approve plan
+tap 07-goal-plan ok Change
+tap 07-goal-plan phone-only Speak a message
+tap 07-goal-plan ok Delete goal
+tap 08-goal-stopped native:app_sync Retry
+tap 08-goal-stopped ok Change time limit
+tap 08-goal-stopped ok Mark done: Scales in C, G and D major hands togeth
+tap 08-goal-stopped ok Mark done: Piano practice with the full warm-up an
+tap 08-goal-stopped ok Mark done: Clair de Lune bars one to fourteen, lef
+tap 08-goal-stopped ok Link
+tap 08-goal-stopped ok Agents and coaches Ask ? Reminders on ? Calendars 
+tap 08-goal-stopped phone-only Speak a message
+tap 08-goal-stopped ok Delete goal
+tap 09-goal-working ok Stop
+tap 09-goal-working ok Link
+tap 09-goal-working ok Agents and coaches Ask ? Reminders on ? Calendars 
+tap 09-goal-working phone-only Speak a message
+tap 09-goal-working ok Delete goal
+tap 10-new-goal ok In # month
+tap 10-new-goal ok In # months
+tap 10-new-goal ok End of year
+tap 10-new-goal ok Learning
+tap 10-new-goal ok Health and Fitness
+tap 10-new-goal ok Financial
+tap 10-new-goal ok Hobby and Skill
+tap 10-new-goal ok Career and Projects
+tap 10-new-goal ok Habit
+tap 10-new-goal ok New category
+tap 10-new-goal ok Link
+tap 10-new-goal ok Ask Every change waits for your approval.
+tap 10-new-goal nothing Balanced Small moves apply with undo. Big changes 
+tap 10-new-goal ok Auto All changes apply with undo, plus a daily sum
+tap 10-new-goal ok 
+tap 10-new-goal ok Change
+tap 11-new-goal-category ok In # month
+tap 11-new-goal-category ok In # months
+tap 11-new-goal-category ok End of year
+tap 11-new-goal-category ok Learning
+tap 11-new-goal-category ok Health and Fitness
+tap 11-new-goal-category ok Financial
+tap 11-new-goal-category ok Hobby and Skill
+tap 11-new-goal-category ok Career and Projects
+tap 11-new-goal-category ok Habit
+tap 11-new-goal-category ok Add
+tap 11-new-goal-category ok Color #
+tap 11-new-goal-category ok Cancel
+tap 11-new-goal-category ok Link
+tap 11-new-goal-category ok Ask Every change waits for your approval.
+tap 11-new-goal-category native:guess_category Balanced Small moves apply with u
+tap 11-new-goal-category ok Auto All changes apply with undo, plus a daily sum
+tap 11-new-goal-category ok 
+tap 11-new-goal-category ok Change
+tap 11-new-goal-category ok Create goal
+tap 12-inbox ok Apply
+tap 12-inbox ok Reject
+tap 12-inbox ok Dismiss
+tap 12-inbox ok Waiting for you: # questions to answer
+tap 12-inbox ok Waiting for you: Plan to approve
+tap 12b-dashboard ok Inbox, # new
+tap 12b-dashboard ok Settings
+tap 12b-dashboard nothing All
+tap 12b-dashboard ok Health and Fitness
+tap 12b-dashboard ok Hobby and Skill
+tap 12b-dashboard ok Financial
+tap 12b-dashboard ok Learning
+tap 12b-dashboard ok On track
+tap 12b-dashboard ok Behind
+tap 12b-dashboard ok Ahead
+tap 12b-dashboard ok Six pack by Feb # with a stronger lower back and b
+tap 12b-dashboard ok Learn piano well enough to play Clair de Lune for 
+tap 12b-dashboard ok Save $#k for the emergency fund before the lease 
+tap 12b-dashboard ok Read The Joy of X by Steven Strogatz cover to cove
+tap 12b-dashboard nothing Goal
+tap 12b-dashboard ok Category
+tap 12b-dashboard ok Week of # Oct, # min
+tap 12b-dashboard ok Week of # Nov, # min
+tap 12b-dashboard ok Today
+tap 12b-dashboard ok Calendar
+tap 12b-dashboard ok Goals
+tap 12b-dashboard nothing Dashboard
+tap 12b-dashboard ok Log
+tap 13-log phone-only Speak a log entry
+tap 14-settings native:app_sign_out,app_account Sign out
+tap 14-settings ok Location Places, nudges, pause tracking and visit 
+tap 14-settings ok Anthropic
+tap 14-settings ok claude-sonnet-#-#
+tap 14-settings ok Test connection
+tap 14-settings ok Coach library See every coach by team. Copy one to
+tap 14-settings nothing Add
+tap 14-settings ok Ask Every change waits for your approval.
+tap 14-settings ok Balanced Small moves apply with undo. Big changes 
+tap 14-settings ok Auto All changes apply with undo, plus a daily sum
+tap 14-settings ok 
+tap 14-settings ok What Aroh knows about you # facts
+tap 15-settings-profile ok Back to Inbox
+tap 16-settings-run-limit native:app_sign_out,app_account Sign out
+tap 16-settings-run-limit ok Location Places, nudges, pause tracking and visit 
+tap 16-settings-run-limit ok Anthropic
+tap 16-settings-run-limit ok claude-sonnet-#-#
+tap 16-settings-run-limit ok Test connection
+tap 16-settings-run-limit ok Coach library See every coach by team. Copy one to
+tap 16-settings-run-limit nothing Add
+tap 16-settings-run-limit ok Ask Every change waits for your approval.
+tap 16-settings-run-limit ok Balanced Small moves apply with undo. Big changes 
+tap 16-settings-run-limit ok Auto All changes apply with undo, plus a daily sum
+tap 16-settings-run-limit ok 
+tap 16-settings-run-limit ok What Aroh knows about you # facts
+tap 17-settings-location nothing Open iOS Settings
+tap 17-settings-location ok 
+tap 17-settings-location ok Places # of # watched. Add, rename or link.
+tap 17-settings-location ok Location log Recent visits, on this phone only.
+tap 17-settings-location ok Clear visit history
+tap 17b-settings-location-on nothing Open iOS Settings
+tap 17b-settings-location-on ok 
+tap 17b-settings-location-on ok Places # of # watched. Add, rename or link.
+tap 17b-settings-location-on ok Location log Recent visits, on this phone only.
+tap 17b-settings-location-on ok Clear visit history
+tap 20-coaches ok Settings
+tap 20-coaches ok Fitness coach Plans strength, core and mobility se
+tap 20-coaches ok Nutrition coach with a very long display name for 
+tap 20-coaches ok Piano teacher Breaks pieces into bars and builds s
+tap 20-coaches ok Reading coach Paces a book by chapters and keeps a
+tap 20-coaches ok Budget planner Turns a savings target into automat
+tap 21-coach ok Coaches
+tap 21-coach ok Remove rule: Asks before moving a session the owne
+tap 21-coach nothing Add
+tap 21-coach ok Save
+tap 22-settings-signed-out ok Sign in
+tap 22-settings-signed-out ok Create account
+tap 22-settings-signed-out ok Location Places, nudges, pause tracking and visit 
+tap 22-settings-signed-out ok Anthropic
+tap 22-settings-signed-out ok claude-sonnet-#-#
+tap 22-settings-signed-out ok Test connection
+tap 22-settings-signed-out ok Coach library See every coach by team. Copy one to
+tap 22-settings-signed-out nothing Add
+tap 22-settings-signed-out ok Ask Every change waits for your approval.
+tap 22-settings-signed-out ok Balanced Small moves apply with undo. Big changes 
+tap 22-settings-signed-out ok Auto All changes apply with undo, plus a daily sum
+tap 22-settings-signed-out ok 
+tap 22-settings-signed-out ok What Aroh knows about you # facts
