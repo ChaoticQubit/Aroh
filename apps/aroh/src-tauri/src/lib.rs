@@ -142,6 +142,7 @@ pub fn run() {
             commands::goals::attach_file,
             commands::goals::attach_link,
             commands::goals::remove_goal_file,
+            commands::goals::delete_goal,
             commands::plugins::plugins_list,
             commands::plugins::plugins_enable,
             commands::plugins::plugins_save,

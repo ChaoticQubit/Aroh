@@ -188,6 +188,46 @@ pub fn remove_sent(conn: &Connection, sent: &[PendingLog]) -> Result<usize> {
     Ok(before - logs.len())
 }
 
+const REMOVALS: &str = "pending_file_removals";
+
+/// Most goal file objects that may wait for removal from the owner's bucket at once.
+pub const MAX_REMOVALS: usize = 10_000;
+
+/// Storage paths of deleted goal files whose objects still wait for removal, oldest first.
+pub fn pending_removals(conn: &Connection) -> Result<Vec<String>> {
+    match get_state(conn, &key(REMOVALS))? {
+        None => Ok(Vec::new()),
+        Some(json) => serde_json::from_str(&json).map_err(|_| invalid("stored file removals")),
+    }
+}
+
+fn store_removals(conn: &Connection, paths: &[String]) -> Result<()> {
+    assert!(paths.len() <= MAX_REMOVALS);
+    set_state(conn, &key(REMOVALS), &serde_json::to_string(paths).expect("paths serialize"))?;
+    Ok(())
+}
+
+/// Queues `paths` for removal from the owner's bucket, each once. Errors with `Invalid`
+/// past [`MAX_REMOVALS`]; nothing is queued then.
+pub fn queue_removals(conn: &Connection, paths: &[String]) -> Result<()> {
+    let mut queued = pending_removals(conn)?;
+    for path in paths {
+        if !queued.contains(path) {
+            queued.push(path.clone());
+        }
+    }
+    if queued.len() > MAX_REMOVALS {
+        return Err(invalid("too many files wait for removal"));
+    }
+    store_removals(conn, &queued)
+}
+
+/// Drops `removed` from the removal queue, keeping paths queued meanwhile.
+pub fn clear_removals(conn: &Connection, removed: &[String]) -> Result<()> {
+    let left: Vec<String> = pending_removals(conn)?.into_iter().filter(|p| !removed.contains(p)).collect();
+    store_removals(conn, &left)
+}
+
 const ZONE: &str = "zone";
 const ZONE_PENDING: &str = "zone_pending";
 const ZONE_BEFORE: &str = "zone_before";

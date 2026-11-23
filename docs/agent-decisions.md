@@ -118,3 +118,44 @@ Rebuild Aroh from the MVP into a goal engine for any human goal (course, habit, 
 ### Unresolved
 
 - `docs/decisions.md` still holds the MVP contract and must be rewritten to match this record.
+
+## Delete goal (pod 33, 2026-11-23, branch `feat/delete-goal`, Q68)
+
+### Goal
+
+Delete a goal from its screen through a native-style action sheet: "Delete goal and its actions", "Delete goal, keep actions", Cancel. Only the two delete choices are red (Q41).
+
+### Constraints
+
+- No schema change: `actions.goal_id` and `action_series.goal_id` stay not null on SQLite and Postgres.
+- Deletes travel as tombstones over the existing LWW sync; the server only sees rows, never the delete mode.
+- The built-in Routines goal (`seed::routines_id()`) cannot be deleted: the option is hidden there and the write refuses it.
+- Profile facts (`preferences`) and spend history (`usage`) stay in both modes.
+
+### Decisions
+
+- Delete all tombstones the goal, its actions, series, proposals, trackers and their entries, goal files (extracted text cleared), goal links in both directions, goal personas and plugins, its goal-month budget and its place links, in one transaction.
+- Keep actions moves the goal's actions and series onto the built-in Routines goal, the existing home of actions that belong to no goal of the owner's; place links naming a kept series move with it; everything else is tombstoned as in delete all. Reason: no nullable migration rippling through every pod's code.
+- Goal file objects in `goal-files` are removed with the owner's session (bulk `DELETE /storage/v1/object/goal-files`). Paths are queued device-locally (`local:pending_file_removals`) and drained after every sync, so an offline delete still removes them later.
+- Late rows (an occurrence the server materialized, a row another device wrote before it saw the tombstone): the tick settles a live action or series whose goal is a tombstone. An action follows its live series' goal; an action of a tombstoned series is tombstoned; anything else moves to Routines, so no owner data is lost.
+- Server: the trigger scan cancels non-terminal runs of tombstoned goals and disables their weekly reviews and marks their pending action events handled; `process` fails a job whose run's goal is tombstoned; plan and proposal tools refuse a tombstoned goal; `start_goal` refuses a tombstoned id instead of re-creating it (it used to resurrect); `retry` refuses too.
+- Device reminders are rescheduled from live rows after the write, so tombstoned actions lose their notifications; server pushes plan from live rows the same way.
+
+### Rejected alternatives
+
+- Nullable `goal_id` migration: correct but touches every Action and ActionSeries constructor while four pods work in parallel.
+- A server delete endpoint: the server would not hear an offline delete; the scan sees the tombstone whichever device made it.
+
+### Risks
+
+- Kept actions now carry Routines' reminder setting (on), even when the deleted goal had reminders off.
+- A row written by a race in delete-all mode lands under Routines rather than gone.
+
+### Acceptance criteria
+
+- Domain tests for both modes and for refusing Routines; a two-device sync test converges, server-materialized occurrences included; a pg test shows a deleted goal's run cancelled, its job not run and no new run started.
+- Simulator screenshots of the sheet and both outcomes in `docs/screenshots/pod33/`.
+
+### Unresolved
+
+- None.

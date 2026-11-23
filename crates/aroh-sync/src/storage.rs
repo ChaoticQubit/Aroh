@@ -43,6 +43,32 @@ pub async fn upload(config: &Config, token: &str, user_id: &str, storage_path: &
     check(response).await.map(|_| ())
 }
 
+/// Most objects one removal request names.
+pub const REMOVE_BATCH: usize = 1000;
+
+/// Removes the objects at `storage_paths` in `user_id`'s folder with one bulk request
+/// (`DELETE object/goal-files`, body `prefixes`). A path with no object is not an error, so
+/// a retry is safe. Errors on a bad path, a network failure or a non-2xx; nothing sent for none.
+pub async fn remove(config: &Config, token: &str, user_id: &str, storage_paths: &[String]) -> Result<()> {
+    assert!(storage_paths.len() <= REMOVE_BATCH, "callers send at most one batch");
+    if storage_paths.is_empty() {
+        return Ok(());
+    }
+    let mut prefixes = Vec::with_capacity(storage_paths.len());
+    for path in storage_paths {
+        object_url(config, user_id, path)?;
+        prefixes.push(format!("{user_id}/{path}"));
+    }
+    let response = http()
+        .delete(format!("{}/storage/v1/object/{BUCKET}", config.url))
+        .header("apikey", &config.anon_key)
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "prefixes": prefixes }))
+        .send()
+        .await?;
+    check(response).await.map(|_| ())
+}
+
 /// Whether the project serves the `goal-files` bucket to this session, so Attach can show.
 /// Any failure, including a project without Storage, is `false`.
 pub async fn available(config: &Config, token: &str) -> bool {
@@ -113,6 +139,19 @@ mod tests {
         let config = Config::new("http://127.0.0.1:9", "sb_publishable_test_key_0001").unwrap();
         let err = upload(&config, "t", "u1", "goals/g1/f1-x.pdf", "application/pdf", vec![0; MAX_BYTES + 1]).await.unwrap_err();
         assert!(matches!(err, Error::Config(_)), "{err}");
+    }
+
+    #[tokio::test]
+    async fn remove_deletes_the_paths_in_the_owner_folder_in_one_request() {
+        let (config, served) = storage_once("200 OK").await;
+        remove(&config, "jwt-token", "u1", &["goals/g1/a.pdf".to_string(), "goals/g1/b.png".to_string()]).await.unwrap();
+        let seen = String::from_utf8_lossy(&served.await.unwrap()).to_string();
+        assert!(seen.starts_with("DELETE /storage/v1/object/goal-files HTTP/1.1"), "{seen}");
+        assert!(seen.to_lowercase().contains("authorization: bearer jwt-token"));
+        assert!(seen.ends_with(r#"{"prefixes":["u1/goals/g1/a.pdf","u1/goals/g1/b.png"]}"#), "{seen}");
+        let config = Config::new("http://127.0.0.1:9", "sb_publishable_test_key_0001").unwrap();
+        assert!(remove(&config, "t", "u1", &["goals/../x".to_string()]).await.is_err());
+        remove(&config, "t", "u1", &[]).await.unwrap();
     }
 
     #[tokio::test]

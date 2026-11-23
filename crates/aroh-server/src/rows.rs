@@ -135,6 +135,17 @@ pub async fn get_row<R: Record>(pool: &PgPool, user: Uuid, id: &str) -> Result<O
     Ok(list_rows::<R>(pool, user, &[("id", id.to_string())], false).await?.pop())
 }
 
+/// Whether `user`'s goal `goal` is a tombstone (Q68). A goal the server has not seen
+/// is not deleted, so a new goal still starts. Runs and tools of a deleted goal stop.
+pub async fn goal_deleted(pool: &PgPool, user: Uuid, goal: Uuid) -> Result<bool, ServerError> {
+    let deleted: Option<bool> = db::query_scalar("select deleted from public.goals where user_id = $1 and id = $2")
+        .bind(user)
+        .bind(goal)
+        .fetch_optional(pool)
+        .await?;
+    Ok(deleted == Some(true))
+}
+
 /// Readies a user's rows before anything reads them: inserts the seeded
 /// categories and materializes every live series for `days` from `now`,
 /// both insert-or-ignore, so the server sees what the app engine derives.

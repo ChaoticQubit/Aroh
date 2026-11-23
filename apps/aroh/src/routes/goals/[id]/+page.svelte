@@ -20,6 +20,7 @@
 	import { loadCoaches } from '$lib/app/personas';
 	import { goalAttachments, pendingAttachment, uploadFailed } from '$lib/app/files';
 	import type { Attachment } from '$lib/ui/components/goal/Attachments.svelte';
+	import DeleteGoalSheet from '$lib/ui/components/goal/DeleteGoalSheet.svelte';
 
 	const DERIVED = 'derived';
 	const SHOWN_VERSIONS = 3;
@@ -148,6 +149,26 @@
 		await chat.retry();
 	}
 
+	let confirmDelete = $state(false);
+	let deleting = $state(false);
+
+	/** Deletes the goal (Q68), keeping its actions under Routines when `keepActions`, then opens Goals. */
+	async function deleteGoal(keepActions: boolean) {
+		const id = goal?.id;
+		if (!id || deleting) return;
+		deleting = true;
+		try {
+			await client.deleteGoal(id, keepActions);
+			confirmDelete = false;
+			await goto('/goals');
+			await data.load();
+		} catch (e) {
+			data.error = String(e);
+		} finally {
+			deleting = false;
+		}
+	}
+
 	/** Switches the dashboard to a plugin version, or to the derived view. */
 	function onversion(value: string) {
 		if (goal) void data.run(async () => (plugins = await enablePlugin(goal.id, value === DERIVED ? null : value)));
@@ -187,6 +208,14 @@
 			onremove={(fid) => (retries.has(fid) ? ((retries.delete(fid)), (failed = failed.filter((f) => f.id !== fid))) : attaching(() => client.removeGoalFile(fid)))}
 		/>
 	{/key}
+	{#if places && goal.id !== places.routines_goal}
+		<div class="px-4 pt-2 pb-6">
+			<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-muted outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => (confirmDelete = true)}>Delete goal</button>
+		</div>
+	{/if}
+	{#if confirmDelete}
+		<DeleteGoalSheet title={goal.title} busy={deleting} ondelete={(keep) => void deleteGoal(keep)} onclose={() => (confirmDelete = false)} />
+	{/if}
 {:else if s}
 	<p class="p-4 text-sm text-muted">This goal no longer exists.</p>
 {/if}

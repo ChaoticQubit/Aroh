@@ -82,6 +82,21 @@ pub fn remove_goal_file(app: AppHandle, state: State<'_, AppState>, id: String) 
     Ok(())
 }
 
+/// Deletes goal `goal_id` (Q68): with `keep_actions` its actions and series stay on the
+/// calendar under Routines, else they go with it. Queues its file objects for removal with
+/// the owner's session on the next sync, reschedules reminders, then syncs.
+/// Errors for the Routines goal or a missing goal; nothing changes then.
+#[tauri::command]
+pub fn delete_goal(app: AppHandle, state: State<'_, AppState>, goal_id: String, keep_actions: bool) -> Result<(), String> {
+    with_core(&state, |c| {
+        let paths = aroh_app::remove::delete_goal(&c.conn, &mut c.clock, &goal_id, keep_actions)?;
+        aroh_app::local::queue_removals(&c.conn, &paths)
+    })?;
+    after_write(&app);
+    sync_if_signed_in(&app);
+    Ok(())
+}
+
 /// Guesses the category of a new goal from `title` and `description` without a model call.
 /// Output: the id of the owner's matching seeded category, or null.
 #[tauri::command]
