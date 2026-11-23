@@ -134,6 +134,7 @@ fn action(conn: &Connection, clock: &mut Hlc, user: &str, title: &str, start: Da
         status,
         locked: false,
         done_at: None,
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };
@@ -282,6 +283,7 @@ fn repeating(conn: &Connection, clock: &mut Hlc, user: &str, title: &str, rrule:
         dtstart_local: first.into(),
         timezone: BERLIN.name().into(),
         duration_minutes: 30,
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };

@@ -8,6 +8,8 @@ describe('screenTitle', () => {
 		expect(screenTitle('/goals/abc')).toBe('Goal');
 		expect(screenTitle('/goals/new')).toBe('New goal');
 		expect(screenTitle('/goals/abc/chat')).toBe('Goal chat');
+		expect(screenTitle('/actions/abc')).toBe('Session');
+		expect(screenTitle('/actions/abc/chat')).toBe('Card chat');
 		expect(screenTitle('/settings/location/log')).toBe('Location log');
 		expect(screenTitle('/personas?goal=abc')).toBe('Coaches');
 		expect(screenTitle('/inbox')).toBe('Inbox');
@@ -23,6 +25,8 @@ describe('parentOf', () => {
 		expect(parentOf('/goals/abc')).toEqual({ path: '/goals', label: 'Goals' });
 		expect(parentOf('/goals/new')).toEqual({ path: '/goals', label: 'Goals' });
 		expect(parentOf('/goals/abc/chat')).toEqual({ path: '/goals/abc', label: 'Goal' });
+		expect(parentOf('/actions/abc/chat')).toEqual({ path: '/actions/abc', label: 'Session' });
+		expect(parentOf('/actions/abc')).toEqual({ path: '/today', label: 'Today' });
 		expect(parentOf('/settings/places')).toEqual({ path: '/settings', label: 'Settings' });
 		expect(parentOf('/settings/location/log')).toEqual({ path: '/settings/location', label: 'Location' });
 		expect(parentOf('/personas?goal=abc')).toEqual({ path: '/goals/abc', label: 'Goal' });

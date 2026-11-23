@@ -1,0 +1,37 @@
+name = "card-chat"
+start = "coach"
+max_steps = 10
+
+[state]
+request = "{action_id: string, scope: enum(this, future), text: string}"
+current = "{title: string, start: string, minutes: int, card: {why: string, blocks: list<{kind: enum(workout, steps, checklist), title: string?, exercises: list<{name: string, unit: string?, rest_s: int, cue: string?, sets: list<{reps: int, weight: number?}>}>?, items: list<{text: string, minutes: int?}>?}>}?, history: list<{title: string, start: string, status: string, planned: list<string>, logged: list<string>, effort: string?, note: string?}>}"
+profile = "list<{id: string, fact: string, topic: string?, source: string, date: string}>"
+change = "{reply: string, card: {why: string, blocks: list<{kind: enum(workout, steps, checklist), title: string?, exercises: list<{name: string, unit: string?, rest_s: int, cue: string?, sets: list<{reps: int, weight: number?}>}>?, items: list<{text: string, minutes: int?}>?}>}, minutes: int}"
+edited = "{reply: string, proposal_id: string, changed: int}"
+
+[[nodes]]
+id = "coach"
+kind = "agent"
+persona = "card-coach"
+prompt = "Change the card the way the owner asked."
+reads = ["request", "current", "profile"]
+writes = "change"
+
+[[nodes]]
+id = "apply"
+kind = "tool"
+tool = "edit_card"
+reads = ["request", "change"]
+writes = "edited"
+
+[[nodes]]
+id = "done"
+kind = "end"
+
+[[edges]]
+from = "coach"
+to = "apply"
+
+[[edges]]
+from = "apply"
+to = "done"

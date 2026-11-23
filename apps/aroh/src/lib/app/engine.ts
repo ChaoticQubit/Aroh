@@ -390,6 +390,11 @@ export class Engine {
 		return this.request('POST', `/v1/goals/${goalId}/replan`, { reason, timezone: deviceZone() });
 	}
 
+	/** Starts the card coach on action `actionId` for `scope` with the owner's `text` (Q71). */
+	cardChat(actionId: string, scope: 'this' | 'future', text: string): Promise<EngineResult<{ goal_id: string; run_id: string }>> {
+		return this.request('POST', `/v1/actions/${actionId}/chat`, { scope, text });
+	}
+
 	/**
 	 * Sends owner text for a goal (see `route`): answers the goal's waiting run or starts a replan.
 	 * Returns the run it went to, the change text to hand the `change` node next, and whether the

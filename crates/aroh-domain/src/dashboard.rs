@@ -349,6 +349,7 @@ mod tests {
             status,
             locked: false,
             done_at: None,
+            card: None,
             updated_at: String::new(),
             deleted: false,
         }
@@ -365,6 +366,7 @@ mod tests {
             dtstart_local: "2026-11-02T07:00:00".into(),
             timezone: "Europe/Berlin".into(),
             duration_minutes: 30,
+            card: None,
             updated_at: String::new(),
             deleted: false,
         }

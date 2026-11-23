@@ -9,10 +9,10 @@
 	import type { ActionView, OnChange, SpecOf } from '$lib/ui/contract';
 
 	/**
-	 * Actions in time order with a done toggle. Emits `{ id, status }` when one is ticked or unticked.
-	 * With `onopen`, tapping a row's time and title opens that action by id. Titles wrap to two
-	 * lines and goal names to one, breaking anywhere, so a row never grows past its container. When
-	 * the list spans days, every row shows its day ("Today", "Tue 24") above its times.
+	 * Actions in time order with a done toggle; emits `{ id, status }` on a tick. With `onopen` a row's
+	 * time and title open that action by id, else they link to its card page (Q71). Titles wrap to two
+	 * lines and goal names to one, so a row never outgrows its container. A list that spans days
+	 * shows each row's day ("Today", "Tue 24") above its times.
 	 */
 	let { spec, onchange, onopen }: { spec: SpecOf<'action_list'>; onchange?: OnChange; onopen?: (id: string) => void } = $props();
 
@@ -43,10 +43,11 @@
 				{@const day = days[i]}
 				<li class="flex min-h-12 items-center gap-3 py-1 pr-1 pl-4">
 					<svelte:element
-						this={onopen ? 'button' : 'div'}
+						this={onopen ? 'button' : 'a'}
 						type={onopen ? 'button' : undefined}
-						role={onopen ? 'button' : undefined}
-						aria-label={onopen ? `Edit ${a.title}` : undefined}
+						role={onopen ? 'button' : 'link'}
+						href={onopen ? undefined : `/actions/${a.id}`}
+						aria-label={onopen ? `Edit ${a.title}` : `Open ${a.title}`}
 						class="flex min-w-0 flex-1 items-center gap-3 self-stretch rounded-sm text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
 						onclick={onopen ? () => onopen(a.id) : undefined}
 					>

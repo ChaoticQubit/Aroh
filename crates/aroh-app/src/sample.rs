@@ -2,6 +2,7 @@
 //! history, personas, a proposal and a suggestion. Used by tests and debug builds only.
 
 use crate::Result;
+use aroh_domain::card::Card;
 use aroh_domain::hlc::Hlc;
 use aroh_domain::rows::{
     Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, Cadence, CadenceFreq, EntrySource, FieldKind, Goal, GoalStatus,
@@ -63,6 +64,7 @@ fn series(conn: &Connection, clock: &mut Hlc, goal: &Goal, spec: &SeriesSpec, st
         dtstart_local: format!("{start}T{}:00", spec.at),
         timezone: zone.name().into(),
         duration_minutes: spec.minutes,
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };
@@ -205,6 +207,27 @@ fn extras(conn: &Connection, clock: &mut Hlc, goal: &Goal, now: DateTime<Utc>) -
     Ok(())
 }
 
+/// The sample's series cards (Q71), in plan order: a leg day workout for strength and a
+/// recipe with a shopping checklist for meal prep; the other series have none yet.
+fn sample_cards() -> [Option<Card>; 5] {
+    let card = |v: serde_json::Value| Some(serde_json::from_value::<Card>(v).expect("sample cards parse"));
+    let strength = card(json!({"v": 1, "depth": "full", "outline": "Weeks 3 to 4: squat 5 x 5, add 2.5 kg a week",
+        "why": "Leg strength carries the fat loss: big lifts burn the most and keep muscle while you eat less.",
+        "blocks": [{"kind": "workout", "exercises": [
+            {"name": "Back squat", "unit": "kg", "rest_s": 120, "cue": "Up 2.5 kg from last week", "sets": [{"reps": 8, "weight": 62.5}, {"reps": 8, "weight": 62.5}, {"reps": 8, "weight": 62.5}, {"reps": 8, "weight": 62.5}]},
+            {"name": "Romanian deadlift", "unit": "kg", "rest_s": 90, "cue": null, "sets": [{"reps": 10, "weight": 50.0}, {"reps": 10, "weight": 50.0}, {"reps": 10, "weight": 50.0}]},
+            {"name": "Walking lunge", "unit": "kg", "rest_s": 60, "cue": null, "sets": [{"reps": 12, "weight": 12.0}, {"reps": 12, "weight": 12.0}, {"reps": 12, "weight": 12.0}]},
+            {"name": "Plank", "unit": null, "rest_s": 45, "cue": "Seconds, not reps", "sets": [{"reps": 45, "weight": null}, {"reps": 45, "weight": null}]}]},
+            {"kind": "checklist", "title": "Bring", "items": [{"text": "Belt"}, {"text": "Water"}]}]}));
+    let meal = card(json!({"v": 1, "depth": "full", "outline": null,
+        "why": "Cooking the week's lunches keeps protein at 150 g a day without thinking about it.",
+        "blocks": [{"kind": "steps", "title": "Chicken rice bowls, 5 lunches", "items": [
+            {"text": "Start 400 g rice in the cooker", "minutes": 2}, {"text": "Season 1 kg chicken thighs, roast at 200 C", "minutes": 25},
+            {"text": "Steam 600 g broccoli", "minutes": 8}, {"text": "Portion into 5 boxes, 200 g chicken each", "minutes": 5}]},
+            {"kind": "checklist", "title": "Shopping", "items": [{"text": "Chicken thighs, 1 kg"}, {"text": "Rice, 400 g"}, {"text": "Broccoli, 600 g"}]}]}));
+    [strength, None, meal, None, None]
+}
+
 /// Loads the six-pack sample for `user_id` when the user has no goal yet.
 /// Series start four weeks before `now` in `zone`; the past week is materialized and marked
 /// done except the last strength session, which is missed and has a move proposal.
@@ -230,6 +253,12 @@ pub fn seed(conn: &Connection, clock: &mut Hlc, user_id: &str, now: DateTime<Utc
     let mut all = Vec::new();
     for (g, spec) in &plan {
         all.push(series(conn, clock, g, spec, start, zone)?);
+    }
+    for (s, card) in all.iter_mut().zip(sample_cards()) {
+        if card.is_some() {
+            s.card = card;
+            repo::put(conn, clock, s)?;
+        }
     }
     let strength_id = all[0].id.clone();
     let body = tracker(conn, clock, &six, "Weight", number("weight", "Weight", "kg"), Some(Cadence { freq: CadenceFreq::Daily, weekdays: vec![], at: "07:00".into() }))?;

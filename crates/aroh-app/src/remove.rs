@@ -5,7 +5,7 @@
 use crate::location::ensure_routines;
 use crate::{invalid, Result};
 use aroh_domain::hlc::Hlc;
-use aroh_domain::rows::{Action, ActionSeries, Budget, Goal, GoalFile, GoalLink, Persona, PlaceLink, Plugin, Proposal, Record, Tracker, TrackerEntry};
+use aroh_domain::rows::{Action, ActionLog, ActionSeries, Budget, Goal, GoalFile, GoalLink, Persona, PlaceLink, Plugin, Proposal, Record, Tracker, TrackerEntry};
 use aroh_domain::seed::routines_id;
 use aroh_store::repo;
 use rusqlite::Connection;
@@ -20,7 +20,7 @@ fn tombstone_all<R: Record>(conn: &Connection, clock: &mut Hlc, filter: &[(&str,
 }
 
 /// Deletes goal `goal_id` in one transaction. Without `keep_actions` its actions and series
-/// are tombstoned; with it they, and place links naming a kept series, move to Routines.
+/// and session logs are tombstoned; with it they, and place links naming a kept series, move to Routines.
 /// Either way the goal, links, files (text cleared), personas, plugins, trackers and their
 /// entries, proposals, budget and other place links are tombstoned; profile facts and usage stay.
 /// Output: storage paths of the goal's stored files. Errors for Routines or a missing goal.
@@ -59,6 +59,10 @@ pub fn delete_goal(conn: &Connection, clock: &mut Hlc, goal_id: &str, keep_actio
             action.goal_id = routines.clone();
             repo::put(&tx, clock, &mut action)?;
         }
+        for mut log in repo::list::<ActionLog>(&tx, &by_goal)? {
+            log.goal_id = routines.clone();
+            repo::put(&tx, clock, &mut log)?;
+        }
         for mut link in repo::list::<PlaceLink>(&tx, &by_goal)? {
             if link.series_id.as_ref().is_some_and(|s| kept.contains(s)) {
                 link.goal_id = routines.clone();
@@ -68,6 +72,7 @@ pub fn delete_goal(conn: &Connection, clock: &mut Hlc, goal_id: &str, keep_actio
         kept
     } else {
         tombstone_all::<Action>(&tx, clock, &by_goal)?;
+        tombstone_all::<ActionLog>(&tx, clock, &by_goal)?;
         tombstone_all::<ActionSeries>(&tx, clock, &by_goal)?.into_iter().map(|s| s.id).collect()
     };
     tombstone_all::<PlaceLink>(&tx, clock, &by_goal)?;

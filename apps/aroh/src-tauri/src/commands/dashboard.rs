@@ -103,6 +103,7 @@ fn seed_goal(c: &mut Core, spec: &LongGoal, rank: i64, now: DateTime<Utc>) -> ar
             status,
             locked: false,
             done_at: (status == ActionStatus::Done).then(|| start + Duration::minutes(30)),
+            card: None,
             updated_at: String::new(),
             deleted: false,
         };
@@ -119,6 +120,7 @@ fn seed_goal(c: &mut Core, spec: &LongGoal, rank: i64, now: DateTime<Utc>) -> ar
             dtstart_local: format!("{}T07:00:00", (today + Duration::days(1)).format("%Y-%m-%d")),
             timezone: zone.name().into(),
             duration_minutes: 30,
+            card: None,
             updated_at: String::new(),
             deleted: false,
         };

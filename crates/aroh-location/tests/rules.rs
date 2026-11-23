@@ -70,6 +70,7 @@ fn action(n: u32, goal: &str, title: &str, start: DateTime<Utc>, status: ActionS
         status,
         locked: false,
         done_at: (status == ActionStatus::Done).then_some(start + Duration::minutes(30)),
+        card: None,
         updated_at: String::new(),
         deleted: false,
     }
@@ -247,6 +248,7 @@ fn series(n: u32, title: &str, rrule: &str) -> ActionSeries {
         dtstart_local: "2026-10-01T10:00:00".into(),
         timezone: "UTC".into(),
         duration_minutes: 45,
+        card: None,
         updated_at: String::new(),
         deleted: false,
     }

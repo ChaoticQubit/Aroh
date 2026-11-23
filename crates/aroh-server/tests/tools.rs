@@ -99,6 +99,7 @@ async fn action(env: &ToolEnv, title: &str, hours_from_t0: i64, status: ActionSt
         status,
         locked,
         done_at: (status == ActionStatus::Done).then_some(start),
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };
@@ -251,6 +252,7 @@ async fn record_proposal_refuses_changes_to_fixed_actions() {
         status: aroh_domain::rows::ActionStatus::Planned,
         locked: true,
         done_at: None,
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };
@@ -263,4 +265,65 @@ async fn record_proposal_refuses_changes_to_fixed_actions() {
         assert!(matches!(&err, ToolError::InvalidArgs(m) if m.contains("fixed")), "{err}");
     }
     assert_eq!(count(&pool, "proposals", goal).await, 0, "nothing on a fixed action reaches a proposal");
+}
+
+fn card_tool(env: &ToolEnv, name: &str) -> Arc<dyn Tool> {
+    aroh_server::cards::card_tools(env.clone()).into_iter().find(|t| t.spec().name == name).unwrap()
+}
+
+fn leg_card(exercise: &str) -> Value {
+    json!({"why": "Legs.", "blocks": [{"kind": "workout", "title": null, "items": null,
+        "exercises": [{"name": exercise, "unit": "kg", "rest_s": 120, "cue": null, "sets": [{"reps": 8, "weight": 60}]}]}]})
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn cards_fill_the_slots_once_and_chat_edits_apply_with_undo() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let goal = env.goal.unwrap();
+    let ctx = ToolContext::for_call(RunId::new(), 1, 0);
+    let plan = json!({"plan": {"summary": "s", "timezone": "Europe/Berlin", "trackers": [],
+        "items": [{"title": "Legs", "start": "2026-11-23T07:00:00", "minutes": 60, "rrule": "FREQ=DAILY;COUNT=3", "notes": "Squat focus"}]}});
+    tool(&env, "write_plan").call(plan, &ctx).await.unwrap();
+    assert_eq!(count(&pool, "review_schedules", goal).await, 1, "approving a plan creates the weekly review");
+    let work: Value = serde_json::from_str(&card_tool(&env, "card_slots").call(json!({"goal": {"timezone": "Europe/Berlin"}}), &ctx).await.unwrap().content).unwrap();
+    let slots = work["slots"].as_array().unwrap().clone();
+    assert_eq!(slots.len(), 3);
+    assert_eq!(slots[0]["start"], "2026-11-23T07:00:00");
+    let series = slots[0]["series_id"].as_str().unwrap().to_string();
+    let foreign = json!({"card_work": work, "cards": {"cards": [{"action_id": Uuid::now_v7().to_string(), "card": leg_card("Squat")}], "outlines": []}});
+    assert!(card_tool(&env, "write_cards").call(foreign, &ctx).await.is_err());
+    let cards: Vec<Value> = slots.iter().map(|s| json!({"action_id": s["action_id"], "card": leg_card("Back squat")})).collect();
+    let args = json!({"card_work": work, "cards": {"cards": cards, "outlines": [{"series_id": series, "outline": "Weeks 3 to 4: squat 5 x 5"}]}});
+    let written: Value = serde_json::from_str(&card_tool(&env, "write_cards").call(args.clone(), &ctx).await.unwrap().content).unwrap();
+    assert_eq!(written, json!({"written": 3, "kept": 0, "missing": 0}));
+    let again: Value = serde_json::from_str(&card_tool(&env, "write_cards").call(args, &ctx).await.unwrap().content).unwrap();
+    assert_eq!(again["kept"], 3, "a replayed write never overwrites a full card");
+    let outline: String = db::query_scalar("select card->>'outline' from public.action_series where id::text = $1").bind(&series).fetch_one(&pool).await.unwrap();
+    assert_eq!(outline, "Weeks 3 to 4: squat 5 x 5");
+    let empty: Value = serde_json::from_str(&card_tool(&env, "card_slots").call(json!({"goal": {"timezone": "UTC"}}), &ctx).await.unwrap().content).unwrap();
+    assert_eq!(empty["slots"], json!([]));
+
+    let first = slots[0]["action_id"].as_str().unwrap();
+    let edit = json!({"request": {"action_id": first, "scope": "this", "text": "split squats, 45 min"},
+        "change": {"reply": "Swapped to split squats.", "minutes": 45, "card": leg_card("Split squat")}});
+    let done: Value = serde_json::from_str(&card_tool(&env, "edit_card").call(edit.clone(), &ctx).await.unwrap().content).unwrap();
+    assert_eq!(done["changed"], 1);
+    let replay: Value = serde_json::from_str(&card_tool(&env, "edit_card").call(edit, &ctx).await.unwrap().content).unwrap();
+    assert_eq!(replay, done, "a replayed edit returns its record");
+    let (name, minutes): (String, f64) = db::query_as(
+        "select card->'blocks'->0->'exercises'->0->>'name', (extract(epoch from end_at - start_at) / 60)::float8 from public.actions where id::text = $1",
+    )
+    .bind(first)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((name.as_str(), minutes), ("Split squat", 45.0));
+    let (status, undo): (String, Value) = db::query_as("select status, undo from public.proposals where goal_id = $1").bind(goal).fetch_one(&pool).await.unwrap();
+    assert_eq!(status, "applied");
+    assert_eq!(undo["rows"][0]["card"]["blocks"][0]["exercises"][0]["name"], "Back squat", "undo holds the card before the edit");
+    let bad = json!({"request": {"action_id": first, "scope": "forever", "text": "x"}, "change": {"reply": "x", "minutes": 45, "card": leg_card("Squat")}});
+    assert!(card_tool(&env, "edit_card").call(bad, &ctx).await.is_err());
 }

@@ -24,6 +24,9 @@ written = "{actions: int, series: int, occurrences: int, trackers: int}"
 plugin_guide = "{template: string, reference: string}"
 plugin_draft = "{bundle_toml: string}"
 plugin = "{id: string, name: string, version: int}"
+card_work = "{slots: list<{action_id: string, series_id: string?, title: string, start: string, minutes: int, notes: string?, outline: string?, planned: list<string>}>, history: list<{title: string, start: string, status: string, planned: list<string>, logged: list<string>, effort: string?, note: string?}>}"
+cards = "{cards: list<{action_id: string, card: {why: string, blocks: list<{kind: enum(workout, steps, checklist), title: string?, exercises: list<{name: string, unit: string?, rest_s: int, cue: string?, sets: list<{reps: int, weight: number?}>}>?, items: list<{text: string, minutes: int?}>?}>}}>, outlines: list<{series_id: string, outline: string}>}"
+cards_written = "{written: int, kept: int, missing: int}"
 
 [[nodes]]
 id = "intake"
@@ -129,6 +132,33 @@ reads = ["plan", "limits"]
 writes = "written"
 
 [[nodes]]
+id = "slots"
+kind = "tool"
+tool = "card_slots"
+reads = ["goal"]
+writes = "card_work"
+
+[[nodes]]
+id = "cards_gate"
+kind = "router"
+condition = "cards_gate()"
+
+[[nodes]]
+id = "cards"
+kind = "agent"
+persona = "card-writer"
+prompt = "Write the full card of every slot and the outline of each series."
+reads = ["goal", "profile", "card_work"]
+writes = "cards"
+
+[[nodes]]
+id = "store_cards"
+kind = "tool"
+tool = "write_cards"
+reads = ["card_work", "cards"]
+writes = "cards_written"
+
+[[nodes]]
 id = "build_plugin"
 kind = "agent"
 persona = "plugin-builder"
@@ -218,6 +248,28 @@ to = "check_limits"
 
 [[edges]]
 from = "write"
+to = "slots"
+
+[[edges]]
+from = "slots"
+to = "cards_gate"
+
+[[edges]]
+from = "cards_gate"
+to = "cards"
+when = "some"
+
+[[edges]]
+from = "cards_gate"
+to = "build_plugin"
+when = "none"
+
+[[edges]]
+from = "cards"
+to = "store_cards"
+
+[[edges]]
+from = "store_cards"
 to = "build_plugin"
 
 [[edges]]

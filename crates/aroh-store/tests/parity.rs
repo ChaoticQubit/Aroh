@@ -7,8 +7,12 @@ const LATER: &[&str] = &[
     include_str!("../../../supabase/migrations/20261124000000_day_kind.sql"),
     include_str!("../../../supabase/migrations/20261127000000_goal_redesign.sql"),
     include_str!("../../../supabase/migrations/20261127010000_goal_files_text.sql"),
+    include_str!("../../../supabase/migrations/20261128000000_action_cards.sql"),
 ];
-const CREATED: &[&str] = &[include_str!("../../../supabase/migrations/20261126010000_places.sql")];
+const CREATED: &[&str] = &[
+    include_str!("../../../supabase/migrations/20261126010000_places.sql"),
+    include_str!("../../../supabase/migrations/20261128000000_action_cards.sql"),
+];
 
 fn added_columns(tables: &mut BTreeMap<String, Vec<String>>) {
     for sql in LATER {
@@ -62,7 +66,7 @@ fn sqlite_columns_match_the_registry() {
 #[test]
 fn postgres_columns_match_the_registry_plus_server_seq() {
     let tables = postgres_tables();
-    assert_eq!(tables.len(), 27, "20 synced and 7 server-only tables");
+    assert_eq!(tables.len(), 28, "21 synced and 7 server-only tables");
     for table in SYNCED.iter() {
         let mut expected: Vec<String> = table.names().iter().map(|c| c.to_string()).collect();
         expected.push("server_seq".into());

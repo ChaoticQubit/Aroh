@@ -47,6 +47,7 @@ fn put_action(conn: &Connection, clock: &mut Hlc, user: &str, goal: &str, days_a
         status,
         locked: false,
         done_at: None,
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };

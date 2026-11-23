@@ -77,3 +77,22 @@ pub fn deps(pool: &PgPool, models: Arc<dyn Transport>, web: Arc<dyn Transport>) 
 pub fn offline() -> Arc<FnTransport> {
     FnTransport::new(|_| json_reply(599, json!({})))
 }
+
+/// The fake card writer's answer to a model request `body`: one full leg-day card
+/// for every action id the request's `card_work.slots` names, no outlines.
+/// Returns the output JSON as text.
+pub fn card_writer_reply(body: &str) -> String {
+    let mut ids: Vec<String> = Vec::new();
+    for (i, _) in body.match_indices("action_id") {
+        let tail: String = body[i + 9..].chars().take(64).collect();
+        let start = tail.find(|c: char| c.is_ascii_hexdigit()).unwrap_or(0);
+        let id: String = tail[start..].chars().take(36).collect();
+        if Uuid::parse_str(&id).is_ok() && !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    let card = json!({"why": "Legs carry the target.", "blocks": [{"kind": "workout", "title": null, "items": null,
+        "exercises": [{"name": "Back squat", "unit": "kg", "rest_s": 120, "cue": null, "sets": [{"reps": 8, "weight": 60}, {"reps": 8, "weight": 60}]}]}]});
+    let cards: Vec<_> = ids.iter().map(|id| json!({"action_id": id, "card": card})).collect();
+    json!({"cards": cards, "outlines": []}).to_string()
+}

@@ -139,6 +139,7 @@ impl Api {
             status: ActionStatus::Planned,
             locked,
             done_at: None,
+            card: None,
             updated_at: String::new(),
             deleted: false,
         };
@@ -291,6 +292,13 @@ fn goal_models_with(builder: impl Fn(&str) -> Reply + Send + Sync + 'static) -> 
         if body.contains("You are Goal planner") {
             return sse_text(&plan().to_string());
         }
+        if body.contains("You are Card writer") {
+            return sse_text(&common::card_writer_reply(&body));
+        }
+        if body.contains("You are Card coach") {
+            return sse_text(&json!({"reply": "Swapped lunges for split squats and cut to 45 min.", "minutes": 45, "card": {"why": "Legs.", "blocks": [{"kind": "workout", "title": null, "items": null,
+                "exercises": [{"name": "Split squat", "unit": "kg", "rest_s": 90, "cue": null, "sets": [{"reps": 10, "weight": 20}]}]}]}}).to_string());
+        }
         Reply { status: 400, content_type: "application/json", body: json!({"error": "unexpected request"}).to_string() }
     })
 }
@@ -379,8 +387,11 @@ async fn new_goal_to_written_actions() {
         .unwrap();
     assert_eq!(one_off.to_rfc3339(), "2026-11-24T17:00:00+00:00");
     let model_calls = models.sent().iter().filter(|r| body_text(r).contains("\"stream\":true")).count();
-    assert_eq!(model_calls, 6, "intake, research twice, plan, revise, plugin");
-    assert_eq!(api.count("select count(*) from public.usage where run_id::text = $1", &run).await, 6);
+    assert_eq!(model_calls, 7, "intake, research twice, plan, revise, cards, plugin");
+    assert_eq!(api.count("select count(*) from public.usage where run_id::text = $1", &run).await, 7);
+    assert_eq!(api.count("select count(*) from public.actions where goal_id::text = $1 and card->>'depth' = 'full'", &goal).await, 7, "every session of the next two weeks has its card");
+    assert_eq!(api.count("select count(*) from public.review_schedules where goal_id::text = $1 and enabled", &goal).await, 1);
+
     assert!(models.sent().iter().all(|r| r.header("x-api-key") == Some(MODEL_KEY)));
     let searches = web.sent();
     assert_eq!(searches.len(), 1);
@@ -389,6 +400,27 @@ async fn new_goal_to_written_actions() {
     assert_eq!((status, runs[0]["run_id"].as_str()), (200, Some(run.as_str())));
     let (_, none) = api.call(Method::Get, &format!("/v1/runs?goal_id={}", Uuid::now_v7()), Some(&t), None).await;
     assert_eq!(none, json!([]));
+
+    let series_action: String = db::query_scalar("select id::text from public.actions where goal_id::text = $1 and series_id is not null order by start_at limit 1")
+        .bind(&goal)
+        .fetch_one(&api.pool)
+        .await
+        .unwrap();
+    let (status, chat) = api
+        .call(Method::Post, &format!("/v1/actions/{series_action}/chat"), Some(&t), Some(json!({"scope": "future", "text": "swap lunges for split squats, 45 min"})))
+        .await;
+    assert_eq!(status, 202, "{chat}");
+    api.tick().await;
+    let chat_view = api.run(&t, chat["run_id"].as_str().unwrap()).await;
+    assert_eq!(chat_view["status"]["status"], "done", "{chat_view}");
+    assert_eq!(chat_view["summary"], "Swapped lunges for split squats and cut to 45 min.");
+    assert_eq!(api.count("select count(*) from public.actions where goal_id::text = $1 and card->'blocks'->0->'exercises'->0->>'name' = 'Split squat' and end_at - start_at = interval '45 minutes'", &goal).await, 6, "this and every later occurrence");
+    assert_eq!(api.count("select count(*) from public.action_series where goal_id::text = $1 and duration_minutes = 45 and card->>'depth' = 'outline'", &goal).await, 1);
+    assert_eq!(api.count("select count(*) from public.proposals where goal_id::text = $1 and status = 'applied' and diff->>'op' = 'card' and jsonb_array_length(undo->'rows') = 7", &goal).await, 1, "six actions and the series");
+    let (status, _) = api.call(Method::Post, &format!("/v1/actions/{series_action}/chat"), Some(&t), Some(json!({"scope": "all", "text": "x"}))).await;
+    assert_eq!(status, 400);
+    let (status, _) = api.call(Method::Post, &format!("/v1/actions/{}/chat", Uuid::now_v7()), Some(&t), Some(json!({"scope": "this", "text": "x"}))).await;
+    assert_eq!(status, 404);
 
     let setting = keys.as_array().unwrap().iter().find(|k| k["vendor"] == "anthropic").unwrap()["setting_id"].as_str().unwrap().to_string();
     let (status, test) = api.call(Method::Post, &format!("/v1/keys/{setting}/test"), Some(&t), None).await;
@@ -938,6 +970,9 @@ fn music_models() -> Arc<FnTransport> {
         if body.contains("You are Instrument teacher") {
             return sse_text(&json!({"summary": "Learn it in four sections, slow practice first.", "sources": [{"title": "Clair de Lune guide", "url": "https://example.org/clair"}]}).to_string());
         }
+        if body.contains("You are Card writer") {
+            return sse_text(&common::card_writer_reply(&body));
+        }
         if body.contains("You are Practice coach") {
             return sse_text(&music_plan().to_string());
         }
@@ -966,9 +1001,9 @@ async fn a_music_goal_runs_with_the_music_team_category_and_template() {
     let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(body)).await;
     assert_eq!(status, 202, "{started}");
     let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
-    assert_eq!(api.run_personas(&run).await, ["instrument-teacher", "intake-interviewer", "plugin-builder", "practice-coach"]);
+    assert_eq!(api.run_personas(&run).await, ["card-writer", "instrument-teacher", "intake-interviewer", "plugin-builder", "practice-coach"]);
     let (_, runs) = api.call(Method::Get, &format!("/v1/runs?goal_id={goal}"), Some(&t), None).await;
-    assert_eq!((runs[0]["run_id"].as_str(), &runs[0]["personas"]), (Some(run.as_str()), &json!(["instrument-teacher", "intake-interviewer", "plugin-builder", "practice-coach"])), "{runs}");
+    assert_eq!((runs[0]["run_id"].as_str(), &runs[0]["personas"]), (Some(run.as_str()), &json!(["card-writer", "instrument-teacher", "intake-interviewer", "plugin-builder", "practice-coach"])), "{runs}");
     assert_eq!(api.goal_category(&goal).await, aroh_server::teams::seeded_id(u, "hobby-skill"));
 
     api.tick().await;
@@ -984,13 +1019,13 @@ async fn a_music_goal_runs_with_the_music_team_category_and_template() {
     assert_eq!(api.count("select count(*) from public.plugins where goal_id::text = $1 and enabled and version = 1 and name = 'music'", &goal).await, 1);
     assert_eq!(api.count("select count(*) from public.trackers where goal_id::text = $1", &goal).await, 3);
     let calls: Vec<String> = models.sent().iter().map(body_text).filter(|b| b.contains("\"stream\":true")).collect();
-    assert_eq!(calls.len(), 4, "intake, research, plan, plugin");
+    assert_eq!(calls.len(), 5, "intake, research, plan, cards, plugin");
     assert!(calls.iter().all(|b| !b.contains("You are Goal planner") && !b.contains("You are Goal researcher")));
 
     let learning = aroh_server::teams::seeded_id(u, "learning").unwrap();
     let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "category_id": learning, "timezone": "UTC"}))).await;
     assert_eq!(status, 202, "{started}");
-    assert_eq!(api.run_personas(started["run_id"].as_str().unwrap()).await, ["intake-interviewer", "plugin-builder", "practice-planner", "tutor"]);
+    assert_eq!(api.run_personas(started["run_id"].as_str().unwrap()).await, ["card-writer", "intake-interviewer", "plugin-builder", "practice-planner", "tutor"]);
     let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Ship my side project", "timezone": "UTC"}))).await;
     assert_eq!(api.goal_category(started["goal_id"].as_str().unwrap()).await, None, "the general team leaves the category open");
 }
@@ -1003,7 +1038,7 @@ async fn persona_library_lists_copies_and_edits_and_runs_use_the_copy() {
     let (status, list) = api.call(Method::Get, "/v1/personas", Some(&t), None).await;
     assert_eq!(status, 200, "{list}");
     let entries = list.as_array().unwrap();
-    assert_eq!(entries.len(), 15);
+    assert_eq!(entries.len(), 17);
     assert!(entries.iter().all(|p| p["source"] == "builtin" && p["builtin"] == true));
     let coach = entries.iter().find(|p| p["name"] == "practice-coach").unwrap();
     assert_eq!((coach["display_name"].as_str(), coach["teams"].clone()), (Some("Practice coach"), json!(["music"])));

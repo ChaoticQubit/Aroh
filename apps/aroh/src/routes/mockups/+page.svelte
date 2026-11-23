@@ -22,6 +22,7 @@
 	import ClockFrame from './ClockFrame.svelte';
 	import GoalRedesign from './goal-redesign/GoalRedesign.svelte';
 	import PlanView from './plan-view/PlanView.svelte';
+	import ActionCards from './action-cards/ActionCards.svelte';
 	import LocationExplainer from '$lib/ui/components/location/LocationExplainer.svelte';
 	import LockScreenNudge from '$lib/ui/components/location/LockScreenNudge.svelte';
 	import PlacesScreen from '$lib/ui/screens/PlacesScreen.svelte';
@@ -52,7 +53,7 @@
 
 	setClock({ now: mockNow, zone: mockZone });
 
-	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location' | 'plan-view';
+	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location' | 'plan-view' | 'action-cards';
 	const VIEWS: { value: View; label: string }[] = [
 		{ value: 'tokens', label: 'Tokens' },
 		{ value: 'inputs', label: 'Inputs' },
@@ -64,7 +65,8 @@
 		{ value: 'editing', label: 'Calendar editing' },
 		{ value: 'goal-redesign', label: 'Goals redesign' },
 		{ value: 'location', label: 'Location' },
-		{ value: 'plan-view', label: 'Plan, back, dashboard' }
+		{ value: 'plan-view', label: 'Plan, back, dashboard' },
+		{ value: 'action-cards', label: 'Action cards' }
 	];
 	const keep = () => {};
 	const EDIT = { onedit: keep, onlock: keep, ondelete: keep, onchoose: keep, inline: true };
@@ -151,7 +153,9 @@
 
 <svelte:head><title>Aroh Mockups</title></svelte:head>
 
-{#if solo !== null}
+{#if solo !== null && view === 'action-cards'}
+	<ActionCards {inboxCount} {solo} />
+{:else if solo !== null}
 	<PlanView {inboxCount} {solo} />
 {:else}
 <div class="min-h-dvh bg-surface text-fg">
@@ -253,6 +257,8 @@
 			<GoalRedesign {inboxCount} />
 		{:else if view === 'plan-view'}
 			<PlanView {inboxCount} />
+		{:else if view === 'action-cards'}
+			<ActionCards {inboxCount} />
 		{:else if view === 'location'}
 			<ul class="flex gap-6 overflow-x-auto pb-4">
 				{#each LOCATION as s (s.name)}

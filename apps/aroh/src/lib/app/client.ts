@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import type { Card, CardLog } from '$lib/ui/action/card';
 
 /** A goal category row. */
 export type Category = { id: string; name: string; color: string; seeded: boolean };
@@ -31,6 +32,7 @@ export type Action = {
 	status: 'planned' | 'done' | 'missed' | 'skipped';
 	locked: boolean;
 	done_at: string | null;
+	card?: Card | null;
 };
 
 /** One field of a tracker's schema. */
@@ -144,6 +146,33 @@ export const logText = (text: string) => invoke<Logged>('app_log_text', { text }
 
 /** Applies or rejects an open proposal. */
 export const decideProposal = (id: string, apply: boolean) => invoke<Proposal>('app_decide_proposal', { id, apply });
+
+/** The undo of one card save: each changed row before it. */
+export type CardUndo = { rows: unknown[] };
+
+/** A stored session log of one action. */
+export type ActionLog = CardLog & { id: string; action_id: string; goal_id: string; logged_at: string };
+
+/** What the card page reads: the action, its series' card, the session log and the newest chat edit. */
+export type CardPage = { action: Action; series_card: Card | null; log: ActionLog | null; edit: (Proposal & { undo: { rows: unknown[] } | null }) | null };
+
+/** Reads the card page of action `id`. */
+export const cardPage = (id: string) => invoke<CardPage>('app_card_page', { id });
+
+/** Saves an in-place card edit for this session or all future ones; returns its undo. */
+export const setCard = (id: string, card: Card, scope: 'this' | 'future', minutes: number | null = null) => invoke<CardUndo>('app_set_card', { id, card, minutes, scope });
+
+/** Saves the owner's notes of action `id` as typed. */
+export const setNotes = (id: string, notes: string) => invoke<Action>('app_set_notes', { id, notes });
+
+/** Puts back the rows of a card save's undo. */
+export const restoreCards = (undo: CardUndo) => invoke<null>('app_restore_cards', { undo });
+
+/** Undoes the coach's applied card chat edit `id`. */
+export const undoCardEdit = (id: string) => invoke<Proposal>('app_undo_card_edit', { id });
+
+/** Saves the session log of action `actionId`. */
+export const saveLog = (actionId: string, log: CardLog) => invoke<ActionLog>('app_save_log', { actionId, log });
 
 /** Confirms or dismisses a suggested preference. */
 export const decidePreference = (id: string, confirm: boolean) => invoke<null>('app_decide_preference', { id, confirm });

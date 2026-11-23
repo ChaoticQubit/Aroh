@@ -18,6 +18,51 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Health'
+  /v1/actions/{action_id}/chat:
+    post:
+      tags:
+      - runs
+      operationId: card_chat
+      parameters:
+      - name: action_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CardChat'
+        required: true
+      responses:
+        '202':
+          description: Card chat run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/calendar/triage:
     post:
       tags:
@@ -1017,6 +1062,20 @@ components:
       enum:
       - sandbox
       - production
+    CardChat:
+      type: object
+      description: |-
+        Body of `POST /v1/actions/{action_id}/chat`: the scope the owner picked
+        before sending (`this` or `future`) and the change in plain words.
+      required:
+      - scope
+      - text
+      properties:
+        scope:
+          type: string
+        text:
+          type: string
+      additionalProperties: false
     DeviceInfo:
       type: object
       description: |-

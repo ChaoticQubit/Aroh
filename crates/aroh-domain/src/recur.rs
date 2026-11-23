@@ -108,6 +108,7 @@ pub fn occurrence(series: &ActionSeries, at: DateTime<Utc>) -> Action {
         status: ActionStatus::Planned,
         locked: false,
         done_at: None,
+        card: series.card.as_ref().map(crate::card::Card::as_outline),
         updated_at: crate::seed::SEED_STAMP.to_string(),
         deleted: false,
     }
@@ -189,6 +190,18 @@ mod tests {
 
     fn utc(y: i32, m: u32, d: u32, h: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn occurrences_copy_the_series_card_as_an_outline() {
+        let mut s = samples::series();
+        let card: crate::card::Card = serde_json::from_value(serde_json::json!({"v": 1, "depth": "full", "why": "Legs.", "blocks": [], "outline": "Squat day"})).unwrap();
+        s.card = Some(card);
+        let a = occurrence(&s, utc(2026, 10, 21, 5));
+        let got = a.card.expect("occurrence carries the series card");
+        assert_eq!(got.depth, crate::card::Depth::Outline);
+        assert_eq!(got.outline.as_deref(), Some("Squat day"));
+        assert!(occurrence(&samples::series(), utc(2026, 10, 21, 5)).card.is_none());
     }
 
     fn berlin_hour(t: &DateTime<Utc>) -> u32 {

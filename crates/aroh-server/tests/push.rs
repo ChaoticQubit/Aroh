@@ -75,6 +75,7 @@ async fn action(pool: &PgPool, hlc: &ServerClock, user: Uuid, goal: &Goal, start
         status: ActionStatus::Planned,
         locked: false,
         done_at: None,
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };

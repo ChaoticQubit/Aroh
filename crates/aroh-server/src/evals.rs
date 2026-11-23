@@ -69,6 +69,7 @@ pub fn slots_within(item: &Value, days: u32) -> Result<Vec<Slot>, String> {
         dtstart_local: start.format("%Y-%m-%dT%H:%M:%S").to_string(),
         timezone: "UTC".into(),
         duration_minutes: minutes,
+        card: None,
         updated_at: aroh_domain::seed::SEED_STAMP.into(),
         deleted: false,
     };
@@ -350,6 +351,7 @@ pub fn registry_for(busy: Vec<Slot>, fixed: BTreeSet<String>, kind: Kind) -> Eva
     let mut r = EvalRegistry::new();
     r.register("coach_questions", Arc::new(move |output: &Value, args: &[Value]| coach_questions(output, args, kind))).expect("fresh name");
     r.register("notes_filled", Arc::new(notes_filled)).expect("fresh name");
+    r.register("cards_filled", Arc::new(crate::cards::cards_filled)).expect("fresh name");
     r.register("keeps_fixed", Arc::new(move |output: &Value, args: &[Value]| keeps_fixed(output, args, &fixed))).expect("fresh name");
     r.register("public_sources", Arc::new(public_sources)).expect("fresh name");
     r.register("owner_terms", Arc::new(owner_terms)).expect("fresh name");

@@ -214,6 +214,62 @@ Build the Dashboard tab at `/dashboard` matching the approved pod 30 mockup: fil
 
 - None.
 
+## Action cards as notes (pod 37, 2026-11-23, branch `feat/action-cards`, Q71)
+
+### Goal
+
+Every action opens a full card like a note: why, a structured block (workout table: exercise, sets, reps, weight, rest; other actions: steps or checklist), notes, the per-set session log with easy / ok / hard, and a card chat with mic that edits the card. Phase A is the mockup and this data design; Phase B builds it after the owner approves.
+
+### Constraints
+
+- Sync is whole-row last-write-wins (`aroh-domain/src/lww.rs`): two writers on one row clobber each other.
+- Occurrences of a series are materialized 14 days ahead (`recur::DEFAULT_WINDOW_DAYS`), with deterministic ids and the lowest stamp, cloned from the series; later weeks have no `actions` row.
+- `aroh_action_events()` fires only on time, status and tombstone changes of `actions`, so a card or log write starts no adaptation run.
+- The planner step has `max_tokens = 8192`; two weeks of full cards do not fit in it.
+- The row structs live in `crates/aroh-domain/src/rows.rs` and the SQLite schema in `crates/aroh-store/src/db.rs` (the `aroh-core/models.rs` path in older notes is stale).
+
+### Decisions
+
+- Card on the action: new nullable `card` JSON column on `actions` and on `action_series` (SQLite `TEXT`, Postgres `jsonb`). Shape `{v: 1, depth: 'full' | 'outline', why, blocks: [workout {exercises: [{name, unit, rest_s, sets: [{reps, weight}], cue}]} | steps {title, items: [{text, minutes}]} | checklist {title, items: [{text}]}], outline}`. One card per occurrence row gives per-occurrence cards and progression for free; `notes` stays the free-text notes. The series `card` is the outline template a newly materialized occurrence copies (`depth: 'outline'`) and holds one outline line per later week.
+- Session log in its own synced table `action_logs(id, user_id, action_id, goal_id, sets jsonb [{block, row, set, reps, weight, done}], checked jsonb [{block, row}], effort 'easy'|'ok'|'hard' null, note, logged_at, updated_at, deleted)`, id derived from `action_id` so every device writes one row per session. Reason: the owner's device writes logs while the coach writes cards; on one row LWW would drop set ticks or card edits. The coach reads progression straight from logs by goal.
+- Owner edits by hand (Phase B): the card page edits in place (why, cells, rows, notes) and saves as you type on the device (`aroh-app::card::set_card`); the first edit of a series session asks this session only or this and all future. All future writes the series `card` as an outline copy and every later planned occurrence without a log; a new length moves each end and the series `duration_minutes` (start times never change, so no split). The save returns its undo (`{rows: [...]}`, each row's card and end before), kept by the page for its Undo bar. Logging values is a record, not a card edit, and asks nothing.
+- Card chat: `POST /v1/actions/{action_id}/chat {scope, text}` starts the `card-chat` workflow: the `card-coach` persona answers `{reply, card, minutes}` and the `edit_card` tool applies it at once with the same scope rules, recording a `proposals` row with op `card`, status `applied`, the before and after in `diff` and the rows in `undo`. The app syncs, shows the diff from `diff.before` and `diff.after` and Undo (`undo_card_edit`, status `undone`). The scope question comes before the request is sent.
+- The coach never overwrites a full card: `write_cards` keeps any full card (an owner edit or an earlier fill) and only fills slots whose card is missing or an outline. Coach-initiated changes of full cards are not built.
+- Weekly fill: the `fill-cards` workflow (`card_slots`, router `cards_gate`, `card-writer`, `write_cards`) for one goal. `scan_reviews` starts it at each goal's review slot with window key `fill:<YYYY-MM-DD>` (source `review`); `scan_backfill` starts it once per active goal that has upcoming sessions without a full card, window `fill:backfill`, and first gives that goal a weekly review (zone of the owner's other reviews, else UTC). A goal whose new-goal or fill run is still busy is skipped. New goals run the same steps after `write`. `card_slots` lists at most 21 planned sessions of the next 14 days and the last 4 done or logged sessions as text lines for progression.
+- Approving a plan always creates the weekly review: `write_plan` calls `ensure_review_row` with the plan's zone.
+- An occurrence materialized from a series card gets an outline copy with the template's blocks; the page shows such a card as full and the next fill rewrites it. An outline card without blocks needs its outline line.
+- Personas and tools: `card-writer` (output `{cards: [{action_id, card}], outlines: [{series_id, outline}]}`, eval `cards_filled(cards)`) and `card-coach`, both with the fitness and medical safety guardrails. Tools `card_slots`, `write_cards`, `edit_card` live in `crates/aroh-server/src/cards.rs`.
+
+### Rejected alternatives
+
+- Log inside the card JSON: one row, but LWW drops set ticks when the coach rewrites the card.
+- One row per logged set: more rows and sync traffic for no gain; one session is logged on one device.
+- Cards written in the planner step: does not fit `max_tokens` and is rewritten by the fill anyway (Q71 rejects every card full at planning).
+- A new weekly cron job: `scan_reviews` already gives a per-goal weekly slot with dedupe.
+
+### Risks
+
+- Fill token cost per goal per week (Q71); one goal per job keeps it bounded and visible in usage.
+- A goal whose review is turned off gets no weekly fill after its backfill.
+- Run again (Q74) writes a new plan without cards; the goal's next weekly fill writes them.
+- Card schema must stay small enough for the model to write reliably; the tool validates and refuses bad shapes.
+
+### Acceptance criteria (Phase A)
+
+- Mockup frames as real Svelte components on `/mockups#action-cards` with seed data, screenshotted light and dark at 393 wide on simulator `aroh-p37` (port 1443) into `docs/screenshots/pod37/`: Leg day full card, mid-workout logging, card chat diff with Undo, the scope choice, meal prep steps and checklist, week 3 outline.
+- vitest for the card logic in `apps/aroh/src/lib/ui/action/card.ts`.
+
+### Acceptance criteria (Phase B)
+
+- Domain, store and Supabase: `card` on `actions` and `action_series`, synced `action_logs` with RLS; parity, domain and store tests pass.
+- Server PG suite: new goal writes a full card for every session of the next two weeks and an enabled weekly review; card chat applies to this and future sessions with an applied proposal and undo; backfill runs once per goal and the weekly review fills again.
+- App: `aroh-app` card tests (scope, undo, logs, notes) and vitest for edits, logging and the voice parser.
+- Simulator e2e on `aroh-p37` light and dark: overflow guard, keyboard and spaces checks on the new fields, edit with scope and Undo, add, swipe delete and reorder rows, per-set logging by tap and by voice, finish.
+
+### Unresolved
+
+- Card chat needs the engine; offline the chat says so and nothing changes.
+
 ## Retry and Run again (pod 40, 2026-11-23, branch `fix/retry-failed-runs`, Q74)
 
 ### Goal

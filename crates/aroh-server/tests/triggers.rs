@@ -40,6 +40,9 @@ fn models(seen: Arc<Mutex<Vec<String>>>, analyst: Arc<Mutex<Value>>) -> Arc<FnTr
         if body.contains("You are Adaptation analyst") {
             return sse_text(&analyst.lock().unwrap().to_string());
         }
+        if body.contains("You are Card writer") {
+            return sse_text(&common::card_writer_reply(&body));
+        }
         if body.contains("You are Preference analyst") {
             return sse_text(&json!({"fact": FACT}).to_string());
         }
@@ -107,6 +110,7 @@ impl World {
             status: ActionStatus::Planned,
             locked: false,
             done_at: None,
+            card: None,
             updated_at: String::new(),
             deleted: false,
         };
@@ -221,7 +225,7 @@ async fn away_days_start_one_adaptation_per_goal_that_always_asks() {
     put_row(&w.pool, &w.hlc, w.user, &mut trip).await.unwrap();
     w.tick().await;
     let rows: Vec<(String, String, String, Option<Uuid>)> =
-        db::query_as("select source, window_key, reason, goal_id from public.adaptations where user_id = $1").bind(w.user).fetch_all(&w.pool).await.unwrap();
+        db::query_as("select source, window_key, reason, goal_id from public.adaptations where user_id = $1 and window_key not like 'fill:%'").bind(w.user).fetch_all(&w.pool).await.unwrap();
     assert_eq!(rows.len(), 1, "only the goal with actions on the away days adapts: {rows:?}");
     let (source, window, reason, on) = &rows[0];
     assert_eq!((source.as_str(), window.as_str(), *on), ("calendar", "away:2026-11-27:2026-11-28", Some(goal)));
@@ -237,7 +241,7 @@ async fn away_days_start_one_adaptation_per_goal_that_always_asks() {
 
     w.later(31_000);
     w.tick().await;
-    assert_eq!(w.count("select count(*) from public.adaptations where user_id = $1").await, 1, "a second scan claims nothing");
+    assert_eq!(w.count("select count(*) from public.adaptations where user_id = $1 and window_key not like 'fill:%'").await, 1, "a second scan claims nothing");
     assert_eq!(w.count("select count(*) from public.runs where user_id = $1 and workflow = 'replan'").await, 1);
 }
 
@@ -357,7 +361,7 @@ async fn three_similar_edits_produce_a_preference_proposal() {
     w.owner_moves(&actions[1], 12).await;
     w.tick().await;
     assert_eq!(w.count("select count(*) from public.action_events where user_id = $1 and kind = 'move'").await, 2);
-    assert_eq!(w.count("select count(*) from public.runs where user_id = $1").await, 0, "two edits only lock");
+    assert_eq!(w.count("select count(*) from public.runs where user_id = $1 and workflow <> 'fill-cards'").await, 0, "two edits only lock");
     let locked: bool = db::query_scalar("select locked from public.actions where id::text = $1").bind(&actions[0].id).fetch_one(&w.pool).await.unwrap();
     assert!(locked);
 
@@ -417,6 +421,7 @@ async fn planning_sees_named_places_with_links_and_never_coordinates() {
         dtstart_local: "2026-11-23T18:00:00".into(),
         timezone: "Europe/Berlin".into(),
         duration_minutes: 60,
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };
@@ -543,4 +548,48 @@ async fn a_deleted_goal_stops_its_runs_and_jobs_and_never_comes_back() {
     w.later(31_000);
     w.tick().await;
     assert_eq!(w.count("select count(*) from public.runs where user_id = $1").await, 1);
+}
+
+async fn depth(pool: &PgPool, id: &str) -> Option<String> {
+    db::query_scalar("select card->>'depth' from public.actions where id::text = $1").bind(id).fetch_one(pool).await.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn cards_backfill_once_then_fill_with_each_weekly_review() {
+    let w = world(json!({"summary": "On track, keep the plan.", "size": "small", "changes": []})).await;
+    let goal = w.goal(Autonomy::Ask).await;
+    let first = w.action(goal, "2026-11-23T07:00:00Z").await;
+    w.tick().await;
+    assert_eq!(depth(&w.pool, &first.id).await.as_deref(), Some("full"), "the one-time backfill wrote the card");
+    assert_eq!(w.count("select count(*) from public.adaptations where user_id = $1 and window_key = 'fill:backfill'").await, 1);
+    let second = w.action(goal, "2026-11-25T07:00:00Z").await;
+    w.later(31_000);
+    w.tick().await;
+    assert_eq!(depth(&w.pool, &second.id).await, None, "the backfill runs once per goal");
+    w.engine
+        .set_review(w.user, goal, SetReview { weekday: 0, at: "13:10".into(), enabled: true, timezone: "Europe/Berlin".into() })
+        .await
+        .unwrap();
+    w.later(11 * 60_000);
+    w.tick().await;
+    assert_eq!(depth(&w.pool, &second.id).await.as_deref(), Some("full"), "the weekly review fills the next two weeks");
+    assert_eq!(w.count("select count(*) from public.adaptations where user_id = $1 and window_key = 'fill:2026-11-22'").await, 1);
+    assert_eq!(w.count("select count(*) from public.runs where user_id = $1 and workflow = 'fill-cards' and state = 'done'").await, 2);
+    let writer = w.seen.lock().unwrap().iter().filter(|b| b.contains("You are Card writer")).count();
+    assert_eq!(writer, 2);
+    let shown = insights::list(&w.pool, w.user, Some(goal)).await.unwrap();
+    assert!(shown.iter().all(|i| !i.body.contains("cards")), "card fills never reach the Inbox");
+    assert_eq!(shown.len(), 1, "the weekly review only");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn backfill_gives_a_goal_without_a_review_its_weekly_review() {
+    let w = world(json!({"summary": "s", "size": "small", "changes": []})).await;
+    let goal = w.goal(Autonomy::Ask).await;
+    db::query("delete from public.review_schedules where goal_id = $1").bind(goal).execute(&w.pool).await.unwrap();
+    w.action(goal, "2026-11-23T07:00:00Z").await;
+    w.tick().await;
+    assert_eq!(w.count("select count(*) from public.review_schedules where user_id = $1 and enabled and weekday = 0 and at = '18:00'").await, 1);
 }

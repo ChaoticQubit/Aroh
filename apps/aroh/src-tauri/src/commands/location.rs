@@ -266,6 +266,7 @@ pub async fn app_dev_location_seed(app: AppHandle, kind: String, lat: f64, lon: 
                     status: ActionStatus::Planned,
                     locked: false,
                     done_at: None,
+                    card: None,
                     updated_at: String::new(),
                     deleted: false,
                 };
@@ -292,6 +293,7 @@ pub async fn app_dev_location_seed(app: AppHandle, kind: String, lat: f64, lon: 
                         status: ActionStatus::Done,
                         locked: false,
                         done_at: Some(start + Duration::minutes(40)),
+                        card: None,
                         updated_at: String::new(),
                         deleted: false,
                     };

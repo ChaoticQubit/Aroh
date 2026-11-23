@@ -304,6 +304,7 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, replace: 
                     dtstart_local: parse_local(&item.start).map_err(ToolError::InvalidArgs)?.format("%Y-%m-%dT%H:%M:%S").to_string(),
                     timezone: plan.timezone.clone(),
                     duration_minutes: item.minutes,
+                    card: None,
                     updated_at: String::new(),
                     deleted: false,
                 };
@@ -328,6 +329,7 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, replace: 
                     status: ActionStatus::Planned,
                     locked: false,
                     done_at: None,
+                    card: None,
                     updated_at: String::new(),
                     deleted: false,
                 };
@@ -379,6 +381,7 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, replace: 
             put_row(&env.pool, &env.hlc, env.user, &mut g).await.map_err(failed)?;
         }
     }
+    crate::triggers::ensure_review_row(&env.pool, env.user, goal, tz, env.now()).await.map_err(failed)?;
     Ok(json!({"actions": actions, "series": series_count, "occurrences": occurrences, "trackers": plan.trackers.len()}))
 }
 
@@ -574,6 +577,7 @@ async fn apply_proposal(env: &ToolEnv, record: &ProposalRecord, ctx: &ToolContex
                 status: ActionStatus::Planned,
                 locked: false,
                 done_at: None,
+                card: None,
                 updated_at: String::new(),
                 deleted: false,
             };

@@ -668,6 +668,7 @@ pub fn decide_pattern(conn: &Connection, clock: &mut Hlc, user_id: &str, id: &st
         dtstart_local: first_start(now, zone, time, weekday),
         timezone: zone.name().to_string(),
         duration_minutes: row.duration_minutes.clamp(1, 1440),
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };

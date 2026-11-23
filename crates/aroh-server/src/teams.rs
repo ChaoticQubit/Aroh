@@ -182,7 +182,7 @@ mod tests {
         let mut wf = workflow(NEW_GOAL).unwrap();
         let before = wf.clone();
         staff(&mut wf, team(Kind::Music));
-        assert_eq!(persona_names(&wf), ["instrument-teacher", "intake-interviewer", "plugin-builder", "practice-coach"]);
+        assert_eq!(persona_names(&wf), ["card-writer", "instrument-teacher", "intake-interviewer", "plugin-builder", "practice-coach"]);
         let persona = |w: &Workflow, id: &str| match &w.nodes.iter().find(|n| n.id == id).unwrap().kind {
             NodeKind::Agent { persona, .. } => persona.clone(),
             _ => unreachable!("agent node"),

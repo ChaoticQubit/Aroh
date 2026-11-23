@@ -78,6 +78,9 @@ pub fn run_summary(workflow: &str, state: &Map<String, Value>) -> Option<String>
     if workflow == LEARN_PREFERENCE {
         return text(state.get("preference").and_then(|p| p.get("fact"))).map(|f| format!("Proposed preference: {f}"));
     }
+    if workflow == crate::workflows::CARD_CHAT {
+        return text(state.get("edited").and_then(|e| e.get("reply")));
+    }
     if workflow != REPLAN {
         return None;
     }
@@ -111,14 +114,15 @@ pub async fn summary_of(pool: &PgPool, run: RunId, workflow: &str) -> Result<Opt
 }
 
 /// The 30 newest insights of `user`, of goal `goal` when given, newest
-/// first. A start that failed shows its error instead of a summary.
+/// first; card fills (`fill:` windows) are housekeeping, not insights.
+/// A start that failed shows its error instead of a summary.
 /// Never another user's rows.
 pub async fn list(pool: &PgPool, user: Uuid, goal: Option<Uuid>) -> Result<Vec<Insight>, ServerError> {
     let rows: Vec<(Uuid, Option<Uuid>, Option<Uuid>, String, String, Option<String>, DateTime<Utc>, Option<String>, Option<String>)> =
         db::query_as(
             "select a.id, a.goal_id, a.run_id, a.source, a.reason, a.error, a.created_at, r.state, r.workflow
              from public.adaptations a left join public.runs r on r.id = a.run_id and r.user_id = a.user_id
-             where a.user_id = $1 and ($2::uuid is null or a.goal_id = $2)
+             where a.user_id = $1 and ($2::uuid is null or a.goal_id = $2) and a.window_key not like 'fill:%'
              order by a.created_at desc, a.id desc limit $3",
         )
         .bind(user)

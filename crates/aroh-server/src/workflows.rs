@@ -32,20 +32,30 @@ pub const LEARN_PREFERENCE: &str = "learn-preference";
 /// Groups events, asks keep or ignore per group, then writes rules.
 /// Started by `POST /v1/calendar/triage`.
 pub const CALENDAR_TRIAGE: &str = "calendar-triage";
+/// Workflow name of the card fill (Q71).
+/// Writes full cards for the next two weeks' sessions and series outlines.
+/// Started by the weekly review scan and the one-time backfill.
+pub const FILL_CARDS: &str = "fill-cards";
+/// Workflow name of the card chat (Q71).
+/// The card coach changes one card and the edit applies with undo.
+/// Started by `POST /v1/actions/{action_id}/chat`.
+pub const CARD_CHAT: &str = "card-chat";
 
-const WORKFLOWS: [(&str, &str); 6] = [
+const WORKFLOWS: [(&str, &str); 8] = [
     (NEW_GOAL, include_str!("../workflows/new-goal.toml")),
     (RUN_AGAIN, include_str!("../workflows/run-again.toml")),
     (REPLAN, include_str!("../workflows/replan.toml")),
     (LOG_INTAKE, include_str!("../workflows/log-intake.toml")),
     (LEARN_PREFERENCE, include_str!("../workflows/learn-preference.toml")),
     (CALENDAR_TRIAGE, include_str!("../workflows/calendar-triage.toml")),
+    (FILL_CARDS, include_str!("../workflows/fill-cards.toml")),
+    (CARD_CHAT, include_str!("../workflows/card-chat.toml")),
 ];
 
 /// Every persona the server ships, by name: the workflow personas and the
 /// category teams' research and plan personas. Owners copy them into their
 /// library to edit them; the shipped text never changes at run time.
-pub const PERSONAS: [(&str, &str); 15] = [
+pub const PERSONAS: [(&str, &str); 17] = [
     ("intake-interviewer", include_str!("../personas/intake-interviewer.toml")),
     ("goal-researcher", include_str!("../personas/goal-researcher.toml")),
     ("goal-planner", include_str!("../personas/goal-planner.toml")),
@@ -61,6 +71,8 @@ pub const PERSONAS: [(&str, &str); 15] = [
     ("budget-coach", include_str!("../personas/budget-coach.toml")),
     ("savings-planner", include_str!("../personas/savings-planner.toml")),
     ("habit-coach", include_str!("../personas/habit-coach.toml")),
+    ("card-writer", include_str!("../personas/card-writer.toml")),
+    ("card-coach", include_str!("../personas/card-coach.toml")),
 ];
 
 /// Returns the shipped persona text called `name`, if any.
@@ -166,7 +178,9 @@ mod tests {
                 assert_eq!(persona.model, "default");
             }
         }
-        assert_eq!(persona_names(&workflow(NEW_GOAL).unwrap()), ["goal-planner", "goal-researcher", "intake-interviewer", "plugin-builder"]);
+        assert_eq!(persona_names(&workflow(NEW_GOAL).unwrap()), ["card-writer", "goal-planner", "goal-researcher", "intake-interviewer", "plugin-builder"]);
+        assert_eq!(persona_names(&workflow(FILL_CARDS).unwrap()), ["card-writer"]);
+        assert_eq!(persona_names(&workflow(CARD_CHAT).unwrap()), ["card-coach"]);
         assert_eq!(persona_names(&workflow(RUN_AGAIN).unwrap()), ["goal-planner", "goal-researcher", "plugin-builder"]);
         assert!(workflow("nope").is_err());
     }
@@ -208,7 +222,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_and_finance_personas_carry_safety_guardrails() {
-        for name in ["goal-researcher", "goal-planner", "habit-coach"] {
+        for name in ["goal-researcher", "goal-planner", "habit-coach", "card-writer", "card-coach"] {
             assert!(load(name).await.guardrails.iter().any(|g| g == HEALTH), "{name}");
         }
         for name in ["budget-coach", "savings-planner"] {

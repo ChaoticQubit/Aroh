@@ -1,7 +1,7 @@
 use aroh_app::{local, remove, tick};
 use aroh_domain::hlc::Hlc;
 use aroh_domain::lww::{remote_wins, Version};
-use aroh_domain::rows::{samples, Action, ActionSeries, Goal, GoalFile, PlaceLink, Preference, Usage};
+use aroh_domain::rows::{samples, Action, ActionLog, ActionSeries, Goal, GoalFile, PlaceLink, Preference, Usage};
 use aroh_domain::schema::{Kind, TableDef, SYNCED};
 use aroh_domain::seed::{routines_id, SEED_STAMP};
 use aroh_store::codec::WireRow;
@@ -55,6 +55,7 @@ fn delete_all_tombstones_every_row_of_the_goal_and_keeps_facts_and_spend() {
         ("trackers", "goal_id"),
         ("action_series", "goal_id"),
         ("actions", "goal_id"),
+        ("action_logs", "goal_id"),
         ("proposals", "goal_id"),
         ("budgets", "goal_id"),
         ("place_links", "goal_id"),
@@ -88,6 +89,8 @@ fn keep_actions_moves_actions_series_and_their_place_links_to_routines() {
     }
     let links: Vec<PlaceLink> = repo::list(&conn, &[]).unwrap();
     assert!(links.iter().all(|l| l.goal_id == routines), "a link naming a kept series follows it");
+    let logs: Vec<ActionLog> = repo::list(&conn, &[]).unwrap();
+    assert!(!logs.is_empty() && logs.iter().all(|l| l.goal_id == routines), "session logs follow their actions");
     assert_eq!(repo::get::<Goal>(&conn, &routines).unwrap().title, "Routines");
     for table in ["goal_files", "personas", "plugins", "trackers", "proposals", "budgets"] {
         assert_eq!(live_count(&conn, table, "goal_id", &goal()), 0, "{table}");

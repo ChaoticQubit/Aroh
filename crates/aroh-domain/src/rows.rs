@@ -420,6 +420,7 @@ synced! {
         dtstart_local: String => Text,
         timezone: String => Text,
         duration_minutes: i64 => Int,
+        card: Option<crate::card::Card> => Json,
     }
 }
 
@@ -437,6 +438,21 @@ synced! {
         status: ActionStatus => Text,
         locked: bool => Bool,
         done_at: Option<DateTime<Utc>> => Time,
+        card: Option<crate::card::Card> => Json,
+    }
+}
+
+synced! {
+    /// The session log of one action (Q71): logged sets, ticked checklist rows,
+    /// how it felt and a note. One row per action, id from [`crate::card::log_id`].
+    ActionLog, ACTION_LOGS, "action_logs" {
+        action_id: String => Text,
+        goal_id: String => Text,
+        sets: Vec<crate::card::SetLog> => Json,
+        checked: Vec<crate::card::Checked> => Json,
+        effort: Option<crate::card::Effort> => Text,
+        note: Option<String> => Text,
+        logged_at: DateTime<Utc> => Time,
     }
 }
 
@@ -867,6 +883,7 @@ impl ActionSeries {
         if !(1..=1440).contains(&self.duration_minutes) {
             return Err(invalid("action_series.duration_minutes", "between 1 and 1440"));
         }
+        self.card.as_ref().map_or(Ok(()), crate::card::Card::check)?;
         crate::recur::rule_set(self).map(|_| ())
     }
 }
@@ -884,7 +901,19 @@ impl Action {
         if self.done_at.is_some() && self.status != ActionStatus::Done {
             return Err(invalid("actions.done_at", "only done actions have done_at"));
         }
-        Ok(())
+        self.card.as_ref().map_or(Ok(()), crate::card::Card::check)
+    }
+}
+
+impl ActionLog {
+    fn check_fields(&self) -> Result<()> {
+        check_uuid("action_logs.action_id", &self.action_id)?;
+        check_uuid("action_logs.goal_id", &self.goal_id)?;
+        if self.id != crate::card::log_id(&self.action_id) {
+            return Err(invalid("action_logs.id", "derived from action_id"));
+        }
+        check_opt_text("action_logs.note", &self.note, NOTES_MAX)?;
+        crate::card::check_log(&self.sets, &self.checked)
     }
 }
 
@@ -1105,6 +1134,7 @@ pub mod samples {
             dtstart_local: "2026-10-20T07:00:00".into(),
             timezone: "Europe/Berlin".into(),
             duration_minutes: 45,
+            card: None,
             updated_at: STAMP.into(),
             deleted: false,
         }
@@ -1125,6 +1155,7 @@ pub mod samples {
             status: ActionStatus::Planned,
             locked: false,
             done_at: None,
+            card: None,
             updated_at: STAMP.into(),
             deleted: false,
         }
@@ -1161,6 +1192,7 @@ pub mod samples {
             to(TrackerEntry { id: id(8), user_id: user(), tracker_id: id(7), data: serde_json::json!({"weight": 81.5, "meal": "clean"}).as_object().unwrap().clone(), source: EntrySource::CheckIn, raw_text: None, logged_at: at(20), updated_at: stamp(), deleted: false }),
             to(series()),
             to(action()),
+            to(ActionLog { id: crate::card::log_id(&id(10)), user_id: user(), action_id: id(10), goal_id: goal_id(), sets: vec![crate::card::SetLog { block: 0, row: 0, set: 0, reps: 8, weight: Some(60.0), done: true }], checked: vec![], effort: Some(crate::card::Effort::Ok), note: None, logged_at: at(10), updated_at: stamp(), deleted: false }),
             to(Proposal { id: id(11), user_id: user(), goal_id: goal_id(), run_id: Some(id(12)), summary: "Move Friday workout".into(), diff: serde_json::json!([{"action_id": id(10), "op": "move"}]), size: ProposalSize::Small, status: ProposalStatus::Proposed, undo: None, created_at: at(8), updated_at: stamp(), deleted: false }),
             to(preference()),
             to(BusyBlock { id: id(14), user_id: user(), calendar_id: "work".into(), event_id: "evt-1".into(), title: "Standup".into(), start_at: at(9), end_at: at(10), all_day: true, group_name: Some("Work".into()), day_kind: Some(DayKind::Busy), updated_at: stamp(), deleted: false }),
@@ -1381,17 +1413,17 @@ mod tests {
         let mut link: GoalLink = serde_json::from_value(samples::all()[2].clone()).unwrap();
         link.to_goal_id = link.from_goal_id.clone();
         assert_eq!(field_err(link), "goal_links.to_goal_id");
-        let mut budget: Budget = serde_json::from_value(samples::all()[16].clone()).unwrap();
+        let mut budget: Budget = serde_json::from_value(samples::all()[17].clone()).unwrap();
         budget.scope = BudgetScope::UserMonth;
         assert_eq!(field_err(budget.clone()), "budgets.goal_id");
         budget.goal_id = None;
         budget.validate().unwrap();
         budget.limit_usd_micros = 0;
         assert_eq!(field_err(budget), "budgets.limit_usd_micros");
-        let mut rule: CalendarRule = serde_json::from_value(samples::all()[13].clone()).unwrap();
+        let mut rule: CalendarRule = serde_json::from_value(samples::all()[14].clone()).unwrap();
         rule.calendar_id = None;
         assert_eq!(field_err(rule), "calendar_rules.pattern");
-        let mut usage: Usage = serde_json::from_value(samples::all()[17].clone()).unwrap();
+        let mut usage: Usage = serde_json::from_value(samples::all()[18].clone()).unwrap();
         usage.output_tokens = -1;
         assert_eq!(field_err(usage), "usage.output_tokens");
     }
@@ -1408,7 +1440,7 @@ mod tests {
         let mut place = samples::place();
         place.name = String::new();
         assert_eq!(field_err(place), "places.name");
-        let mut link: PlaceLink = serde_json::from_value(samples::all()[19].clone()).unwrap();
+        let mut link: PlaceLink = serde_json::from_value(samples::all()[20].clone()).unwrap();
         link.validate().unwrap();
         link.goal_id = "gym".into();
         assert_eq!(field_err(link), "place_links.goal_id");
@@ -1422,14 +1454,14 @@ mod tests {
             assert_eq!(serde_json::from_value::<DayKind>(text.into()).unwrap(), kind);
         }
         assert!(serde_json::from_value::<DayKind>("holiday".into()).is_err());
-        let mut block = samples::all()[12].clone();
+        let mut block = samples::all()[13].clone();
         assert_eq!(block["day_kind"], "busy");
         (BUSY_BLOCKS.check)(&block).unwrap();
         block["day_kind"] = serde_json::Value::Null;
         (BUSY_BLOCKS.check)(&block).unwrap();
         block["day_kind"] = "holiday".into();
         assert!((BUSY_BLOCKS.check)(&block).is_err());
-        let mut rule = samples::all()[13].clone();
+        let mut rule = samples::all()[14].clone();
         rule["day_kind"] = "away".into();
         (CALENDAR_RULES.check)(&rule).unwrap();
     }

@@ -143,8 +143,8 @@ fn day_kinds_round_trip_with_and_without_a_kind() {
     let conn = db::open_in_memory().unwrap();
     let mut clock = clock();
     let samples = samples::all();
-    let mut block: BusyBlock = serde_json::from_value(samples[12].clone()).unwrap();
-    let mut rule: CalendarRule = serde_json::from_value(samples[13].clone()).unwrap();
+    let mut block: BusyBlock = serde_json::from_value(samples[13].clone()).unwrap();
+    let mut rule: CalendarRule = serde_json::from_value(samples[14].clone()).unwrap();
     for kind in [Some(DayKind::Away), None] {
         block.day_kind = kind;
         rule.day_kind = kind;

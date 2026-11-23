@@ -342,7 +342,7 @@ fn merge_answers(intake: &Value, saved: Value, given: &[GivenAnswer]) -> Result<
     Ok(Value::Array(merged))
 }
 
-fn check_text(field: &str, text: &str) -> Result<(), ServerError> {
+pub(crate) fn check_text(field: &str, text: &str) -> Result<(), ServerError> {
     let n = text.chars().count();
     if n == 0 || n > MAX_TEXT || text.trim().is_empty() {
         return Err(ServerError::BadRequest(format!("{field} must have 1 to {MAX_TEXT} characters")));
@@ -544,7 +544,7 @@ impl Engine {
         Ok(day_inputs(&blocks, &actions, tz, from, until))
     }
 
-    fn goal_input(goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Value {
+    pub(crate) fn goal_input(goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Value {
         json!({
             "id": goal.id,
             "title": goal.title,
@@ -1129,6 +1129,7 @@ mod tests {
             status,
             locked,
             done_at: None,
+            card: None,
             updated_at: String::new(),
             deleted: false,
         };

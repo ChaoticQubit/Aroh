@@ -4,6 +4,7 @@
 	import Minus from '@lucide/svelte/icons/minus';
 	import Plus from '@lucide/svelte/icons/plus';
 	import Lock from '@lucide/svelte/icons/lock';
+	import NotebookText from '@lucide/svelte/icons/notebook-text';
 	import { Button } from '$lib/ui/primitives/button';
 	import { Switch } from '$lib/ui/primitives/switch';
 	import StatusChip from '../StatusChip.svelte';
@@ -67,6 +68,7 @@
 		</div>
 		<p class="truncate text-sm text-muted">{action.goalTitle}</p>
 	</div>
+	<Button variant="outline" size="touch" href="/actions/{action.id}"><NotebookText />Open session card</Button>
 
 	<dl class="flex flex-col divide-y divide-border rounded-sm border border-border">
 		{#each [{ name: 'Day', value: formatDay(startIso, zone), less: () => move(-1440), more: () => move(1440), step: 'one day' }, { name: 'Start', value: formatTime(startIso, zone), less: () => move(-STEP), more: () => move(STEP), step: `${STEP} min` }, { name: 'Duration', value: formatDuration(minutes), less: () => resize(-STEP), more: () => resize(STEP), step: `${STEP} min` }] as row (row.name)}

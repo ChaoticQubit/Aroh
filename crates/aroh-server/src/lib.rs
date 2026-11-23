@@ -1,4 +1,5 @@
 pub mod api;
+pub mod cards;
 pub mod auth;
 pub mod boot;
 pub mod checkpoints;

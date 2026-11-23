@@ -384,6 +384,60 @@ CREATE TABLE goal_files_next (
 INSERT INTO goal_files_next SELECT id, user_id, goal_id, name, kind, storage_path, url, mime, size_bytes, ingest_status, NULL, updated_at, deleted FROM goal_files;
 DROP TABLE goal_files;
 ALTER TABLE goal_files_next RENAME TO goal_files;
+"#, r#"
+CREATE TABLE action_series_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    goal_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    notes TEXT,
+    rrule TEXT NOT NULL,
+    dtstart_local TEXT NOT NULL,
+    timezone TEXT NOT NULL,
+    duration_minutes INTEGER NOT NULL,
+    card TEXT,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO action_series_next SELECT id, user_id, goal_id, title, notes, rrule, dtstart_local, timezone, duration_minutes, NULL, updated_at, deleted FROM action_series;
+DROP TABLE action_series;
+ALTER TABLE action_series_next RENAME TO action_series;
+CREATE TABLE actions_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    goal_id TEXT NOT NULL,
+    series_id TEXT,
+    occurrence TEXT,
+    title TEXT NOT NULL,
+    notes TEXT,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    locked INTEGER NOT NULL CHECK (locked IN (0, 1)),
+    done_at TEXT,
+    card TEXT,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO actions_next SELECT id, user_id, goal_id, series_id, occurrence, title, notes, start_at, end_at, status, locked, done_at, NULL, updated_at, deleted FROM actions;
+DROP TABLE actions;
+ALTER TABLE actions_next RENAME TO actions;
+CREATE INDEX actions_start ON actions (start_at);
+CREATE INDEX actions_series ON actions (series_id, occurrence);
+CREATE TABLE action_logs (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    action_id TEXT NOT NULL,
+    goal_id TEXT NOT NULL,
+    sets TEXT NOT NULL,
+    checked TEXT NOT NULL,
+    effort TEXT CHECK (effort IN ('easy', 'ok', 'hard')),
+    note TEXT,
+    logged_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+CREATE INDEX action_logs_goal ON action_logs (goal_id, logged_at);
 "#];
 
 /// Schema version after every migration ran.

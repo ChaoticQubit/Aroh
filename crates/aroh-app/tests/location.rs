@@ -77,6 +77,7 @@ fn action(conn: &Connection, clock: &mut Hlc, goal: &Goal, title: &str, start: D
         status,
         locked: false,
         done_at: (status == ActionStatus::Done).then_some(start + Duration::minutes(20)),
+        card: None,
         updated_at: String::new(),
         deleted: false,
     };

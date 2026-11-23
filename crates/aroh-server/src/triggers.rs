@@ -266,7 +266,7 @@ fn time_of(v: &Value, key: &str) -> Option<DateTime<Utc>> {
     v.get(key).and_then(Value::as_str).and_then(|t| DateTime::parse_from_rfc3339(t).ok()).map(|t| t.with_timezone(&Utc))
 }
 
-fn zone_or_utc(name: &str) -> Tz {
+pub(crate) fn zone_or_utc(name: &str) -> Tz {
     name.parse().unwrap_or(Tz::UTC)
 }
 
@@ -334,7 +334,7 @@ async fn busy(pool: &db::PgPool, user: Uuid, goal: Uuid) -> Result<bool, ServerE
     .await?)
 }
 
-async fn active_goal(pool: &db::PgPool, user: Uuid, goal: Uuid) -> Result<Option<Goal>, ServerError> {
+pub(crate) async fn active_goal(pool: &db::PgPool, user: Uuid, goal: Uuid) -> Result<Option<Goal>, ServerError> {
     Ok(get_row::<Goal>(pool, user, &goal.to_string()).await?.filter(|g| g.status == GoalStatus::Active))
 }
 
@@ -367,7 +367,7 @@ pub async fn claim_window(
     Ok(inserted)
 }
 
-async fn settle(pool: &db::PgPool, adaptation: Uuid, started: &Result<RunId, ServerError>) -> Result<(), ServerError> {
+pub(crate) async fn settle(pool: &db::PgPool, adaptation: Uuid, started: &Result<RunId, ServerError>) -> Result<(), ServerError> {
     let (run, error) = match started {
         Ok(r) => (Some(r.0), None),
         Err(e) => (None, Some(e.to_string())),
@@ -406,6 +406,7 @@ impl Engine {
         started += self.scan_reviews(&pool, now).await?;
         started += self.scan_edits(&pool, now).await?;
         started += self.scan_away(&pool, now).await?;
+        started += self.scan_backfill(now).await?;
         Ok(started)
     }
 
@@ -588,6 +589,9 @@ impl Engine {
             let tz = zone_or_utc(&zone);
             let next = next_review(u8::try_from(weekday).unwrap_or(0), &at, tz, now).map_err(ServerError::Db)?;
             if let Some(goal) = active_goal(pool, user, goal_id).await? {
+                if self.trigger_fill(user, &goal, slot.with_timezone(&tz).date_naive(), now).await? {
+                    started += 1;
+                }
                 if busy(pool, user, goal_id).await? {
                     continue;
                 }
@@ -719,39 +723,43 @@ pub struct TimezoneSet {
 const DEFAULT_REVIEW_WEEKDAY: u8 = 0;
 const DEFAULT_REVIEW_AT: &str = "18:00";
 
+/// Creates `user`'s weekly review of `goal` (Sunday 18:00 in `tz`) when it has none,
+/// else moves it to zone `tz` when that changed. Called on owner requests with a zone
+/// and when a plan is written, so every planned goal gets its weekly card fill (Q71).
+pub(crate) async fn ensure_review_row(pool: &db::PgPool, user: Uuid, goal: Uuid, tz: Tz, now: DateTime<Utc>) -> Result<(), ServerError> {
+    let current: Option<(i16, String, String)> =
+        db::query_as("select weekday, at, timezone from public.review_schedules where user_id = $1 and goal_id = $2")
+            .bind(user)
+            .bind(goal)
+            .fetch_optional(pool)
+            .await?;
+    let (weekday, at) = match &current {
+        Some((_, _, zone)) if zone == tz.name() => return Ok(()),
+        Some((w, a, _)) => (u8::try_from(*w).expect("weekday is checked by the table"), a.clone()),
+        None => (DEFAULT_REVIEW_WEEKDAY, DEFAULT_REVIEW_AT.to_string()),
+    };
+    let next = next_review(weekday, &at, tz, now).map_err(ServerError::Db)?;
+    db::query(
+        "insert into public.review_schedules (user_id, goal_id, weekday, at, timezone, enabled, next_at)
+         values ($1, $2, $3, $4, $5, true, $6)
+         on conflict (user_id, goal_id) do update set timezone = excluded.timezone, next_at = excluded.next_at",
+    )
+    .bind(user)
+    .bind(goal)
+    .bind(i16::from(weekday))
+    .bind(&at)
+    .bind(tz.name())
+    .bind(next)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 impl Engine {
-    /// Creates `user`'s weekly review of `goal` (Sunday 18:00 in `tz`) when
-    /// it has none, else moves it to zone `tz` when that changed.
-    /// Every owner request with a zone calls it.
+    /// Creates `user`'s weekly review of `goal` through [`ensure_review_row`]
+    /// at the engine clock's now. Every owner request with a zone calls it.
     pub(crate) async fn ensure_review(&self, user: Uuid, goal: Uuid, tz: Tz) -> Result<(), ServerError> {
-        let now = utc(self.deps().clock.now_ms());
-        let pool = &self.deps().pool;
-        let current: Option<(i16, String, String)> =
-            db::query_as("select weekday, at, timezone from public.review_schedules where user_id = $1 and goal_id = $2")
-                .bind(user)
-                .bind(goal)
-                .fetch_optional(pool)
-                .await?;
-        let (weekday, at) = match &current {
-            Some((_, _, zone)) if zone == tz.name() => return Ok(()),
-            Some((w, a, _)) => (u8::try_from(*w).expect("weekday is checked by the table"), a.clone()),
-            None => (DEFAULT_REVIEW_WEEKDAY, DEFAULT_REVIEW_AT.to_string()),
-        };
-        let next = next_review(weekday, &at, tz, now).map_err(ServerError::Db)?;
-        db::query(
-            "insert into public.review_schedules (user_id, goal_id, weekday, at, timezone, enabled, next_at)
-             values ($1, $2, $3, $4, $5, true, $6)
-             on conflict (user_id, goal_id) do update set timezone = excluded.timezone, next_at = excluded.next_at",
-        )
-        .bind(user)
-        .bind(goal)
-        .bind(i16::from(weekday))
-        .bind(&at)
-        .bind(tz.name())
-        .bind(next)
-        .execute(pool)
-        .await?;
-        Ok(())
+        ensure_review_row(&self.deps().pool, user, goal, tz, utc(self.deps().clock.now_ms())).await
     }
 
     /// Moves every weekly review of `user` to the IANA zone `timezone` (the owner

@@ -466,7 +466,7 @@ async fn places_and_links_converge_under_lww() {
     let mut b = Device::new("00000000000000bb", &server, 1_763_683_300_000);
     let mut place = samples::place();
     repo::put(&a.conn, &mut a.clock, &mut place).unwrap();
-    let mut link: PlaceLink = serde_json::from_value(samples::all()[19].clone()).unwrap();
+    let mut link: PlaceLink = serde_json::from_value(samples::all()[20].clone()).unwrap();
     repo::put(&a.conn, &mut a.clock, &mut link).unwrap();
     assert_eq!(a.sync().await.pushed, 2);
     assert_eq!(b.sync().await.pulled, 2);

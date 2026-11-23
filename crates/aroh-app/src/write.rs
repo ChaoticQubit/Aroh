@@ -202,6 +202,7 @@ fn apply_change(conn: &Connection, clock: &mut Hlc, proposal: &Proposal, change:
                 status: ActionStatus::Planned,
                 locked: false,
                 done_at: None,
+                card: None,
                 updated_at: String::new(),
                 deleted: false,
             };

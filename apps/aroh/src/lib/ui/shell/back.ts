@@ -20,6 +20,8 @@ export function screenTitle(url: string): string {
 	if (SUBS[path]) return SUBS[path];
 	if (path.startsWith('/personas')) return 'Coaches';
 	if (/^\/goals\/[^/]+\/chat$/.test(path)) return 'Goal chat';
+	if (/^\/actions\/[^/]+\/chat$/.test(path)) return 'Card chat';
+	if (/^\/actions\/[^/]+$/.test(path)) return 'Session';
 	if (/^\/goals\/[^/]+$/.test(path)) return 'Goal';
 	return 'Aroh';
 }
@@ -35,7 +37,7 @@ export function parentOf(url: string): { path: string; label: string } | null {
 	if (path.startsWith('/personas')) return query.get('goal') ? up(`/goals/${query.get('goal')}`) : up('/settings');
 	if (path === '/settings/location/log') return up('/settings/location');
 	if (path.startsWith('/settings/')) return up('/settings');
-	const chat = /^(\/goals\/[^/]+)\/chat$/.exec(path);
+	const chat = /^(\/(?:goals|actions)\/[^/]+)\/chat$/.exec(path);
 	if (chat) return up(chat[1]);
 	if (path.startsWith('/goals/')) return up('/goals');
 	return up('/today');

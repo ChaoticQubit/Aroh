@@ -263,6 +263,7 @@ impl RunIo {
         let mut tools = ToolRegistry::new();
         let env = ToolEnv { pool: deps.pool.clone(), hlc: deps.hlc.clone(), clock: deps.clock.clone(), user, goal };
         tools.register_toolkit(aroh_toolkit(env.clone())).map_err(|e| ServerError::Setup(e.to_string()))?;
+        let env_cards = env.clone();
         tools.register_toolkit(crate::triage::triage_toolkit(env)).map_err(|e| ServerError::Setup(e.to_string()))?;
         register_web(&mut tools, search_kit(&deps, user).await?, deps.web.clone())?;
         let (busy, fixed) = run_bounds(&deps.pool, run).await?;
@@ -270,7 +271,11 @@ impl RunIo {
         let mut conditions = Conditions::new();
         conditions.register("autonomy_gate", Arc::new(autonomy_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
         conditions.register("limits_gate", Arc::new(crate::limits::limits_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
+        conditions.register("cards_gate", Arc::new(crate::cards::cards_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
         tools.register(crate::limits::tool()).map_err(|e| ServerError::Setup(e.to_string()))?;
+        for t in crate::cards::card_tools(env_cards) {
+            tools.register(t).map_err(|e| ServerError::Setup(e.to_string()))?;
+        }
         let writer = Arc::new(UsageWriter {
             pool: deps.pool.clone(),
             hlc: deps.hlc.clone(),
