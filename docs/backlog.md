@@ -38,3 +38,5 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B32 | Owner, build 3 | Goals tab | Tapping Goals from inside a goal shows a blank screen until another tab is visited | high | open, pod 31 |
 | B33 | Owner, build 3 | write_plan tool | First goal's later run stopped: write_plan invalid arguments "bad cadence for quizzes score" after the plan was applied | high | open, pod 29 |
 | B34 | Owner, build 3 | Calendar status | Action checked done on Today still shows blue (planned) on the Calendar, not marked done | high | open, pod 31 |
+| B35 | Owner, build 3 | Calendar | No swipe left or right to change day or week | medium | open, pod 31 |
+| B36 | Owner, build 3 | intake, planner | Intake questions shallow for every goal; workout plan had no session content (exercises, sets, reps) and no nutrition guidance | high | open, pod 29 (planner notes, coach intake) |
