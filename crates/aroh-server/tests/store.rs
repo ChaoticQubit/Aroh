@@ -1,12 +1,12 @@
 mod common;
 
-use aroh_domain::rows::{Goal, Usage};
+use aroh_domain::rows::{Goal, Preference, Usage};
 use aroh_server::checkpoints::{events_after, EventBuffer, PgCheckpoints};
 use aroh_server::db::{self, PgPool};
 use aroh_server::error::ServerError;
 use aroh_server::ledger::{goal_key, user_key, PgLedger};
 use aroh_server::queue::PgQueue;
-use aroh_server::rows::{insert_run, put_row, utc, RunRow, ServerClock};
+use aroh_server::rows::{get_row, insert_run, list_rows, put_row, utc, RunRow, ServerClock};
 use aroh_server::vault::{MasterKey, Vault};
 use common::{pg, user, MASTER, T0};
 use serde_json::{json, Value};
@@ -262,6 +262,45 @@ async fn concurrent_claims_skip_locked_rows() {
     ids.dedup();
     assert_eq!(ids.len(), total, "no run is leased twice");
     assert_eq!(total, 20);
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn rows_read_through_a_column_added_after_this_build() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let hlc = ServerClock::default();
+    let mut g = Goal {
+        id: Uuid::now_v7().to_string(),
+        user_id: u.to_string(),
+        category_id: None,
+        title: "Read a book".into(),
+        context: None,
+        deadline: None,
+        status: aroh_domain::rows::GoalStatus::Active,
+        autonomy: aroh_domain::rows::Autonomy::Ask,
+        created_at: utc(T0),
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&pool, &hlc, u, &mut g).await.unwrap();
+    let mut p = Preference {
+        id: Uuid::now_v7().to_string(),
+        user_id: u.to_string(),
+        fact: "Reads in the evening".into(),
+        source: "chat".into(),
+        noted_at: utc(T0),
+        confirmed: true,
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&pool, &hlc, u, &mut p).await.unwrap();
+    db::query("alter table public.goals add column added_later boolean not null default true").execute(&pool).await.unwrap();
+    db::query("alter table public.preferences add column added_later text").execute(&pool).await.unwrap();
+    let goals = list_rows::<Goal>(&pool, u, &[], false).await.unwrap();
+    assert_eq!(goals, vec![g.clone()]);
+    assert_eq!(get_row::<Goal>(&pool, u, &g.id).await.unwrap(), Some(g));
+    assert_eq!(get_row::<Preference>(&pool, u, &p.id).await.unwrap(), Some(p));
 }
 
 #[tokio::test]
