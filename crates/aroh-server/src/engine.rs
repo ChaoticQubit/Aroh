@@ -8,7 +8,7 @@ use crate::tools::local_text;
 use crate::vault::{check_vendor, KeyInfo};
 use crate::teams;
 use crate::triage::{triage_input, StartTriage};
-use crate::workflows::{self, CALENDAR_TRIAGE, LOG_INTAKE, NEW_GOAL, REPLAN};
+use crate::workflows::{self, CALENDAR_TRIAGE, LOG_INTAKE, NEW_GOAL, REPLAN, RUN_AGAIN};
 use crate::db;
 use aroh_domain::calendar::local_days;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
@@ -29,7 +29,7 @@ use troupekit_agent::{Limits, PeriodLimit};
 use troupekit_core::ids::RunId;
 use troupekit_core::secret::Secret;
 use troupekit_core::store::CheckpointStore;
-use troupekit_graph::{Ask, GraphRun, Stop, Workflow};
+use troupekit_graph::{Ask, GraphRun, GraphStatus, Stop, Workflow};
 use troupekit_host::{JobQueue, Lease, Processed, Runner, TickOptions, TickReport, WorkOptions};
 use troupekit_providers::CompletionRequest;
 use utoipa::ToSchema;
@@ -73,6 +73,27 @@ pub struct StartGoal {
 pub struct StartReplan {
     pub reason: String,
     pub timezone: String,
+}
+
+/// Body of `POST /v1/goals/{goal_id}/run-again`: the owner's timezone and,
+/// when the owner edited them first, the changed answers by question id.
+/// Left out, the saved answers are kept.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunAgain {
+    pub timezone: String,
+    #[serde(default)]
+    pub answers: Option<Vec<GivenAnswer>>,
+}
+
+/// One answer the owner gave on the goal card: the question id and the
+/// answer text, or null to skip the question.
+/// Part of `RunAgain`.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GivenAnswer {
+    pub id: String,
+    pub answer: Option<String>,
 }
 
 /// Body of `POST /v1/logs`: one free-text log, when it happened (RFC 3339,
@@ -285,6 +306,40 @@ pub(crate) fn parse_tz(name: &str) -> Result<Tz, ServerError> {
 /// Returns the joined text; an absent context adds nothing.
 pub(crate) fn about(title: &str, context: Option<&str>) -> String {
     format!("{title} {}", context.unwrap_or(""))
+}
+
+/// The answers a Run again plans with: one per question of `intake`, in its
+/// order, from `given` when the owner edited it, else from `saved`.
+/// Returns `BadRequest` for a given id that no question has.
+fn merge_answers(intake: &Value, saved: Value, given: &[GivenAnswer]) -> Result<Value, ServerError> {
+    let ids: Vec<&str> = intake
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|q| q.get("id").and_then(Value::as_str))
+        .collect();
+    if let Some(bad) = given.iter().find(|g| !ids.contains(&g.id.as_str())) {
+        return Err(ServerError::BadRequest(format!("no question `{}` was asked for this goal", bad.id)));
+    }
+    let old: Map<String, Value> = saved
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|a| Some((a.get("id")?.as_str()?.to_string(), a.get("answer").cloned().unwrap_or(Value::Null))))
+        .collect();
+    let merged: Vec<Value> = ids
+        .iter()
+        .map(|id| {
+            let answer = match given.iter().find(|g| g.id == *id) {
+                Some(g) => json!(g.answer),
+                None => old.get(*id).cloned().unwrap_or(Value::Null),
+            };
+            json!({"id": id, "answer": answer})
+        })
+        .collect();
+    assert_eq!(merged.len(), ids.len(), "one answer per question");
+    Ok(Value::Array(merged))
 }
 
 fn check_text(field: &str, text: &str) -> Result<(), ServerError> {
@@ -534,14 +589,24 @@ impl Engine {
                 g
             }
         };
+        let mut input = self.planning_input(user, &goal, tz, now).await?;
+        input.insert("blocked_topics".into(), json!(crate::profile::blocked_topics(&self.deps.pool, user).await?));
+        let run = self.launch_planning(user, &goal, NEW_GOAL, input).await?;
+        self.ensure_review(user, id, tz).await?;
+        Ok(Started { goal_id: Some(id), run_id: run.0 })
+    }
+
+    /// The input every planning run of `goal` starts with: the goal, the
+    /// calendar, profile, files, places, busy days, fresh limits and the
+    /// plugin guide of its team. Returns the state map.
+    async fn planning_input(&self, user: Uuid, goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Result<Map<String, Value>, ServerError> {
         let mut input = Map::new();
-        input.insert("goal".into(), Self::goal_input(&goal, tz, now));
+        input.insert("goal".into(), Self::goal_input(goal, tz, now));
         input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
         input.insert("profile".into(), json!(self.profile(user).await?));
-        input.insert("blocked_topics".into(), json!(crate::profile::blocked_topics(&self.deps.pool, user).await?));
         input.insert("files".into(), json!(crate::files::goal_files(&self.deps.pool, user, &goal.id).await?));
         input.insert("places".into(), json!(self.places(user).await?));
-        let (busy, away_days) = self.busy(user, &goal, tz, now).await?;
+        let (busy, away_days) = self.busy(user, goal, tz, now).await?;
         input.insert("busy".into(), json!(busy));
         input.insert("away_days".into(), json!(away_days));
         input.insert("limits".into(), crate::limits::initial());
@@ -549,11 +614,90 @@ impl Engine {
         let team = teams::for_goal(user, goal.category_id.as_deref(), &about(&goal.title, goal.context.as_deref()));
         let template = aroh_plugins::template(team.template).expect("every team template ships");
         input.insert("plugin_guide".into(), json!({"template": template, "reference": aroh_plugins::reference()}));
-        let mut wf = workflows::workflow(NEW_GOAL)?;
+        Ok(input)
+    }
+
+    /// Runs planning workflow `name` for `goal` on `input`, its research and
+    /// plan nodes staffed by the goal's category team.
+    /// Returns the new run id.
+    async fn launch_planning(&self, user: Uuid, goal: &Goal, name: &str, input: Map<String, Value>) -> Result<RunId, ServerError> {
+        let id = Uuid::parse_str(&goal.id).map_err(|_| ServerError::Db("bad goal id".into()))?;
+        let team = teams::for_goal(user, goal.category_id.as_deref(), &about(&goal.title, goal.context.as_deref()));
+        let mut wf = workflows::workflow(name)?;
         teams::staff(&mut wf, team);
-        let run = self.launch(user, Some(id), wf, input).await?;
-        self.ensure_review(user, id, tz).await?;
-        Ok(Started { goal_id: Some(id), run_id: run.0 })
+        self.launch(user, Some(id), wf, input).await
+    }
+
+    /// Plans `user`'s goal `goal_id` again (Q74): fresh research and planning
+    /// with the questions and answers of its newest planning run, `req.answers`
+    /// overriding by question id, then approval; the calendar changes only on
+    /// approval. A goal with no saved answers runs the full new-goal workflow.
+    /// Returns the run, `NotFound` for a missing goal, `BadRequest` for an
+    /// answer to a question that was never asked.
+    pub async fn run_again(&self, user: Uuid, goal_id: Uuid, req: RunAgain) -> Result<Started, ServerError> {
+        let tz = parse_tz(&req.timezone)?;
+        let goal = get_row::<Goal>(&self.deps.pool, user, &goal_id.to_string())
+            .await?
+            .filter(|g| !g.deleted)
+            .ok_or_else(|| ServerError::NotFound(format!("goal {goal_id}")))?;
+        let given = req.answers.unwrap_or_default();
+        for a in &given {
+            if let Some(text) = &a.answer {
+                check_text("answer", text)?;
+            }
+        }
+        let Some((intake, saved)) = self.saved_answers(user, goal_id).await? else {
+            if !given.is_empty() {
+                return Err(ServerError::BadRequest("this goal has no saved answers to edit".into()));
+            }
+            let start = StartGoal {
+                goal_id: Some(goal_id),
+                title: goal.title.clone(),
+                context: goal.context.clone(),
+                deadline: goal.deadline.clone(),
+                category_id: None,
+                autonomy: None,
+                timezone: req.timezone,
+                reminders: None,
+                use_calendars: None,
+                run_limit_minutes: None,
+            };
+            return self.start_goal(user, start).await;
+        };
+        let answers = merge_answers(&intake, saved, &given)?;
+        let now = self.now();
+        prepare_reads(&self.deps.pool, user, now, DEFAULT_WINDOW_DAYS).await?;
+        let mut input = self.planning_input(user, &goal, tz, now).await?;
+        input.insert("intake".into(), intake);
+        input.insert("answers".into(), answers);
+        let run = self.launch_planning(user, &goal, RUN_AGAIN, input).await?;
+        self.ensure_review(user, goal_id, tz).await?;
+        Ok(Started { goal_id: Some(goal_id), run_id: run.0 })
+    }
+
+    /// The `intake` and `answers` of `user`'s newest new-goal or run-again
+    /// run of `goal` that has both, or None when no run got that far.
+    /// Runs whose checkpoint does not load are passed over.
+    async fn saved_answers(&self, user: Uuid, goal: Uuid) -> Result<Option<(Value, Value)>, ServerError> {
+        let ids: Vec<Uuid> = db::query_scalar(
+            "select id from public.runs where user_id = $1 and goal_id = $2 and workflow = any($3)
+             order by created_at desc, id desc limit $4",
+        )
+        .bind(user)
+        .bind(goal)
+        .bind(vec![NEW_GOAL.to_string(), RUN_AGAIN.to_string()])
+        .bind(RUN_LIST_LIMIT)
+        .fetch_all(&self.deps.pool)
+        .await?;
+        let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
+        for id in ids {
+            let Some(cp) = store.latest(RunId(id)).await? else { continue };
+            let Ok(run) = GraphRun::from_checkpoint(&cp) else { continue };
+            if let (Some(intake), Some(answers)) = (run.state().get("intake"), run.state().get("answers")) {
+                return Ok(Some((intake.clone(), answers.clone())));
+            }
+        }
+        Ok(None)
     }
 
     /// Starts the replan workflow for `user`'s goal `goal_id` with `req`'s
@@ -712,9 +856,9 @@ impl Engine {
         Err(ServerError::Conflict("the run kept moving; try again".into()))
     }
 
-    /// Continues `user`'s stopped run `run_id` where it stopped, with the
-    /// user's current time limit and no active time used, and queues it.
-    /// Returns `Conflict` for a run that is not stopped.
+    /// Continues `user`'s stopped run `run_id`, or one failed on a transient
+    /// error, where it stopped, with the user's current time limit and no
+    /// active time used, and queues it. Returns `Conflict` for any other run.
     pub async fn retry(&self, user: Uuid, run_id: Uuid) -> Result<(), ServerError> {
         let row = run_row_for(&self.deps.pool, user, RunId(run_id)).await?;
         if let Some(goal) = row.goal_id {
@@ -763,6 +907,9 @@ impl Engine {
         let mut status = serde_json::to_value(run.status()).expect("statuses serialize");
         if let Some(stop) = run.stopped() {
             status["reason"] = serde_json::to_value(stop).expect("stops serialize");
+        }
+        if matches!(run.status(), GraphStatus::Failed { .. }) {
+            status["retryable"] = json!(run.retryable());
         }
         Ok(RunView {
             run_id,

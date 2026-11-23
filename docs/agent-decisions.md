@@ -213,3 +213,48 @@ Build the Dashboard tab at `/dashboard` matching the approved pod 30 mockup: fil
 ### Unresolved
 
 - None.
+
+## Retry and Run again (pod 40, 2026-11-23, branch `fix/retry-failed-runs`, Q74)
+
+### Goal
+
+A run that failed on a transient error (owner bug: `write_plan` hit `EMAXCONNSESSION`, the actions landed, the card showed Failed with no Retry) can be retried from the failed step. Every goal also gets Run again: fresh research and planning with the saved answers, Keep or Edit them first, the new plan goes to approval, the calendar changes only on approval.
+
+### Constraints
+
+- `troupekit/` stays generic: no Aroh names, no Aroh rules.
+- The tool idempotency key is `{run_id}:{step}:{index}` and `row_id` hashes it, so a re-run with a new step would write new rows.
+- Stopped runs (time limit, cancelled) keep their behaviour.
+- Pod 38 restyles the goal screen later: the UI change follows the existing style and stays small.
+
+### Decisions
+
+- troupekit `GraphRun::retry` also accepts a run failed by node work: a tool node whose tool failed with `failed` or `http`, or any node whose transient retries ran out. It is refused for setup and routing errors, `max_steps`, output type mismatches, agent failures, and tool errors of kind invalid arguments, unknown tool, config, blocked, decode, spec or duplicate. Corrupt or other-format checkpoints never reach `retry`: `from_checkpoint` refuses them.
+- The class is stored at failure time as `retryable` on the run (serde default false). A failed run saved before this change carries no marker; `from_checkpoint` classifies it once from troupekit's own error prefixes (`node \`x\`: tool \`y\`: failed: `, `: http: `, `error after N retries: `), so the owner's stuck run gets Retry.
+- Retry pins each tool branch still at its node to the `(step, index)` of the failed call before queueing, and the call reuses that key, so a re-run tool writes the same rows. `retries` resets to 0. `GraphRun::retryable()` tells the host.
+- `write_plan` leaves a row it already wrote (same derived id, live or tombstoned) as it is, so a replay neither duplicates nor resets an action the owner completed or deleted in between.
+- Server: `engine.retry` and `/v1/runs/{id}/retry` accept retryable failures (409 otherwise); `run_view` adds `status.retryable`.
+- Run again: `POST /v1/goals/{id}/run-again` with `timezone` and optional edited `answers`. The server takes `intake` and `answers` from the goal's newest `new-goal` or `run-again` run, overrides the given answer ids (an id not asked is a 400), and starts the `run-again` workflow: research, save facts, plan, limits, approve, `replace_plan`, plugin. A goal without saved answers runs the full `new-goal` workflow.
+- `replace_plan` is `write_plan` that first tombstones the goal's future planned, unlocked actions and its series, except the rows this call writes; done, skipped, missed, locked and past actions stay, and so do trackers (a new plan's tracker with the name of a live one is not added again). It runs only after approval, so nothing changes before.
+- App: the status card and chat show Retry for retryable failures; Change time limit only for time-limit stops. Run again sits above Delete goal; its sheet asks Keep answers or Edit answers; Edit opens the existing answers form with a Run again button.
+
+### Rejected alternatives
+
+- Classifying every failure from its error string: the class is known structurally at failure time; the string is only the fallback for old checkpoints.
+- Keying tool calls by node name instead of step: changes every existing key and breaks replays of saved runs.
+- Run again through the replan workflow: replan proposes changes to the existing plan, not fresh research and planning.
+
+### Risks
+
+- An agent node failed for good (max turns, output check) is not retryable; the owner uses Run again.
+- Run again tombstones the old series; its past occurrences keep pointing at the tombstoned series.
+
+### Acceptance criteria
+
+- troupekit tests: a tool failure is retried with the same idempotency key; a non-retryable failure is refused; a marker-less legacy failure is classified; stopped runs unchanged.
+- Server PG tests: `write_plan` twice yields one set of actions; a run failed in `write` is retried over the API; run again keeps done actions, changes nothing before approval and carries the answers over.
+- vitest for the goal card status and chat; `svelte-check` clean.
+
+### Unresolved
+
+- None.

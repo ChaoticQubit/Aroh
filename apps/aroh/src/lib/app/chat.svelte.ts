@@ -1,7 +1,7 @@
 import type { ChatMessage } from '$lib/ui/contract';
 import type { LimitsCard } from '$lib/ui/plan/limits';
 import * as client from './client';
-import { ACTIVE, chatFromRun, engine, fixedActionIds, NEEDS_ENGINE, questionsOf, type PlanItem, type RunEvent, type RunView } from './engine';
+import { ACTIVE, chatFromRun, engine, fixedActionIds, NEEDS_ENGINE, questionsOf, type PlanItem, type RunAnswer, type RunEvent, type RunView } from './engine';
 import { fillNext, groupMessage, submissionOf, withAnswer, withSkip, type QuestionGroup } from './questions';
 import { connectWakeups, wakeups } from './realtime';
 import { blankDraft, startBody } from './newgoal';
@@ -221,6 +221,18 @@ export class GoalChat {
 		const r = await engine.retry(this.runId);
 		if (!r.ok) return this.say(`The run did not restart: ${r.message}`);
 		await this.watch(this.runId);
+	}
+
+	/**
+	 * Plans the goal again (Q74) with its saved answers, or with `answers` when the owner edited
+	 * them, and follows the new run, whose research and answers the card then shows.
+	 */
+	async runAgain(answers?: RunAnswer[]) {
+		if (!this.goalId) return;
+		const r = await engine.runAgain(this.goalId, answers);
+		if (!r.ok) return this.say(`The goal did not start again: ${r.message}`);
+		this.originId = r.value.run_id;
+		await this.watch(r.value.run_id);
 	}
 
 	/** Hands a PersonaChat event (send, answer, skip, submit, approve with its fixed items, change, stop or retry) to the chat. */

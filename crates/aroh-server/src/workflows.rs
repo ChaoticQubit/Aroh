@@ -12,6 +12,10 @@ use uuid::Uuid;
 /// Intake, questions, research, plan, approval, then write.
 /// Started by `POST /v1/goals`.
 pub const NEW_GOAL: &str = "new-goal";
+/// Workflow name of planning a goal again with its saved answers.
+/// Research, plan, approval, then the new plan replaces the old one.
+/// Started by `POST /v1/goals/{goal_id}/run-again`.
+pub const RUN_AGAIN: &str = "run-again";
 /// Workflow name of adaptation.
 /// Proposal, autonomy gate, approval, then apply or reject.
 /// Started by `POST /v1/goals/{goal_id}/replan`.
@@ -29,8 +33,9 @@ pub const LEARN_PREFERENCE: &str = "learn-preference";
 /// Started by `POST /v1/calendar/triage`.
 pub const CALENDAR_TRIAGE: &str = "calendar-triage";
 
-const WORKFLOWS: [(&str, &str); 5] = [
+const WORKFLOWS: [(&str, &str); 6] = [
     (NEW_GOAL, include_str!("../workflows/new-goal.toml")),
+    (RUN_AGAIN, include_str!("../workflows/run-again.toml")),
     (REPLAN, include_str!("../workflows/replan.toml")),
     (LOG_INTAKE, include_str!("../workflows/log-intake.toml")),
     (LEARN_PREFERENCE, include_str!("../workflows/learn-preference.toml")),
@@ -162,6 +167,7 @@ mod tests {
             }
         }
         assert_eq!(persona_names(&workflow(NEW_GOAL).unwrap()), ["goal-planner", "goal-researcher", "intake-interviewer", "plugin-builder"]);
+        assert_eq!(persona_names(&workflow(RUN_AGAIN).unwrap()), ["goal-planner", "goal-researcher", "plugin-builder"]);
         assert!(workflow("nope").is_err());
     }
 

@@ -321,6 +321,51 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/goals/{goal_id}/run-again:
+    post:
+      tags:
+      - runs
+      operationId: run_again
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunAgain'
+        required: true
+      responses:
+        '202':
+          description: 'Run again queued: fresh research and plan with the saved answers'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/hooks/enqueue:
     post:
       tags:
@@ -1057,6 +1102,22 @@ components:
           type: string
         message:
           type: string
+    GivenAnswer:
+      type: object
+      description: |-
+        One answer the owner gave on the goal card: the question id and the
+        answer text, or null to skip the question.
+        Part of `RunAgain`.
+      required:
+      - id
+      properties:
+        answer:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+      additionalProperties: false
     Health:
       type: object
       description: |-
@@ -1330,6 +1391,24 @@ components:
           type: integer
           format: int32
           minimum: 0
+    RunAgain:
+      type: object
+      description: |-
+        Body of `POST /v1/goals/{goal_id}/run-again`: the owner's timezone and,
+        when the owner edited them first, the changed answers by question id.
+        Left out, the saved answers are kept.
+      required:
+      - timezone
+      properties:
+        answers:
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/GivenAnswer'
+        timezone:
+          type: string
+      additionalProperties: false
     RunAnswer:
       type: object
       description: One question of a run with the owner's answer, `None` when skipped.

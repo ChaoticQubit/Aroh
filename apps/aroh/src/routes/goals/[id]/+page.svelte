@@ -21,6 +21,8 @@
 	import { goalAttachments, pendingAttachment, uploadFailed } from '$lib/app/files';
 	import type { Attachment } from '$lib/ui/components/goal/Attachments.svelte';
 	import DeleteGoalSheet from '$lib/ui/components/goal/DeleteGoalSheet.svelte';
+	import RunAgainSheet from '$lib/ui/components/goal/RunAgainSheet.svelte';
+	import type { RunAnswer } from '$lib/app/engine';
 	import type { PlanContext } from '$lib/ui/components/plan/PlanCard.svelte';
 	import { AHEAD_DAYS } from '$lib/app/calendar';
 	import { formatYmd, shiftDay } from '$lib/ui/format';
@@ -155,6 +157,17 @@
 		await chat.retry();
 	}
 
+	let askRunAgain = $state(false);
+	let rerun = $state(false);
+
+	/** Syncs first, so the engine plans from the newest rows, then runs the goal again (Q74) with `answers`, or the saved ones. */
+	async function runAgain(answers?: RunAnswer[]) {
+		askRunAgain = false;
+		rerun = false;
+		await client.sync().catch(() => null);
+		await chat.runAgain(answers);
+	}
+
 	let confirmDelete = $state(false);
 	let deleting = $state(false);
 
@@ -206,6 +219,8 @@
 			onstop={() => void chat.stop()}
 			onretry={() => void onretry()}
 			onanswers={(changed) => chat.handle({ type: 'send', text: answersReason(changed) })}
+			{rerun}
+			onrerun={(answers) => void runAgain(answers)}
 			files={[...goalAttachments(s.files ?? [], goal.id), ...failed]}
 			{upload}
 			onfiles={(list) => void uploadFiles(list)}
@@ -216,9 +231,13 @@
 		/>
 	{/key}
 	{#if places && goal.id !== places.routines_goal}
-		<div class="px-4 pt-2 pb-6">
+		<div class="flex flex-col gap-2 px-4 pt-2 pb-6">
+			{#if !status.stop}<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-fg outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => (askRunAgain = true)}>Run again</button>{/if}
 			<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-muted outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => (confirmDelete = true)}>Delete goal</button>
 		</div>
+	{/if}
+	{#if askRunAgain}
+		<RunAgainSheet title={goal.title} answers={(chat.origin?.answers ?? []).length > 0} onkeep={() => void runAgain()} onedit={() => ((askRunAgain = false), (rerun = true))} onclose={() => (askRunAgain = false)} />
 	{/if}
 	{#if confirmDelete}
 		<DeleteGoalSheet title={goal.title} busy={deleting} ondelete={(keep) => void deleteGoal(keep)} onclose={() => (confirmDelete = false)} />

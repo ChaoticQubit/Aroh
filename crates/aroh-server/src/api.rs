@@ -1,5 +1,5 @@
 use crate::auth::{Service, UserId, Verifier};
-use crate::engine::{Answer, Engine, KeyTest, RunLimit, RunSummary, RunView, SetKey, StartGoal, StartReplan, Started, SubmitLog, TickSummary, Waiting};
+use crate::engine::{Answer, Engine, GivenAnswer, KeyTest, RunAgain, RunLimit, RunSummary, RunView, SetKey, StartGoal, StartReplan, Started, SubmitLog, TickSummary, Waiting};
 use crate::error::{ErrorBody, ErrorDetail, ServerError};
 use crate::insights::{self, Insight};
 use crate::personas::{EditPersona, Origin, PersonaView};
@@ -154,6 +154,20 @@ async fn start_replan(
 ) -> Result<(StatusCode, Json<Started>), ServerError> {
     let req = body(json, true)?;
     Ok((StatusCode::ACCEPTED, Json(s.engine.start_replan(user, goal_id, req).await?)))
+}
+
+#[utoipa::path(post, path = "/v1/goals/{goal_id}/run-again", tag = "runs", security(("bearer" = [])),
+    params(("goal_id" = Uuid, Path)),
+    request_body = RunAgain,
+    responses((status = 202, description = "Run again queued: fresh research and plan with the saved answers", body = Started), (status = 400, body = ErrorBody), (status = 404, body = ErrorBody), (status = 422, body = ErrorBody)))]
+async fn run_again(
+    State(s): State<AppState>,
+    UserId(user): UserId,
+    Path(goal_id): Path<Uuid>,
+    json: Result<Json<RunAgain>, JsonRejection>,
+) -> Result<(StatusCode, Json<Started>), ServerError> {
+    let req = body(json, true)?;
+    Ok((StatusCode::ACCEPTED, Json(s.engine.run_again(user, goal_id, req).await?)))
 }
 
 #[utoipa::path(post, path = "/v1/logs", tag = "runs", security(("bearer" = [])),
@@ -411,10 +425,10 @@ impl Modify for Bearer {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
-    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, submit_log, start_triage, list_runs, get_run, answer, cancel_run, retry_run, get_run_limit, set_run_limit, tick, enqueue_hook, register_device, unregister_device, push_tick,
+    paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, run_again, submit_log, start_triage, list_runs, get_run, answer, cancel_run, retry_run, get_run_limit, set_run_limit, tick, enqueue_hook, register_device, unregister_device, push_tick,
         list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review, set_timezone,
         list_personas, copy_persona, edit_persona),
-    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, RunLimit, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
+    components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, RunAgain, GivenAnswer, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, RunLimit, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
         SavePlugin, PluginView, Insight, ReviewSchedule, SetReview, SetTimezone, TimezoneSet,
         EditPersona, PersonaView, Origin, Kind)),
     modifiers(&Bearer)
@@ -439,6 +453,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/keys/{setting_id}/test", post(test_key))
         .route("/v1/goals", post(start_goal))
         .route("/v1/goals/{goal_id}/replan", post(start_replan))
+        .route("/v1/goals/{goal_id}/run-again", post(run_again))
         .route("/v1/logs", post(submit_log))
         .route("/v1/calendar/triage", post(start_triage))
         .route("/v1/runs", get(list_runs))

@@ -10,7 +10,7 @@ use troupekit_core::event::{EventBody, PauseReason, Usage};
 use troupekit_core::ids::RunId;
 use troupekit_core::message::{Message, Role};
 use troupekit_core::store::Checkpoint;
-use troupekit_tools::{fence_untrusted, ToolContext};
+use troupekit_tools::{fence_untrusted, ToolContext, ToolError};
 
 /// Version of the serialized graph run.
 /// `from_checkpoint` refuses any other, so a deploy never resumes
@@ -52,6 +52,51 @@ impl Stop {
             Stop::Cancelled => "cancelled".into(),
         }
     }
+}
+
+/// Why a run failed inside a step. `Tool`: a tool node's call failed on a
+/// store or network error; `Transient`: transient retries ran out. Both
+/// can be retried. `Final`: anything else, which a retry would repeat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Failure {
+    Final,
+    Tool,
+    Transient,
+}
+
+impl Failure {
+    fn of_error(error: &str) -> Failure {
+        let after_node = error
+            .strip_prefix("node `")
+            .and_then(|rest| rest.split_once("`: tool `"))
+            .and_then(|(_, rest)| rest.split_once("`: "))
+            .map(|(_, rest)| rest);
+        let retries = error
+            .strip_prefix("error after ")
+            .is_some_and(|rest| rest.contains(" retries: "));
+        match after_node {
+            Some(rest) if rest.starts_with("failed: ") || rest.starts_with("http: ") => Failure::Tool,
+            _ if retries => Failure::Transient,
+            _ => Failure::Final,
+        }
+    }
+}
+
+/// The step and branch index a tool call first ran with, kept on a branch
+/// a retry re-runs so the call keeps its idempotency key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CallKey {
+    step: u64,
+    index: usize,
+}
+
+/// A tool node call that failed: the message, and whether the error kind
+/// is one a later call may not repeat (`failed`, `http`).
+struct ToolFailure {
+    message: String,
+    transient: bool,
 }
 
 /// What one `step` did. `Continue`: step again now. `RetryAt`: a transient
@@ -98,6 +143,8 @@ enum At {
 struct Branch {
     node: String,
     at: At,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    call: Option<CallKey>,
 }
 
 impl Branch {
@@ -105,6 +152,7 @@ impl Branch {
         Branch {
             node: node.to_string(),
             at: At::Enter,
+            call: None,
         }
     }
 
@@ -122,7 +170,7 @@ impl Branch {
 enum Work {
     Idle,
     Agent(StepOutcome),
-    Tool(Result<Value, String>),
+    Tool(Result<Value, ToolFailure>),
 }
 
 /// One graph run as plain serializable data: the workflow snapshot, the
@@ -149,6 +197,8 @@ pub struct GraphRun {
     active_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stopped: Option<Stop>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    failure: Option<Failure>,
 }
 
 impl GraphRun {
@@ -218,6 +268,7 @@ impl GraphRun {
             time_limit_ms: None,
             active_ms: 0,
             stopped: None,
+            failure: None,
         })
     }
 
@@ -278,15 +329,41 @@ impl GraphRun {
         Ok(())
     }
 
-    /// Continues a stopped run where it stopped, with active time back at
-    /// zero and `time_limit_ms` as its new limit, and queues it.
-    /// Returns `Resume` when the run is not stopped.
+    /// Whether `retry` would continue the run: it was stopped, or it failed
+    /// on a tool's store or network error or ran out of transient retries.
+    /// False for runs that run, wait, finished, or failed for good.
+    pub fn retryable(&self) -> bool {
+        self.stopped.is_some() || matches!(self.failure, Some(Failure::Tool | Failure::Transient))
+    }
+
+    /// Continues a stopped or retryably failed run where it stopped, with
+    /// active time back at zero and `time_limit_ms` as its new limit, and
+    /// queues it. A failed tool call re-runs with its first idempotency key.
+    /// Returns `Resume` when the run is not `retryable`.
     pub fn retry(&mut self, time_limit_ms: Option<u64>) -> Result<(), GraphError> {
-        if self.stopped.is_none() {
-            return Err(GraphError::Resume("only a stopped run can be retried".into()));
+        if !self.retryable() {
+            return Err(GraphError::Resume(
+                "only a stopped run or one failed on a transient error can be retried".into(),
+            ));
         }
-        assert!(matches!(self.status, GraphStatus::Failed { .. }), "a stopped run is failed");
+        assert!(matches!(self.status, GraphStatus::Failed { .. }), "a retryable run is failed");
+        if self.stopped.is_none() && self.failure == Some(Failure::Tool) {
+            let step = self.steps;
+            let tools: Vec<bool> = self
+                .branches
+                .iter()
+                .map(|b| b.at == At::Enter && matches!(self.node(&b.node).kind, NodeKind::Tool { .. }))
+                .collect();
+            assert!(tools.iter().any(|t| *t), "a tool failure leaves its branch at the tool");
+            for (index, (b, tool)) in self.branches.iter_mut().zip(tools).enumerate() {
+                if tool {
+                    b.call.get_or_insert(CallKey { step, index });
+                }
+            }
+        }
         self.stopped = None;
+        self.failure = None;
+        self.retries = 0;
         self.active_ms = 0;
         self.time_limit_ms = time_limit_ms;
         self.queue();
@@ -298,7 +375,7 @@ impl GraphRun {
     /// format, is `running`, or does not match the checkpoint header.
     pub fn from_checkpoint(cp: &Checkpoint) -> Result<GraphRun, GraphError> {
         let bad = |m: String| GraphError::Checkpoint(m);
-        let run: GraphRun =
+        let mut run: GraphRun =
             serde_json::from_value(cp.state.clone()).map_err(|e| bad(e.to_string()))?;
         if run.format != GRAPH_FORMAT {
             return Err(bad(format!(
@@ -317,6 +394,9 @@ impl GraphRun {
                 AgentRun::from_checkpoint(&agent.checkpoint())
                     .map_err(|e| bad(format!("node `{}`: {e}", b.node)))?;
             }
+        }
+        if let (GraphStatus::Failed { error }, None, None) = (&run.status, &run.stopped, run.failure) {
+            run.failure = Some(Failure::of_error(error));
         }
         Ok(run)
     }
@@ -491,6 +571,7 @@ impl GraphRun {
                 workflow: self.workflow.name.clone(),
             });
         }
+        self.failure = None;
         let outcome = self.work(io, &em).await;
         match &outcome {
             GraphOutcome::Continue | GraphOutcome::RetryAt { .. } => {
@@ -516,6 +597,7 @@ impl GraphRun {
                 });
             }
             GraphOutcome::Failed(error) => {
+                self.failure.get_or_insert(Failure::Final);
                 self.status = GraphStatus::Failed {
                     error: error.clone(),
                 };
@@ -560,8 +642,14 @@ impl GraphRun {
                 }) => {
                     retry.get_or_insert((error, retry_after_ms));
                 }
-                Work::Agent(StepOutcome::Failed(e)) | Work::Tool(Err(e)) => {
+                Work::Agent(StepOutcome::Failed(e)) => {
                     return GraphOutcome::Failed(format!("node `{}`: {e}", node.id))
+                }
+                Work::Tool(Err(f)) => {
+                    if f.transient {
+                        self.failure = Some(Failure::Tool);
+                    }
+                    return GraphOutcome::Failed(format!("node `{}`: {}", node.id, f.message));
                 }
                 Work::Agent(StepOutcome::Done(output)) => {
                     let At::Agent { run, .. } = &self.branches[i].at else {
@@ -589,6 +677,7 @@ impl GraphRun {
         if let Some((error, after)) = retry {
             self.retries += 1;
             if self.retries > self.workflow.max_retries {
+                self.failure = Some(Failure::Transient);
                 return GraphOutcome::Failed(format!(
                     "error after {} retries: {error}",
                     self.workflow.max_retries
@@ -656,7 +745,8 @@ impl GraphRun {
                             Work::Agent(run.step(&nio).await)
                         }
                         (At::Enter, NodeKind::Tool { tool }) => {
-                            let ctx = ToolContext::for_call(run_id, step, i);
+                            let key = b.call.unwrap_or(CallKey { step, index: i });
+                            let ctx = ToolContext::for_call(run_id, key.step, key.index);
                             Work::Tool(call_tool(io, em, node, tool, state, ctx).await)
                         }
                         _ => unreachable!("only agent and tool branches work"),
@@ -785,6 +875,7 @@ impl GraphRun {
             Branch {
                 node: join,
                 at: At::Left,
+                call: None,
             },
         );
         true
@@ -833,8 +924,11 @@ async fn call_tool(
     tool: &str,
     state: &Map<String, Value>,
     ctx: ToolContext,
-) -> Result<Value, String> {
-    let args = reads(state, &node.reads)?;
+) -> Result<Value, ToolFailure> {
+    let args = reads(state, &node.reads).map_err(|message| ToolFailure {
+        message,
+        transient: false,
+    })?;
     let key = ctx.idempotency_key.clone().expect("for_call sets the key");
     let step = format!("{}/tool", node.id);
     em.emit(EventBody::StepStarted { step: step.clone() });
@@ -859,7 +953,13 @@ async fn call_tool(
         Ok(out) if !out.is_error => {
             Ok(serde_json::from_str(&out.content).unwrap_or(Value::String(out.content)))
         }
-        Ok(out) => Err(format!("tool `{tool}` failed: {}", out.content)),
-        Err(e) => Err(format!("tool `{tool}`: {e}")),
+        Ok(out) => Err(ToolFailure {
+            message: format!("tool `{tool}` failed: {}", out.content),
+            transient: false,
+        }),
+        Err(e) => Err(ToolFailure {
+            message: format!("tool `{tool}`: {e}"),
+            transient: matches!(e, ToolError::Failed(_) | ToolError::Http(_)),
+        }),
     }
 }

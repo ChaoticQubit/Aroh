@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { chatFromRun, Engine, fixedActionIds, flushLogs, keyStatus, NEEDS_ENGINE, pauseMessage, route, waitLabel, type Answer, type Call, type RunView, type Waiting } from './engine';
 import type { Action } from './client';
+import { deviceZone } from '$lib/ui/clock';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -200,6 +201,31 @@ describe('run limits (Q60)', () => {
 		const cancelled = { status: 'failed' as const, error: 'cancelled by the owner', reason: { kind: 'cancelled' } };
 		expect(chatFromRun(view(cancelled)).at(-1)).toEqual({ type: 'stopped', text: 'Stopped. Nothing more runs or is spent.', retry: true });
 		expect(chatFromRun(view({ status: 'failed', error: 'no key' })).at(-1)).toMatchObject({ type: 'message', text: 'The run stopped: no key.' });
+	});
+
+	it('a run failed by a transient error offers Retry in the chat; a final failure does not', () => {
+		const transient = { status: 'failed' as const, error: 'node `write`: tool `write_plan`: failed: database: busy', retryable: true };
+		expect(chatFromRun(view(transient)).at(-1)).toEqual({ type: 'stopped', text: 'The run stopped: node `write`: tool `write_plan`: failed: database: busy.', retry: true });
+		expect(chatFromRun(view({ ...transient, retryable: false })).at(-1)).toMatchObject({ type: 'message', from: 'persona' });
+	});
+
+	it('runs a goal again with the saved answers, or with the edited ones', async () => {
+		const sent: string[] = [];
+		const e = new Engine(async (method, path, body) => {
+			sent.push(`${method} ${path} ${JSON.stringify(body ?? null)}`);
+			return { status: 202, body: { goal_id: 'g1', run_id: 'r2' } };
+		});
+		await expect(e.runAgain('g1')).resolves.toEqual({ ok: true, value: { goal_id: 'g1', run_id: 'r2' } });
+		await e.runAgain('g1', [{ id: 'pace', text: 'Minutes a day?', answer: '45' }, { id: 'when', text: 'When?', answer: null }]);
+		const zone = JSON.stringify(deviceZone());
+		expect(sent).toEqual([
+			`POST /v1/goals/g1/run-again {"timezone":${zone}}`,
+			`POST /v1/goals/g1/run-again {"timezone":${zone},"answers":[{"id":"pace","answer":"45"},{"id":"when","answer":null}]}`
+		]);
+	});
+
+	it('says a finished run again is on the calendar, like a new goal', () => {
+		expect(chatFromRun({ ...view({ status: 'done' }), workflow: 'run-again' }).at(-1)).toMatchObject({ text: 'Approved. The plan is on your calendar.' });
 	});
 
 	it('cancels, retries and reads and saves the run time limit', async () => {

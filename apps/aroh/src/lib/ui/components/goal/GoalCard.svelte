@@ -27,7 +27,7 @@
 	 * The one goal card: header, a status card saying what agents do or wait for (Stop, Retry,
 	 * Change time limit), research steps or what research found, the goal's view sections
 	 * (progress, Upcoming, plugin dashboards), the answers given (editable, `onanswers` gets the
-	 * changed ones), the attachments (`files`; Photo and File with `upload`, `onfiles`, `onlink`,
+	 * changed ones; with `rerun`, `onrerun` gets all of them for Run again), the attachments (`files`; Photo and File with `upload`, `onfiles`, `onlink`,
 	 * `onretryfile` for a failed upload, `onremove`), the goal chat with its questions and plan, and an agents row opening a sheet
 	 * with per-goal controls (`oncontrols`) and coaches.
 	 */
@@ -52,6 +52,8 @@
 		onstop,
 		onretry,
 		onanswers,
+		rerun = false,
+		onrerun,
 		files = [],
 		upload = false,
 		onfiles,
@@ -81,6 +83,8 @@
 		onstop?: () => void;
 		onretry?: () => void;
 		onanswers?: (changed: RunAnswer[]) => void;
+		rerun?: boolean;
+		onrerun?: (answers: RunAnswer[]) => void;
 		files?: Attachment[];
 		upload?: boolean;
 		onfiles?: (files: File[]) => void;
@@ -111,6 +115,16 @@
 		onanswers?.(changed);
 		edits = {};
 	}
+
+	/** Sends every answer, edited ones changed, to Run again and clears the edits. */
+	function again() {
+		onrerun?.(answers.map((a) => (edits[a.id] === undefined ? a : { ...a, answer: edits[a.id].trim() || null })));
+		edits = {};
+	}
+
+	$effect(() => {
+		if (rerun) document.getElementById(`${id}-answers`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	});
 </script>
 
 <div class="flex w-full max-w-5xl flex-col gap-4 p-4 @3xl:p-6">
@@ -130,7 +144,7 @@
 		{#if status.stop}
 			<div class="flex"><Button variant="outline" size="touch" onclick={() => onstop?.()}>Stop</Button></div>
 		{:else if status.retry}
-			<div class="flex gap-2"><Button size="touch" onclick={() => onretry?.()}>Retry</Button><Button variant="ghost" size="touch" onclick={() => (open = true)}>Change time limit</Button></div>
+			<div class="flex gap-2"><Button size="touch" onclick={() => onretry?.()}>Retry</Button>{#if status.limit}<Button variant="ghost" size="touch" onclick={() => (open = true)}>Change time limit</Button>{/if}</div>
 		{/if}
 	</Card.Root>
 
@@ -190,7 +204,11 @@
 					</li>
 				{/each}
 			</ul>
-			<div class="flex"><Button variant="outline" size="touch" disabled={!changed.length} onclick={send}>Replan with these answers</Button></div>
+			{#if rerun}
+				<div class="flex"><Button size="touch" onclick={again}>Run again with these answers</Button></div>
+			{:else}
+				<div class="flex"><Button variant="outline" size="touch" disabled={!changed.length} onclick={send}>Replan with these answers</Button></div>
+			{/if}
 		</section>
 	{/if}
 

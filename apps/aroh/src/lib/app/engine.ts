@@ -43,11 +43,12 @@ export type PlanItem = { title: string; start: string; minutes: number; rrule: s
 /** A human node a run waits at, with the state keys it shows. */
 export type Waiting = { node: string; ask: 'approval' | 'question'; prompt: string | null; data: Record<string, unknown> };
 
-/** A run's lifecycle status, tagged by `status`; pauses carry their reason. */
+/** A run's lifecycle status, tagged by `status`; pauses carry their reason, failed runs whether Retry continues them. */
 export type RunStatus = {
 	status: 'queued' | 'running' | 'checkpointed' | 'waiting_human' | 'waiting_budget' | 'done' | 'failed';
 	reason?: { kind: string; limit?: string; node?: string; limit_ms?: number };
 	error?: string;
+	retryable?: boolean;
 };
 
 /** One run event; `body.type` is the event kind. */
@@ -81,6 +82,9 @@ export type PendingLog = { text: string; at: string };
 
 /** States in which a run still moves on its own, so the app keeps polling it. */
 export const ACTIVE = ['queued', 'running', 'checkpointed'];
+
+/** Workflows that research and plan a goal from its answers: the first run and every Run again. */
+export const PLANNING = ['new-goal', 'run-again'];
 
 const STEP_TEXT: Record<string, string> = {
 	intake: 'Reading your goal',
@@ -118,6 +122,15 @@ export function stopMessage(status: RunStatus): string | null {
 	if (status.reason?.kind === 'time_limit') return `Stopped after ${Math.max(1, Math.round((status.reason.limit_ms ?? 0) / 60_000))} min.`;
 	if (status.reason?.kind === 'cancelled') return 'Stopped. Nothing more runs or is spent.';
 	return null;
+}
+
+/**
+ * The owner-facing line for a run that failed on a transient error (a store or network error,
+ * or provider retries used up), which Retry continues from the failed step; null otherwise.
+ */
+export function retryMessage(status: RunStatus): string | null {
+	if (status.status !== 'failed' || !status.retryable || status.reason) return null;
+	return pauseMessage(status);
 }
 
 /** A spend in micro-dollars as dollars and cents, "$0.01"; zero when unknown. */
@@ -197,7 +210,7 @@ export function chatFromRun(view: RunView): ChatMessage[] {
 	const out: ChatMessage[] = [];
 	const lines = progressLines(view.events);
 	if (lines.length) out.push({ type: 'progress', lines, working: ACTIVE.includes(view.status.status) });
-	const stop = stopMessage(view.status);
+	const stop = stopMessage(view.status) ?? retryMessage(view.status);
 	if (stop) return [...out, { type: 'stopped', text: stop, retry: true }];
 	if (ACTIVE.includes(view.status.status)) {
 		return [...out, { type: 'working', step: lines.findLast((l) => !l.done)?.text ?? null, cost: formatCost(view.usage?.cost_usd_micros) }];
@@ -218,7 +231,7 @@ export function chatFromRun(view: RunView): ChatMessage[] {
 		}
 	}
 	if (view.status.status === 'done') {
-		const text = view.workflow === 'new-goal' ? 'Approved. The plan is on your calendar.' : 'Done.';
+		const text = PLANNING.includes(view.workflow) ? 'Approved. The plan is on your calendar.' : 'Done.';
 		out.push({ type: 'message', from: 'persona', name: 'Aroh', text });
 	}
 	return out;
@@ -343,7 +356,16 @@ export class Engine {
 		return this.request('POST', `/v1/runs/${runId}/cancel`);
 	}
 
-	/** Continues a stopped run where it stopped, with a fresh time limit. */
+	/**
+	 * Plans goal `goalId` again (Q74): fresh research and plan with its saved answers, or with
+	 * `answers` (all of them, edited) when given; the new plan waits for approval.
+	 */
+	runAgain(goalId: string, answers?: RunAnswer[]): Promise<EngineResult<{ goal_id: string; run_id: string }>> {
+		const body = answers ? { timezone: deviceZone(), answers: answers.map(({ id, answer }) => ({ id, answer })) } : { timezone: deviceZone() };
+		return this.request('POST', `/v1/goals/${goalId}/run-again`, body);
+	}
+
+	/** Continues a stopped run, or one failed on a transient error, where it stopped, with a fresh time limit. */
 	retry(runId: string): Promise<EngineResult<{ run_id: string }>> {
 		return this.request('POST', `/v1/runs/${runId}/retry`);
 	}

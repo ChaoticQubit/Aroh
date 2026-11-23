@@ -1,5 +1,5 @@
 use crate::evals::{parse_local, slots};
-use crate::rows::{get_row, goal_deleted, materialize, put_row, utc, ServerClock};
+use crate::rows::{get_row, goal_deleted, list_rows, materialize, put_row, utc, ServerClock};
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{
     self, Action, ActionSeries, ActionStatus, FieldKind, GoalStatus, Proposal, ProposalSize, ProposalStatus, Tracker,
@@ -222,13 +222,73 @@ struct PlanArgs {
     limits: Option<Value>,
 }
 
+/// Whether a row `id` of `R` exists for the user, live or tombstoned, so a
+/// replayed tool call leaves what it wrote before, and what the owner
+/// changed since, as it is.
+async fn written<R: rows::Record>(env: &ToolEnv, id: &str) -> Result<bool, ToolError> {
+    Ok(!list_rows::<R>(&env.pool, env.user, &[("id", id.to_string())], true).await.map_err(failed)?.is_empty())
+}
+
+/// Ends the goal's old plan before a Run again plan lands: tombstones its
+/// future planned, unlocked actions and its series, except the rows of
+/// `keep_actions` and `keep_series` this call writes. Returns the count.
+async fn clear_old_plan(env: &ToolEnv, goal: &str, keep_actions: &[String], keep_series: &[String]) -> Result<usize, ToolError> {
+    let now = env.now();
+    let filter = [("goal_id", goal.to_string())];
+    let mut cleared = 0;
+    for mut a in list_rows::<Action>(&env.pool, env.user, &filter, false).await.map_err(failed)? {
+        let kept = keep_actions.contains(&a.id) || a.series_id.as_ref().is_some_and(|s| keep_series.contains(s));
+        if kept || a.locked || a.status != ActionStatus::Planned || a.start_at < now {
+            continue;
+        }
+        a.deleted = true;
+        put_row(&env.pool, &env.hlc, env.user, &mut a).await.map_err(failed)?;
+        cleared += 1;
+    }
+    for mut s in list_rows::<ActionSeries>(&env.pool, env.user, &filter, false).await.map_err(failed)? {
+        if keep_series.contains(&s.id) {
+            continue;
+        }
+        s.deleted = true;
+        put_row(&env.pool, &env.hlc, env.user, &mut s).await.map_err(failed)?;
+        cleared += 1;
+    }
+    Ok(cleared)
+}
+
 /// Stores an approved plan as actions, series and trackers, activates a draft
 /// goal and, when the owner moved the date on the limits card (B41), sets the
-/// goal's deadline to `move_to`. Returns the counts it wrote.
-async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, ctx: &ToolContext) -> Result<Value, ToolError> {
+/// goal's deadline to `move_to`. With `replace` it first ends the old plan
+/// (`clear_old_plan`) and adds no tracker whose name the goal already has.
+/// Rows a replay of the same call wrote before are left as they are.
+/// Returns the counts in the plan.
+async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, replace: bool, ctx: &ToolContext) -> Result<Value, ToolError> {
     let goal = env.live_goal().await?;
     let tz = timezone(&plan.timezone)?;
     let (user, goal_text) = (env.user.to_string(), goal.to_string());
+    let mut tracker_names: Vec<String> = Vec::new();
+    if replace {
+        let mut keep_actions = Vec::new();
+        let mut keep_series = Vec::new();
+        for (i, item) in plan.items.iter().enumerate() {
+            match item.rrule.as_deref().filter(|r| !r.trim().is_empty()) {
+                Some(_) => keep_series.push(row_id(ctx, &format!("series:{i}"))?),
+                None => keep_actions.push(row_id(ctx, &format!("action:{i}"))?),
+            }
+        }
+        clear_old_plan(env, &goal_text, &keep_actions, &keep_series).await?;
+        let mut own = Vec::new();
+        for i in 0..plan.trackers.len() {
+            own.push(row_id(ctx, &format!("tracker:{i}"))?);
+        }
+        tracker_names = list_rows::<Tracker>(&env.pool, env.user, &[("goal_id", goal_text.clone())], false)
+            .await
+            .map_err(failed)?
+            .into_iter()
+            .filter(|t| !own.contains(&t.id))
+            .map(|t| t.name.trim().to_lowercase())
+            .collect();
+    }
     let (mut actions, mut series_count, mut occurrences) = (0, 0, 0);
     for (i, item) in plan.items.iter().enumerate() {
         slots(&serde_json::to_value(item).expect("items serialize")).map_err(ToolError::InvalidArgs)?;
@@ -247,7 +307,9 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, ctx: &Too
                     updated_at: String::new(),
                     deleted: false,
                 };
-                put_row(&env.pool, &env.hlc, env.user, &mut series).await.map_err(failed)?;
+                if !written::<ActionSeries>(env, &series.id).await? {
+                    put_row(&env.pool, &env.hlc, env.user, &mut series).await.map_err(failed)?;
+                }
                 occurrences += materialize(&env.pool, env.user, &series, env.now(), DEFAULT_WINDOW_DAYS).await.map_err(failed)?;
                 series_count += 1;
             }
@@ -269,7 +331,9 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, ctx: &Too
                     updated_at: String::new(),
                     deleted: false,
                 };
-                put_row(&env.pool, &env.hlc, env.user, &mut action).await.map_err(failed)?;
+                if !written::<Action>(env, &action.id).await? {
+                    put_row(&env.pool, &env.hlc, env.user, &mut action).await.map_err(failed)?;
+                }
                 actions += 1;
             }
         }
@@ -298,6 +362,9 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, ctx: &Too
             deleted: false,
         };
         tracker.rules = valid_rules(&tracker, t.rules.as_deref().unwrap_or_default());
+        if tracker_names.contains(&tracker.name.trim().to_lowercase()) || written::<Tracker>(env, &tracker.id).await? {
+            continue;
+        }
         put_row(&env.pool, &env.hlc, env.user, &mut tracker).await.map_err(failed)?;
     }
     if let Some(mut g) = get_row::<rows::Goal>(&env.pool, env.user, &goal_text).await.map_err(failed)? {
@@ -659,7 +726,7 @@ fn json_output(v: Value) -> ToolOutput {
     ToolOutput::text(v.to_string())
 }
 
-/// The Aroh toolkit of one run: `write_plan`, `record_proposal`,
+/// The Aroh toolkit of one run: `write_plan`, `replace_plan`, `record_proposal`,
 /// `apply_proposal`, `reject_proposal`, `write_entries`, `store_plugin` and
 /// `propose_preference`, all writing through the domain rules as `env.user`. Workflow tool nodes call them.
 pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
@@ -668,9 +735,21 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
         let env = e1.clone();
         async move {
             let move_to = a.limits.as_ref().and_then(|l| l.get("move_to")).and_then(Value::as_str);
-            write_plan(&env, &a.plan, move_to, &ctx).await.map(json_output)
+            write_plan(&env, &a.plan, move_to, false, &ctx).await.map(json_output)
         }
     });
+    let e0 = env.clone();
+    let replace = typed_tool(
+        "replace_plan",
+        "Store an approved Run again plan in place of the goal's future planned actions and series.",
+        move |a: PlanArgs, ctx: ToolContext| {
+            let env = e0.clone();
+            async move {
+                let move_to = a.limits.as_ref().and_then(|l| l.get("move_to")).and_then(Value::as_str);
+                write_plan(&env, &a.plan, move_to, true, &ctx).await.map(json_output)
+            }
+        },
+    );
     let e2 = env.clone();
     let record = typed_tool("record_proposal", "Store a plan change as a proposal for the Inbox.", move |a: RecordArgs, ctx: ToolContext| {
         let env = e2.clone();
@@ -716,6 +795,7 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
     );
     Toolkit::new("aroh")
         .with(Arc::new(write))
+        .with(Arc::new(replace))
         .with(Arc::new(record))
         .with(Arc::new(apply))
         .with(Arc::new(reject))

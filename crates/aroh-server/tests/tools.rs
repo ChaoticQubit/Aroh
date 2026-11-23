@@ -1,8 +1,8 @@
 mod common;
 
-use aroh_domain::rows::{Autonomy, Goal, GoalStatus};
+use aroh_domain::rows::{Action, ActionStatus, Autonomy, Goal, GoalStatus};
 use aroh_server::db::{self, PgPool};
-use aroh_server::rows::{put_row, utc, ServerClock};
+use aroh_server::rows::{get_row, put_row, utc, ServerClock};
 use aroh_server::tools::{aroh_toolkit, ToolEnv};
 use common::{pg, user, T0};
 use serde_json::{json, Value};
@@ -62,6 +62,112 @@ async fn replayed_write_plan_writes_each_row_once() {
     assert_eq!(count(&pool, "action_series", goal).await, 1);
     let status: String = db::query_scalar("select status from public.goals where id = $1").bind(goal).fetch_one(&pool).await.unwrap();
     assert_eq!(status, "active");
+}
+
+async fn live(pool: &PgPool, table: &str, goal: Uuid) -> Vec<String> {
+    db::query_scalar(&format!("select title from public.{table} where goal_id = $1 and not deleted order by title, start_at"))
+        .bind(goal)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+/// Marks each action of `ids` done through `put_row`, as the owner's device would.
+/// A raw update keeps the HLC stamp, which the LWW trigger drops.
+/// Input: the tool env and the action ids.
+async fn mark_done(env: &ToolEnv, ids: Vec<String>) {
+    for id in ids {
+        let mut a = get_row::<Action>(&env.pool, env.user, &id).await.unwrap().unwrap();
+        a.status = ActionStatus::Done;
+        a.done_at = Some(a.start_at);
+        put_row(&env.pool, &env.hlc, env.user, &mut a).await.unwrap();
+    }
+}
+
+async fn action(env: &ToolEnv, title: &str, hours_from_t0: i64, status: ActionStatus, locked: bool) -> Action {
+    let start = utc(T0) + chrono::Duration::hours(hours_from_t0);
+    let mut a = Action {
+        id: Uuid::now_v7().to_string(),
+        user_id: env.user.to_string(),
+        goal_id: env.goal.unwrap().to_string(),
+        series_id: None,
+        occurrence: None,
+        title: title.into(),
+        notes: None,
+        start_at: start,
+        end_at: start + chrono::Duration::minutes(30),
+        status,
+        locked,
+        done_at: (status == ActionStatus::Done).then_some(start),
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&env.pool, &env.hlc, env.user, &mut a).await.unwrap();
+    a
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_replayed_write_plan_keeps_what_the_owner_changed_in_between() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let plan = json!({"plan": {"summary": "s", "timezone": "UTC",
+        "trackers": [{"name": "Weight", "fields": [{"key": "kg", "label": "Weight", "kind": "number", "unit": "kg"}]}],
+        "items": [{"title": "Shoes", "start": "2026-11-24T18:00:00", "minutes": 30, "rrule": null, "notes": null}]}});
+    let ctx = ToolContext::for_call(RunId::new(), 9, 0);
+    let write = tool(&env, "write_plan");
+    write.call(plan.clone(), &ctx).await.unwrap();
+    let goal = env.goal.unwrap();
+    let ids: Vec<String> = db::query_scalar("select id::text from public.actions where goal_id = $1").bind(goal).fetch_all(&pool).await.unwrap();
+    mark_done(&env, ids).await;
+    write.call(plan, &ctx).await.unwrap();
+    let statuses: Vec<String> = db::query_scalar("select status from public.actions where goal_id = $1").bind(goal).fetch_all(&pool).await.unwrap();
+    assert_eq!(statuses, ["done"], "the replay neither duplicates nor resets the action");
+    assert_eq!(count(&pool, "trackers", goal).await, 1);
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn replace_plan_swaps_future_planned_actions_and_keeps_the_rest() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let goal = env.goal.unwrap();
+    let old = json!({"plan": {"summary": "old", "timezone": "UTC",
+        "trackers": [{"name": "Weight", "fields": [{"key": "kg", "label": "Weight", "kind": "number", "unit": "kg"}]}],
+        "items": [{"title": "Old daily", "start": "2026-11-22T13:00:00", "minutes": 20, "rrule": "FREQ=DAILY;COUNT=5", "notes": null}]}});
+    tool(&env, "write_plan").call(old, &ToolContext::for_call(RunId::new(), 3, 0)).await.unwrap();
+    action(&env, "Done before", -24, ActionStatus::Done, false).await;
+    action(&env, "Missed before", -48, ActionStatus::Planned, false).await;
+    action(&env, "Fixed later", 30, ActionStatus::Planned, true).await;
+    action(&env, "Old later", 40, ActionStatus::Planned, false).await;
+    let early: Vec<String> = db::query_scalar("select id::text from public.actions where goal_id = $1 and title = 'Old daily' and start_at < $2")
+        .bind(goal)
+        .bind(utc(T0) + chrono::Duration::hours(2))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(early.len(), 1, "the first occurrence is done early");
+    mark_done(&env, early).await;
+
+    let new = json!({"plan": {"summary": "new", "timezone": "UTC",
+        "trackers": [{"name": "Weight", "fields": [{"key": "kg", "label": "Weight", "kind": "number", "unit": "kg"}]},
+                     {"name": "Sleep", "fields": [{"key": "h", "label": "Hours", "kind": "number", "unit": "h"}]}],
+        "items": [{"title": "New run", "start": "2026-11-25T08:00:00", "minutes": 30, "rrule": null, "notes": null},
+                  {"title": "New weekly", "start": "2026-11-23T09:00:00", "minutes": 30, "rrule": "FREQ=WEEKLY;COUNT=2", "notes": null}]}});
+    let ctx = ToolContext::for_call(RunId::new(), 7, 0);
+    let replace = tool(&env, "replace_plan");
+    replace.call(new.clone(), &ctx).await.unwrap();
+    let want = ["Done before", "Fixed later", "Missed before", "New run", "New weekly", "New weekly", "Old daily"];
+    assert_eq!(live(&pool, "actions", goal).await, want, "done, past and fixed actions stay; future planned ones are replaced");
+    let series: Vec<String> = db::query_scalar("select title from public.action_series where goal_id = $1 and not deleted").bind(goal).fetch_all(&pool).await.unwrap();
+    assert_eq!(series, ["New weekly"], "the old series ends");
+    let trackers: Vec<String> = db::query_scalar("select name from public.trackers where goal_id = $1 and not deleted order by name").bind(goal).fetch_all(&pool).await.unwrap();
+    assert_eq!(trackers, ["Sleep", "Weight"], "a tracker of the same name is kept, not added again");
+
+    replace.call(new, &ctx).await.unwrap();
+    assert_eq!(live(&pool, "actions", goal).await, want, "a replayed replace keeps its own rows");
 }
 
 #[tokio::test]

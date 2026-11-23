@@ -14,7 +14,7 @@ use troupekit_graph::{
     Workflow,
 };
 use troupekit_providers::{CompletionRequest, CompletionResponse, Delta, Model, Price};
-use troupekit_tools::{ToolOutput, ToolRegistry};
+use troupekit_tools::{ToolError, ToolOutput, ToolRegistry};
 
 const PRICE: Price = Price {
     input_usd_micros_per_mtok: 1_000_000,
@@ -1059,4 +1059,125 @@ async fn a_stopped_run_takes_no_step_until_retried_and_old_checkpoints_still_loa
     }
     let old = GraphRun::from_checkpoint(&old).unwrap();
     assert_eq!((old.active_ms(), old.stopped(), old.over_time()), (0, None, false));
+}
+
+fn flaky_tool(fails: usize, error: ToolError, log: Arc<Mutex<Vec<Option<String>>>>) -> ToolRegistry {
+    let left = Arc::new(AtomicUsize::new(fails));
+    let mut tools = ToolRegistry::new();
+    tools
+        .register(FnTool::new("save_plan", move |_, ctx| {
+            let (log, left, error) = (log.clone(), left.clone(), error.clone());
+            async move {
+                log.lock().unwrap().push(ctx.idempotency_key.clone());
+                if left.load(Ordering::SeqCst) > 0 {
+                    left.fetch_sub(1, Ordering::SeqCst);
+                    return Err(error);
+                }
+                Ok(ToolOutput::text("saved"))
+            }
+        }))
+        .unwrap();
+    tools
+}
+
+async fn failed_in_save(error: ToolError) -> (Fixture, GraphRun, Arc<Mutex<Vec<Option<String>>>>) {
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let f = fixture(planner_model(), flaky_tool(1, error, log.clone()), Conditions::new());
+    let mut run = GraphRun::new(wf(LINEAR), input(&[("goal", json!("g"))]), Limits::default(), &f.io)
+        .await
+        .unwrap()
+        .with_time_limit(60_000);
+    assert!(matches!(drive(&mut run, &f.io).await, GraphOutcome::Failed(_)));
+    (f, run, log)
+}
+
+#[tokio::test]
+async fn a_tool_that_failed_transiently_is_retried_with_the_same_key() {
+    let (f, run, log) = failed_in_save(ToolError::Failed("database: max clients reached".into())).await;
+    let GraphStatus::Failed { error } = run.status() else { panic!("failed") };
+    assert_eq!(error, "node `save`: tool `save_plan`: failed: database: max clients reached");
+    assert!(run.retryable() && run.stopped().is_none(), "a store failure is retryable");
+    let mut run = GraphRun::from_checkpoint(&run.checkpoint()).unwrap();
+    assert!(run.retryable(), "the class survives a checkpoint");
+    let before = run.steps();
+    run.retry(Some(30_000)).unwrap();
+    assert_eq!((run.status(), run.steps(), run.time_limit_ms(), run.retryable()), (&GraphStatus::Queued, before + 1, Some(30_000), false));
+    let mut run = GraphRun::from_checkpoint(&run.checkpoint()).unwrap();
+    let GraphOutcome::Done(state) = drive(&mut run, &f.io).await else {
+        panic!("a retried run finishes");
+    };
+    assert_eq!(state["note"], json!("saved"));
+    let keys = log.lock().unwrap().clone();
+    assert_eq!(keys.len(), 2, "the tool ran twice");
+    assert_eq!(keys[0], keys[1], "with the same idempotency key, so it writes the same rows");
+    assert_eq!(f.model.calls(), 1, "the planner is not asked again");
+    assert!(run.retry(None).is_err(), "a finished run does not retry");
+}
+
+#[tokio::test]
+async fn a_failed_run_retries_only_for_transient_errors() {
+    for error in [
+        ToolError::InvalidArgs("bad".into()),
+        ToolError::UnknownTool("x".into()),
+        ToolError::Config("x".into()),
+        ToolError::Blocked("x".into()),
+        ToolError::Decode("x".into()),
+    ] {
+        let (_, mut run, _) = failed_in_save(error.clone()).await;
+        assert!(!run.retryable(), "{error} is not retryable");
+        assert!(matches!(run.retry(None), Err(GraphError::Resume(_))), "{error}");
+        let restored = GraphRun::from_checkpoint(&run.checkpoint()).unwrap();
+        assert!(!restored.retryable(), "{error} after a checkpoint");
+    }
+    let (_, run, _) = failed_in_save(ToolError::Http("503".into())).await;
+    assert!(run.retryable(), "an http failure is retryable");
+    let (f, w) = tool_only("x", "string", ToolOutput::error("boom"));
+    let mut run = GraphRun::new(w, Map::new(), Limits::default(), &f.io).await.unwrap();
+    assert!(matches!(run.step(&f.io).await, GraphOutcome::Failed(_)));
+    assert!(!run.retryable(), "an error reply of the tool is final");
+    let (f, w) = tool_only("x", "int", ToolOutput::text("\"text\""));
+    let mut run = GraphRun::new(w, Map::new(), Limits::default(), &f.io).await.unwrap();
+    assert!(matches!(run.step(&f.io).await, GraphOutcome::Failed(_)));
+    assert!(!run.retryable(), "a type mismatch is final");
+}
+
+#[tokio::test]
+async fn a_run_out_of_transient_retries_retries_with_a_fresh_count() {
+    let (f, _) = linear();
+    let text = LINEAR.replace("start = \"plan\"", "start = \"plan\"\nmax_retries = 1");
+    let mut run = GraphRun::new(wf(&text), input(&[("goal", json!("blocked"))]), Limits::default(), &f.io)
+        .await
+        .unwrap();
+    assert!(matches!(run.step(&f.io).await, GraphOutcome::RetryAt { .. }));
+    assert!(matches!(run.step(&f.io).await, GraphOutcome::Failed(_)));
+    assert!(run.retryable());
+    run.retry(None).unwrap();
+    assert!(matches!(run.step(&f.io).await, GraphOutcome::RetryAt { .. }), "the retry count starts again");
+}
+
+#[tokio::test]
+async fn a_failed_checkpoint_from_before_the_class_is_classified_from_its_error() {
+    let (f, run, log) = failed_in_save(ToolError::Failed("database: max clients reached".into())).await;
+    let mut cp = run.checkpoint();
+    assert!(cp.state.as_object_mut().unwrap().remove("failure").is_some());
+    let mut old = GraphRun::from_checkpoint(&cp).unwrap();
+    assert!(old.retryable(), "a store failure saved without its class");
+    old.retry(None).unwrap();
+    assert!(matches!(drive(&mut old, &f.io).await, GraphOutcome::Done(_)));
+    let keys = log.lock().unwrap().clone();
+    assert_eq!(keys[0], keys[1]);
+
+    for (error, retryable) in [
+        ("node `save`: tool `save_plan`: http: 503", true),
+        ("error after 3 retries: RateLimited: slow down", true),
+        ("node `save`: tool `save_plan`: invalid arguments: bad", false),
+        ("node `save`: tool `save_plan` failed: boom", false),
+        ("max_steps 50 reached", false),
+    ] {
+        let mut cp = run.checkpoint();
+        let state = cp.state.as_object_mut().unwrap();
+        state.remove("failure");
+        state.insert("status".into(), json!({"status": "failed", "error": error}));
+        assert_eq!(GraphRun::from_checkpoint(&cp).unwrap().retryable(), retryable, "{error}");
+    }
 }

@@ -17,6 +17,7 @@ describe('goal card status', () => {
 		const replan = { ...summary('re', 'done'), workflow: 'replan' };
 		expect(originRun([replan, summary('first', 'done')])).toBe('first');
 		expect(originRun([replan])).toBeNull();
+		expect(originRun([replan, { ...summary('again', 'done'), workflow: 'run-again' }, summary('first', 'done')])).toBe('again');
 	});
 
 	it('counts active step time, with an open step running until now', () => {
@@ -38,12 +39,21 @@ describe('goal card status', () => {
 
 	it('shows a stopped run grey with Retry and the money spent', () => {
 		const s = goalStatus(view({ status: { status: 'failed', reason: { kind: 'time_limit', limit_ms: 300_000 } } }), 5, 0);
-		expect(s).toMatchObject({ tone: 'skipped', chip: 'Stopped', title: 'Stopped after 5 min.', detail: 'Nothing more was spent: $0.01 in total.', stop: false, retry: true });
+		expect(s).toMatchObject({ tone: 'skipped', chip: 'Stopped', title: 'Stopped after 5 min.', detail: 'Nothing more was spent: $0.01 in total.', stop: false, retry: true, limit: true });
+		const cancelled = goalStatus(view({ status: { status: 'failed', reason: { kind: 'cancelled' } } }), 5, 0);
+		expect(cancelled).toMatchObject({ chip: 'Stopped', retry: true, limit: false });
+	});
+
+	it('offers Retry on a run failed by a transient error, without Change time limit', () => {
+		const error = 'node `write`: tool `write_plan`: failed: database: max clients reached';
+		const s = goalStatus(view({ status: { status: 'failed', error, retryable: true } }), 5, 0);
+		expect(s).toMatchObject({ tone: 'missed', chip: 'Failed', title: `The run stopped: ${error}.`, detail: '$0.01 in total.', stop: false, retry: true, limit: false });
+		expect(goalStatus(view({ status: { status: 'failed', error: 'max_steps 200 reached', retryable: false } }), 5, 0)).toMatchObject({ retry: false, limit: false });
 	});
 
 	it('shows a paused or failed run with its reason, and a finished goal on track', () => {
 		expect(goalStatus(view({ status: { status: 'waiting_budget', reason: { kind: 'budget', limit: 'goal' } } }), 5, 0)).toMatchObject({ tone: 'warn', chip: 'Paused' });
-		expect(goalStatus(view({ status: { status: 'failed', error: 'boom' } }), 5, 0)).toMatchObject({ tone: 'missed', chip: 'Failed', title: 'The run stopped: boom.', retry: false });
+		expect(goalStatus(view({ status: { status: 'failed', error: 'boom' } }), 5, 0)).toMatchObject({ tone: 'missed', chip: 'Failed', title: 'The run stopped: boom.', retry: false, limit: false });
 		expect(goalStatus(view({ status: { status: 'done' } }), 5, 0)).toMatchObject({ tone: 'done', chip: 'On track', title: 'Agents are idle', detail: 'Last run $0.01.' });
 		expect(goalStatus(null, 5, 0)).toMatchObject({ tone: 'done', chip: 'On track', title: 'Agents are idle', detail: 'No run yet.' });
 	});

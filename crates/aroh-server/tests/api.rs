@@ -1610,3 +1610,100 @@ async fn a_plan_late_for_its_date_asks_the_owner_before_approval() {
     let view = api.run(&t, &run).await;
     assert_eq!(view["waiting"][0]["node"], "approve", "the moved date fits: {view}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_plan_write_that_failed_on_the_database_is_retried_without_duplicates() {
+    let api = api(goal_models(), offline()).await;
+    let (_, t) = api.signed_up().await;
+    db::query("alter table public.actions add constraint pod40_block check (title <> 'Easy run') not valid").execute(&api.pool).await.unwrap();
+    let (goal, run, view) = api.approved_goal(&t).await;
+    db::query("alter table public.actions drop constraint pod40_block").execute(&api.pool).await.unwrap();
+    assert_eq!(view["status"]["status"], "failed", "{view}");
+    assert!(view["status"]["error"].as_str().unwrap().starts_with("node `write`: tool `write_plan`: failed: "), "{view}");
+    assert_eq!(view["status"]["retryable"], true, "{view}");
+    assert!(view["status"].get("reason").is_none(), "an error, not a stop");
+
+    assert_eq!(api.call(Method::Post, &format!("/v1/runs/{run}/retry"), Some(&t), None).await.0, 202);
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["status"]["status"], "done", "{view}");
+    assert_eq!(api.count("select count(*) from public.actions where goal_id::text = $1 and not deleted", &goal).await, 7, "one set of actions");
+    assert_eq!(api.count("select count(*) from public.action_series where goal_id::text = $1", &goal).await, 1);
+    assert_eq!(api.count("select count(*) from public.trackers where goal_id::text = $1", &goal).await, 2);
+    assert_eq!(api.call(Method::Post, &format!("/v1/runs/{run}/retry"), Some(&t), None).await.0, 409, "a finished run does not retry");
+}
+
+/// Actions and series of `goal`, tombstones included, as `(kind, id, status, deleted)` sorted.
+/// Input: the API and the goal id.
+/// Output: the rows, so two snapshots compare whole plans.
+async fn plan_rows(api: &Api, goal: &str) -> Vec<(String, String, String, bool)> {
+    db::query_as(
+        "select 'action', id::text, status, deleted from public.actions where goal_id::text = $1
+         union all select 'series', id::text, '', deleted from public.action_series where goal_id::text = $1 order by 1, 2",
+    )
+    .bind(goal)
+    .fetch_all(&api.pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn run_again_keeps_done_actions_changes_nothing_before_approval_and_carries_the_answers() {
+    let api = api(goal_models(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let (goal, first, view) = api.approved_goal(&t).await;
+    assert_eq!(view["status"]["status"], "done", "{view}");
+    let done: String = db::query_scalar("select id::text from public.actions where goal_id::text = $1 and series_id is not null order by start_at limit 1")
+        .bind(&goal)
+        .fetch_one(&api.pool)
+        .await
+        .unwrap();
+    let mut session = aroh_server::rows::get_row::<Action>(&api.pool, u, &done).await.unwrap().unwrap();
+    session.status = ActionStatus::Done;
+    session.done_at = Some(session.start_at);
+    put_row(&api.pool, &api.hlc, u, &mut session).await.unwrap();
+    let before = plan_rows(&api, &goal).await;
+    assert!(before.contains(&("action".into(), done.clone(), "done".into(), false)), "the session is done: {before:?}");
+
+    let path = format!("/v1/goals/{goal}/run-again");
+    let bad = json!({"timezone": "Europe/Berlin", "answers": [{"id": "never_asked", "answer": "x"}]});
+    assert_eq!(api.call(Method::Post, &path, Some(&t), Some(bad)).await.0, 400, "only asked questions take answers");
+    let other = user_token(user(&api.pool).await);
+    assert_eq!(api.call(Method::Post, &path, Some(&other), Some(json!({"timezone": "Europe/Berlin"}))).await.0, 404, "only the owner runs a goal again");
+    let edit = json!({"timezone": "Europe/Berlin", "answers": [{"id": "weekly_runs", "answer": "4"}]});
+    let (status, started) = api.call(Method::Post, &path, Some(&t), Some(edit)).await;
+    assert_eq!(status, 202, "{started}");
+    let again = started["run_id"].as_str().unwrap().to_string();
+    assert_ne!(again, first);
+
+    api.tick().await;
+    let view = api.run(&t, &again).await;
+    assert_eq!((view["workflow"].as_str(), view["waiting"][0]["node"].as_str()), (Some("run-again"), Some("approve")), "no questions asked again: {view}");
+    let answers: Vec<(String, Option<String>)> =
+        view["answers"].as_array().unwrap().iter().map(|a| (a["id"].as_str().unwrap().into(), a["answer"].as_str().map(str::to_string))).collect();
+    assert!(answers.contains(&("weekly_runs".into(), Some("4".into()))), "the edited answer: {answers:?}");
+    assert_eq!(answers.len(), coach_intake()["questions"].as_array().unwrap().len(), "every question carried over");
+    assert_eq!(plan_rows(&api, &goal).await, before, "nothing changes before approval");
+
+    api.answer(&t, &again, "approve", json!(true)).await;
+    api.tick().await;
+    let view = api.run(&t, &again).await;
+    assert_eq!(view["status"]["status"], "done", "{view}");
+    let kept: (String, bool) = db::query_as("select status, deleted from public.actions where id::text = $1").bind(&done).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(kept, ("done".to_string(), false), "the done session stays");
+    let old_series: String = db::query_scalar("select series_id::text from public.actions where id::text = $1").bind(&done).fetch_one(&api.pool).await.unwrap();
+    let old_live = api.count("select count(*) from public.actions where series_id::text = $1 and not deleted and status = 'planned'", &old_series).await;
+    assert_eq!(old_live, 0, "the old plan's planned sessions are replaced");
+    assert_eq!(api.count("select count(*) from public.action_series where goal_id::text = $1 and not deleted", &goal).await, 1, "one live series");
+    assert_eq!(api.count("select count(*) from public.actions where goal_id::text = $1 and not deleted and series_id is null", &goal).await, 1);
+    assert_eq!(api.count("select count(*) from public.trackers where goal_id::text = $1 and not deleted", &goal).await, 2, "trackers stay, none added twice");
+
+    let (status, started) = api.call(Method::Post, &path, Some(&t), Some(json!({"timezone": "Europe/Berlin"}))).await;
+    assert_eq!(status, 202, "{started}");
+    api.tick().await;
+    let view = api.run(&t, started["run_id"].as_str().unwrap()).await;
+    let carried = view["answers"].as_array().unwrap().iter().find(|a| a["id"] == "weekly_runs").unwrap()["answer"].clone();
+    assert_eq!(carried, json!("4"), "Keep takes the newest run's answers: {view}");
+}
