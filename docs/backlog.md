@@ -58,3 +58,4 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B52 | PR #6 review | server limits | When the workload exceeds the 366-day horizon, finish is None and "Move the date" returns fits true with no move_to | medium | open |
 | B53 | PR #6 review | plan card | Open-ended recurrences (FREQ=DAILY) show the 366-day preview end as "finishes" with a finish flag | medium | open |
 | B54 | PR #6 review | back bar | Cold start at a deep route: replaceState Back pushes the parent on the synthetic stack, so the next Back is mislabelled and calls history.back() | medium | open |
+| B55 | Owner, build 4 | question answers | Spaces could not be typed in answer boxes: each keystroke was trimmed and bound back | high | closed, see fix(app): keep spaces while typing an answer |
