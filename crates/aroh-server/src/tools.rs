@@ -107,6 +107,56 @@ pub struct PlanCadence {
     pub at: String,
 }
 
+const CADENCE_FORMS: &str =
+    "use freq daily or weekly, weekdays from Mon Tue Wed Thu Fri Sat Sun (weekly only, empty for daily), at as local HH:MM such as 19:30";
+
+/// Reads planned cadence `c` of tracker `name` into a tracker cadence.
+/// Accepts any case, RRULE day codes (MO) and full day names, HH:MM:SS
+/// times; daily with some weekdays becomes weekly, all seven days daily,
+/// weekly without days a Sunday check-in. Returns `InvalidArgs` naming the
+/// allowed forms for an unknown freq, weekday or time.
+fn plan_cadence(name: &str, c: &PlanCadence) -> Result<rows::Cadence, ToolError> {
+    let bad = |why: String| ToolError::InvalidArgs(format!("bad cadence for `{name}`: {why}; {CADENCE_FORMS}"));
+    let freq = match c.freq.trim().to_ascii_lowercase().as_str() {
+        "daily" => rows::CadenceFreq::Daily,
+        "weekly" => rows::CadenceFreq::Weekly,
+        other => return Err(bad(format!("freq `{other}`"))),
+    };
+    let mut days = Vec::new();
+    for d in &c.weekdays {
+        let text = d.trim().to_ascii_lowercase();
+        let day = match text.as_str() {
+            "mo" => Some(chrono::Weekday::Mon),
+            "tu" => Some(chrono::Weekday::Tue),
+            "we" => Some(chrono::Weekday::Wed),
+            "th" => Some(chrono::Weekday::Thu),
+            "fr" => Some(chrono::Weekday::Fri),
+            "sa" => Some(chrono::Weekday::Sat),
+            "su" => Some(chrono::Weekday::Sun),
+            _ => text.parse::<chrono::Weekday>().ok(),
+        }
+        .ok_or_else(|| bad(format!("weekday `{d}`")))?;
+        if !days.contains(&day) {
+            days.push(day);
+        }
+    }
+    days.sort_by_key(|d| d.num_days_from_monday());
+    let at = ["%H:%M", "%H:%M:%S"]
+        .iter()
+        .find_map(|f| chrono::NaiveTime::parse_from_str(c.at.trim(), f).ok())
+        .ok_or_else(|| bad(format!("at `{}`", c.at)))?
+        .format("%H:%M")
+        .to_string();
+    let (freq, weekdays) = match (freq, days.len()) {
+        (_, 7) => (rows::CadenceFreq::Daily, Vec::new()),
+        (rows::CadenceFreq::Daily, 0) => (rows::CadenceFreq::Daily, Vec::new()),
+        (rows::CadenceFreq::Weekly, 0) => (rows::CadenceFreq::Weekly, vec![chrono::Weekday::Sun]),
+        (_, _) => (rows::CadenceFreq::Weekly, days),
+    };
+    assert!((freq == rows::CadenceFreq::Daily) == weekdays.is_empty(), "daily has no weekdays, weekly has some");
+    Ok(rows::Cadence { freq, weekdays, at })
+}
+
 /// One adaptation rule a planned tracker declares (Q20): `op` is
 /// `above`, `below`, `flat` or `missed` over the last `window_days`.
 /// Stored as a `trackers.rules` entry when it validates.
@@ -219,11 +269,7 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, ctx: &ToolContext) -> Result<Val
                 Ok(TrackerField { key: f.key.clone(), label: f.label.clone(), kind, unit: f.unit.clone(), choices: vec![], health: None })
             })
             .collect::<Result<Vec<_>, ToolError>>()?;
-        let cadence = t
-            .cadence
-            .as_ref()
-            .map(|c| serde_json::from_value(json!(c)).map_err(|_| ToolError::InvalidArgs(format!("bad cadence for `{}`", t.name))))
-            .transpose()?;
+        let cadence = t.cadence.as_ref().map(|c| plan_cadence(&t.name, c)).transpose()?;
         let mut tracker = Tracker {
             id: row_id(ctx, &format!("tracker:{i}"))?,
             user_id: user.clone(),
@@ -660,4 +706,51 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
 /// Used when building run inputs from stored actions.
 pub fn local_text(t: NaiveDateTime) -> String {
     t.format("%Y-%m-%dT%H:%M:%S").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Weekday;
+    use rows::{Cadence, CadenceFreq};
+
+    fn planned(freq: &str, weekdays: &[&str], at: &str) -> PlanCadence {
+        PlanCadence { freq: freq.into(), weekdays: weekdays.iter().map(|d| d.to_string()).collect(), at: at.into() }
+    }
+
+    #[test]
+    fn cadence_accepts_common_spellings() {
+        let weekly =
+            Cadence { freq: CadenceFreq::Weekly, weekdays: vec![Weekday::Mon, Weekday::Wed, Weekday::Fri], at: "19:30".into() };
+        for c in [
+            planned("weekly", &["Mon", "Wed", "Fri"], "19:30"),
+            planned("Weekly", &["MO", "WE", "FR"], "19:30:00"),
+            planned("WEEKLY", &["friday", "monday", "Wednesday", "mon"], "19:30"),
+            planned("daily", &["MO", "WE", "FR"], "19:30"),
+        ] {
+            assert_eq!(plan_cadence("quizzes", &c).unwrap(), weekly, "{c:?}");
+        }
+        let daily = Cadence { freq: CadenceFreq::Daily, weekdays: vec![], at: "07:05".into() };
+        assert_eq!(plan_cadence("q", &planned("daily", &[], "7:05")).unwrap(), daily);
+        let all = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
+        assert_eq!(plan_cadence("q", &planned("daily", &all, "07:05")).unwrap(), daily);
+        assert_eq!(plan_cadence("q", &planned("weekly", &all, "07:05")).unwrap(), daily);
+        let sunday = Cadence { freq: CadenceFreq::Weekly, weekdays: vec![Weekday::Sun], at: "18:00".into() };
+        assert_eq!(plan_cadence("q", &planned("weekly", &[], "18:00")).unwrap(), sunday);
+    }
+
+    #[test]
+    fn bad_cadence_names_the_allowed_forms() {
+        for c in [
+            planned("monthly", &[], "19:30"),
+            planned("weekly", &["Mx"], "19:30"),
+            planned("daily", &[], "7pm"),
+        ] {
+            let err = plan_cadence("quizzes", &c).unwrap_err().to_string();
+            assert!(
+                err.contains("quizzes") && err.contains("daily or weekly") && err.contains("Mon") && err.contains("HH:MM"),
+                "{err}"
+            );
+        }
+    }
 }

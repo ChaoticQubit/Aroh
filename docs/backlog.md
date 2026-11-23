@@ -31,10 +31,12 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B25 | Pod 26 DONE | goal card | Top bar says "Goals" instead of the goal name | low | open |
 | B26 | Pod 26 DONE | chat composer | Placeholder says "Message your personas" instead of the lead coach | low | open |
 | B27 | PR #3 review (P2) | `apps/aroh/src-tauri/src/commands/goals.rs:112` | Snapshot not reloaded after profile edits, so the profile screen can show stale facts until the next refresh | medium | open |
-| B28 | Owner, build 3 | plan node request | New goal run stopped at node "plan": HTTP 400 "messages: text content blocks must be non-empty" | critical | open, pod 29 first |
+| B28 | Owner, build 3 | plan node request | New goal run stopped at node "plan": HTTP 400 "messages: text content blocks must be non-empty" | critical | closed, a8eed02 + f978f84 (prod PR #4) |
 | B29 | Owner, build 3 | Today action rows | Action rows overflow the screen width; checkbox only visible after scrolling right | high | open, pod 31 |
 | B30 | Owner, build 3 | Inbox run cards | Stopped goal-planner cards still show a spinning blue circle | medium | open, pod 31 |
 | B31 | Owner, build 3 | composer mic, attach Photo | Mic, camera and every attachment (Link, Photo, File) in New Goal do nothing on iPhone; Info.plist lacks NSCameraUsageDescription and NSPhotoLibraryUsageDescription | high | open, pod 32 |
 | B32 | Owner, build 3 | Goals tab | Tapping Goals from inside a goal shows a blank screen until another tab is visited | high | open, pod 31 |
 | B33 | Owner, build 3 | write_plan tool | First goal's later run stopped: write_plan invalid arguments "bad cadence for quizzes score" after the plan was applied | high | open, pod 29 |
 | B34 | Owner, build 3 | Calendar status | Action checked done on Today still shows blue (planned) on the Calendar, not marked done | high | open, pod 31 |
+| B35 | Owner, build 3 | Calendar | No swipe left or right to change day or week | medium | open, pod 31 |
+| B36 | Owner, build 3 | intake, planner | Intake questions shallow for every goal; workout plan had no session content (exercises, sets, reps) and no nutrition guidance | high | open, pod 29 (planner notes, coach intake) |
