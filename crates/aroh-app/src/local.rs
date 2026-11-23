@@ -14,7 +14,7 @@ const ACCOUNT: &str = "account";
 const PENDING: &str = "pending_logs";
 
 /// Settings the owner may write, all stored as text.
-pub const SETTINGS: [&str; 12] = [
+pub const SETTINGS: [&str; 13] = [
     "server_url",
     "goal_budget_usd",
     "calendars",
@@ -27,6 +27,7 @@ pub const SETTINGS: [&str; 12] = [
     "location",
     "location_paused",
     "location_nudges",
+    "agent_defaults",
 ];
 
 /// The hosted Supabase project and engine, used while the owner's setting is empty.
@@ -102,6 +103,15 @@ fn check_day_suggestions(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// The agent controls a new goal starts with, as `agent_defaults` stores them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDefaults {
+    pub autonomy: aroh_domain::rows::Autonomy,
+    pub reminders: bool,
+    pub use_calendars: bool,
+}
+
 /// Validates and stores one owner setting; an empty value clears it. Errors with `Invalid`
 /// for an unknown name, a non-https server URL, a bad budget, Supabase URL or anon key, a
 /// dismissed list that is not at most [`MAX_DISMISSED`] uuids, bad day suggestions, or a
@@ -126,6 +136,7 @@ pub fn set_setting(conn: &Connection, name: &str, value: &str) -> Result<()> {
                 }
             }
             "day_suggestions" => check_day_suggestions(value)?,
+            "agent_defaults" => drop(serde_json::from_str::<AgentDefaults>(value).map_err(|_| invalid("agent_defaults"))?),
             "goal_budget_usd" => {
                 let usd: f64 = value.parse().map_err(|_| invalid("goal_budget_usd"))?;
                 if !usd.is_finite() || !(0.0..=1_000_000.0).contains(&usd) {
@@ -179,6 +190,7 @@ pub fn remove_sent(conn: &Connection, sent: &[PendingLog]) -> Result<usize> {
 
 const ZONE: &str = "zone";
 const ZONE_PENDING: &str = "zone_pending";
+const ZONE_BEFORE: &str = "zone_before";
 const NOTES: &str = "notes";
 
 /// Most device-local Inbox notes kept; the oldest beyond it are dropped.
@@ -199,15 +211,24 @@ pub fn zone(conn: &Connection) -> Result<Option<String>> {
     Ok(get_state(conn, &key(ZONE))?)
 }
 
-/// Stores `zone` as the zone the rows follow. With `pending` the engine's stored
-/// zone still has to follow (see [`zone_pending`]).
+/// Stores `zone` as the zone the rows follow. With `pending` (a shift) the zone it
+/// replaces becomes [`previous_zone`] and the engine's stored zone still has to follow
+/// (see [`zone_pending`]).
 pub fn set_zone(conn: &Connection, zone: &str, pending: bool) -> Result<()> {
     assert!(zone.parse::<chrono_tz::Tz>().is_ok(), "zone must be a known IANA name");
-    set_state(conn, &key(ZONE), zone)?;
     if pending {
+        if let Some(before) = self::zone(conn)? {
+            set_state(conn, &key(ZONE_BEFORE), &before)?;
+        }
         set_state(conn, &key(ZONE_PENDING), "true")?;
     }
+    set_state(conn, &key(ZONE), zone)?;
     Ok(())
+}
+
+/// The zone the rows followed before the last shift; `None` before the first shift.
+pub fn previous_zone(conn: &Connection) -> Result<Option<String>> {
+    Ok(get_state(conn, &key(ZONE_BEFORE))?)
 }
 
 /// Whether a zone change still has to reach the engine.

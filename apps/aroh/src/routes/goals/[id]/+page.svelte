@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import GoalScreen from '$lib/ui/screens/GoalScreen.svelte';
+	import GoalCard from '$lib/ui/components/goal/GoalCard.svelte';
 	import RoutinesScreen from '$lib/ui/screens/RoutinesScreen.svelte';
 	import * as location from '$lib/app/location';
 	import { onMount } from 'svelte';
@@ -9,14 +9,22 @@
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { goalHeader, goalView } from '$lib/app/views';
-	import { engine } from '$lib/app/engine';
+	import { engine, progressLines } from '$lib/app/engine';
+	import { GoalChat } from '$lib/app/chat.svelte';
+	import { answersReason, goalStatus } from '$lib/app/goalcard';
+	import type { AgentSettings } from '$lib/app/newgoal';
+	import { speech } from '$lib/app/speech.svelte';
 	import { activeVersion, enablePlugin, listPlugins, type PluginVersion } from '$lib/plugins/api';
 	import { parseTree, resolve } from '$lib/plugins/resolve';
-	import type { AutonomyLabel, CoachView } from '$lib/ui/screens/types';
+	import type { CoachView } from '$lib/ui/screens/types';
 	import { loadCoaches } from '$lib/app/personas';
+	import { goalAttachments, pendingAttachment, uploadFailed } from '$lib/app/files';
+	import type { Attachment } from '$lib/ui/components/goal/Attachments.svelte';
 
 	const DERIVED = 'derived';
 	const SHOWN_VERSIONS = 3;
+	const TICK_MS = 1000;
+	const DEFAULT_LIMIT = 5;
 
 	const clock = getClock();
 	const s = $derived(data.snapshot);
@@ -24,20 +32,65 @@
 	let plugins = $state<PluginVersion[]>([]);
 	let places = $state<location.LocationView | null>(null);
 	const routines = $derived(!!goal && !!places && goal.id === places.routines_goal);
+	let coaches = $state<CoachView[]>([]);
+	let settingsLimit = $state(DEFAULT_LIMIT);
+	let now = $state(Date.now());
+	let upload = $state(false);
+	onMount(async () => (upload = await client.filesAvailable()));
+
+	let failed = $state<Attachment[]>([]);
+	const retries = new Map<string, File>();
+
+	/** Uploads `list` one by one; a failed one stays listed with Retry and keeps its file. */
+	async function uploadFiles(list: File[]) {
+		const id = goal?.id;
+		if (!id) return;
+		for (const file of list) {
+			const key = `u${retries.size}-${file.name}`;
+			try {
+				await client.attachFile(id, file);
+			} catch (e) {
+				retries.set(key, file);
+				failed = [...failed, uploadFailed(pendingAttachment(key, file))];
+				data.error = `${file.name}: ${String(e)}`;
+			}
+		}
+		await data.load();
+	}
+
+	/** Sends a failed upload again, keeping it listed if it fails again. */
+	async function retryUpload(key: string) {
+		const file = retries.get(key);
+		const id = goal?.id;
+		if (!file || !id) return;
+		try {
+			await client.attachFile(id, file);
+			retries.delete(key);
+			failed = failed.filter((f) => f.id !== key);
+			data.error = null;
+			await data.load();
+		} catch (e) {
+			data.error = `${file.name}: ${String(e)}`;
+		}
+	}
+
+	/** Runs one attachment write, then reloads the snapshot; a refusal shows as the screen error. */
+	function attaching(write: () => Promise<unknown>) {
+		void data.run(async () => {
+			await write();
+			await data.load();
+		});
+	}
 
 	onMount(() => location.follow((v) => (places = v), (e) => (data.error = String(e))));
-	let chatStatus = $state<string | null>(null);
-	let coaches = $state<CoachView[]>([]);
-
-	$effect(() => {
-		const id = page.params.id;
-		if (!id) return;
-		void engine.runs({ goalId: id, state: 'waiting_human' }).then(async (r) => {
-			const waits = r.ok ? await engine.waits(r.value) : {};
-			const label = r.ok ? r.value.map((x) => waits[x.run_id]).find(Boolean) : undefined;
-			chatStatus = label ? `Waiting for you: ${label}. Open the chat to answer.` : null;
-		});
+	onMount(() => {
+		void engine.runLimit().then((r) => r.ok && (settingsLimit = r.value.minutes));
+		const timer = setInterval(() => (now = Date.now()), TICK_MS);
+		return () => clearInterval(timer);
 	});
+
+	const chat = $derived(new GoalChat(page.params.id ?? null, 'Tell the agents anything about this goal. They read it at their next step.'));
+	$effect(() => void chat.open());
 
 	$effect(() => {
 		const id = goal?.id;
@@ -71,15 +124,28 @@
 				]
 			: []
 	);
+	const controls = $derived<AgentSettings | null>(goal ? { autonomy: goal.autonomy, reminders: goal.reminders, useCalendars: goal.use_calendars, runLimit: goal.run_limit_minutes } : null);
+	const status = $derived(goalStatus(chat.view, goal?.run_limit_minutes ?? settingsLimit, now));
 
-	/** Saves the picked autonomy level. */
-	function onautonomy(level: AutonomyLabel) {
-		if (goal) void data.run(() => client.setAutonomy(goal.id, level.toLowerCase() as client.Goal['autonomy']));
+	/**
+	 * Saves changed agent controls (the autonomy level, or reminders, calendars and the run
+	 * limit), then syncs so the engine reads them on the next run or retry, and reloads.
+	 */
+	function oncontrols(v: AgentSettings) {
+		const g = goal;
+		if (!g) return;
+		void data.run(async () => {
+			if (v.autonomy !== g.autonomy) await client.setAutonomy(g.id, v.autonomy);
+			else await client.setGoalControls(g.id, v.reminders, v.useCalendars, v.runLimit);
+			await client.sync().catch(() => null);
+			await data.load();
+		});
 	}
 
-	/** Opens the goal's persona chat, which answers its waiting run or starts a replan. */
-	function onchat() {
-		if (goal) void goto(`/goals/${goal.id}/chat`);
+	/** Syncs first, so a time limit just changed in the agents sheet reaches the engine, then retries. */
+	async function onretry() {
+		await client.sync().catch(() => null);
+		await chat.retry();
 	}
 
 	/** Switches the dashboard to a plugin version, or to the derived view. */
@@ -90,8 +156,37 @@
 
 {#if s && goal && view && routines && places}
 	<RoutinesScreen goal={goalHeader(s, goal, clock.zone)} view={goalView(s, goal, clock)} routines={location.routineRows(places, clock.now, clock.zone)} />
-{:else if s && goal && view}
-	<GoalScreen goal={goalHeader(s, goal, clock.zone)} {view} {chatStatus} {versions} version={shown?.id ?? DERIVED} {coaches} {onautonomy} {onchat} {onversion} oncoaches={() => void goto(`/personas?goal=${goal.id}`)} />
+{:else if s && goal && view && controls}
+	{#key chat}
+		<GoalCard
+			goal={goalHeader(s, goal, clock.zone)}
+			{view}
+			{status}
+			steps={progressLines(chat.view?.events ?? [])}
+			research={chat.origin?.research ?? null}
+			answers={chat.origin?.answers ?? []}
+			messages={chat.thread}
+			onchat={(e) => chat.handle(e)}
+			voice={speech}
+			{controls}
+			defaultLimit={settingsLimit}
+			{oncontrols}
+			{coaches}
+			oncoaches={() => void goto(`/personas?goal=${goal.id}`)}
+			{versions}
+			version={shown?.id ?? DERIVED}
+			{onversion}
+			onstop={() => void chat.stop()}
+			onretry={() => void onretry()}
+			onanswers={(changed) => chat.handle({ type: 'send', text: answersReason(changed) })}
+			files={[...goalAttachments(s.files ?? [], goal.id), ...failed]}
+			{upload}
+			onfiles={(list) => void uploadFiles(list)}
+			onretryfile={(key) => void retryUpload(key)}
+			onlink={(url) => attaching(() => client.attachLink(goal.id, url))}
+			onremove={(fid) => (retries.has(fid) ? ((retries.delete(fid)), (failed = failed.filter((f) => f.id !== fid))) : attaching(() => client.removeGoalFile(fid)))}
+		/>
+	{/key}
 {:else if s}
 	<p class="p-4 text-sm text-muted">This goal no longer exists.</p>
 {/if}

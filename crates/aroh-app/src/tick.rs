@@ -19,10 +19,11 @@ pub struct Tick {
     pub moved: usize,
 }
 
-/// Seeds the categories of `user_id` (insert-or-ignore), materializes every live series
-/// for `[now, now + 14 days)`, keeps actions off Busy days from today on (local in `zone`),
-/// and marks planned actions that ended more than [`MISSED_GRACE_MIN`] minutes before `now`
-/// as missed. Running it twice changes nothing. Output: the counts changed.
+/// Seeds the categories of `user_id` (insert-or-ignore), settles occurrences pulled in an
+/// old zone ([`crate::travel::settle`]), materializes every live series for `[now, now +
+/// 14 days)`, keeps actions off Busy days from today on (local in `zone`), and marks planned
+/// actions that ended more than [`MISSED_GRACE_MIN`] minutes before `now` as missed.
+/// Running it twice changes nothing. Output: the counts changed.
 pub fn tick(conn: &Connection, clock: &mut Hlc, user_id: &str, now: DateTime<Utc>, zone: chrono_tz::Tz) -> Result<Tick> {
     let mut report = Tick::default();
     for category in aroh_domain::seed::categories(user_id) {
@@ -30,6 +31,7 @@ pub fn tick(conn: &Connection, clock: &mut Hlc, user_id: &str, now: DateTime<Utc
             report.seeded += 1;
         }
     }
+    crate::travel::settle(conn, clock, user_id, now)?;
     for series in repo::list::<ActionSeries>(conn, &[("user_id", user_id)])? {
         report.materialized += repo::materialize(conn, &series.id, now, DEFAULT_WINDOW_DAYS)?.len();
     }

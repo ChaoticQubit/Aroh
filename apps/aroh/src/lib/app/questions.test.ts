@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { sliderRange, typedNumber } from '$lib/ui/format';
 import { answerText, FALLBACK_BOUNDS, groupMessage, inputFor, scrollFor, withAnswer, type QuestionGroup } from './questions';
 
 describe('question inputs', () => {
@@ -14,6 +15,15 @@ describe('question inputs', () => {
 		expect(inputFor({ ...q, unit: null, min: 10, max: 5 }, '')).toMatchObject({ unit: '', ...FALLBACK_BOUNDS });
 	});
 
+	it('a typed number past the fallback bounds is kept and the slider reaches it (build 2: 315 pages became 100)', () => {
+		const q = { id: 'pages_read', text: 'Pages read so far?', kind: 'number' as const, choices: [], unit: 'pages' };
+		const g: QuestionGroup = { runId: 'r1', prompt: 'Answer these.', questions: [q], values: {}, skipped: [], sending: false, error: null };
+		const input = groupMessage(withAnswer(g, 'pages_read', typedNumber(315, 1))).items[0].input;
+		expect(input).toMatchObject({ kind: 'number_input', value: 315, ...FALLBACK_BOUNDS });
+		if (input.kind !== 'number_input') throw new Error('number question renders a number input');
+		expect(sliderRange(input.min, input.max, input.value)).toEqual({ min: 0, max: 315 });
+	});
+
 	it('choice and text questions keep their answer', () => {
 		expect(inputFor({ id: 'c', text: 'When?', kind: 'choice', choices: ['Morning', 'Evening'] }, 'Evening')).toMatchObject({ kind: 'choice', value: ['Evening'], multi: false });
 		expect(inputFor({ id: 't', text: 'Limits?', kind: 'text', choices: [] }, 'none')).toMatchObject({ kind: 'note', value: 'none' });
@@ -21,6 +31,20 @@ describe('question inputs', () => {
 
 	it('answer text: numbers as digits, choices joined, blanks empty', () => {
 		expect([answerText(30), answerText(['Evening']), answerText(undefined), answerText(null), answerText('  '), answerText(Number.NaN)]).toEqual(['30', 'Evening', '', '', '', '']);
+	});
+});
+
+describe('still true checks', () => {
+	it('a question the profile answers shows its known value and source, and Yes sends that value', () => {
+		const known = { fact_id: 'f1', value: '30 min', source: 'your answer on Run a 5k' };
+		const g: QuestionGroup = { runId: 'r1', prompt: 'Answer these.', questions: [{ id: 'minutes', text: 'Minutes a day?', kind: 'text', choices: [], known }, { id: 'old', text: 'Old?', kind: 'text', choices: [] }], values: {}, skipped: [], sending: false, error: null };
+		const m = groupMessage(g);
+		expect(m.items[0].known).toEqual({ value: '30 min', source: 'From your answer on Run a 5k' });
+		expect(m.items[1].known).toBeUndefined();
+		expect(m.status).toBe('0 of 2 answered. 2 still open, 1 to confirm.');
+		const yes = groupMessage(withAnswer(g, 'minutes', '30 min'));
+		expect(yes.missing).toEqual(['old']);
+		expect(yes.status).toBe('1 of 2 answered. 1 still open.');
 	});
 });
 

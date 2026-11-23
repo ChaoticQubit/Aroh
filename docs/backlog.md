@@ -4,11 +4,11 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 
 | # | Source | Where | Finding | Severity | State |
 |---|---|---|---|---|---|
-| B1 | PR #1 CodeRabbit | `apps/aroh/src-tauri/src/lib.rs:63` | Zone change shifts only stored actions; a server-held occurrence pulled after the shift keeps its old-zone instant, so two live occurrences of one slot can exist | high | open, pod 27 |
-| B2 | PR #1 CodeRabbit | `crates/aroh-domain/src/travel.rs:117` | A series whose start falls in the destination zone's DST gap fails validation and aborts the whole device zone change | high | open, pod 27 |
+| B1 | PR #1 CodeRabbit | `apps/aroh/src-tauri/src/lib.rs:63` | Zone change shifts only stored actions; a server-held occurrence pulled after the shift keeps its old-zone instant, so two live occurrences of one slot can exist | high | closed, 27ebe3f |
+| B2 | PR #1 CodeRabbit | `crates/aroh-domain/src/travel.rs:117` | A series whose start falls in the destination zone's DST gap fails validation and aborts the whole device zone change | high | closed, 27ebe3f |
 | B3 | PR #1 review (P2) | `crates/aroh-app/src/travel.rs:48` | Deleted future occurrences are not carried into the new zone, so a deleted occurrence can come back | medium | open |
 | B4 | PR #1 review (P2) | `crates/aroh-domain/src/travel.rs:83` | Re-keying actions on a zone change leaves open proposals pointing at the old action id | medium | open |
-| B5 | PR #1 review (P2) | `crates/aroh-domain/src/travel.rs:125` | Shifted occurrence keys do not use recurrence DST gap semantics | medium | open |
+| B5 | PR #1 review (P2) | `crates/aroh-domain/src/travel.rs:125` | Shifted occurrence keys do not use recurrence DST gap semantics | medium | closed, 27ebe3f (with B2) |
 | B6 | PR #1 CodeRabbit | `apps/aroh/ios-release.sh:27` | `AROH_ASC_KEY_PATH` is not resolved to an absolute path before `cd`, so a relative key path breaks upload | low | open |
 | B7 | PR #1 CodeRabbit | `apps/aroh/src-tauri/src/commands/engine.rs:88` | Concurrent `send_zone` calls can deliver an older zone after a newer one | medium | open |
 | B8 | PR #1 CodeRabbit | `apps/aroh/src/routes/inbox/+page.svelte:62` | Dismissed cards are not retained for the combined Inbox card limit | low | open |
@@ -19,3 +19,14 @@ Open and closed findings and leftovers. Closed items stay, marked with the commi
 | B13 | Pod 25 DONE | chat composer | Keyboard keeps composer visible: not verified, needs a manual tap on simulator or device | medium | open, check on build 2 |
 | B14 | Pod 25 DONE | `docs/decisions.md` | Research before questions not yet recorded in decisions.md (foundation) | low | open |
 | B15 | PR #2 review (P2) | `apps/aroh/src/lib/app/chat.svelte.ts:179` | Stopped runs not restored when reopening a goal chat, so Retry is missing after reopen | medium | open |
+| B16 | Pod 27 (B1 fix) | `crates/aroh-domain/src/travel.rs` `settle` | An old-zone occurrence edited elsewhere (locked, done or re-stamped) before the device pulls it after a zone change is left as is, so it can sit beside the new-zone occurrence of the same slot | medium | open |
+| B17 | Owner, build 2 | provider key status | Claude provider key missing after updating build 1 to build 2 | critical | closed, not a bug: owner confirmed the key was kept (2026-11-22) |
+| B18 | Owner, build 2 | `apps/aroh/src/lib/app/questions.ts` | Number slider capped at 100 (fallback bounds); typing 315 clamps to 100 | high | closed, 9f402c1 |
+| B19 | Owner, build 2 | chat composer | Opening the keyboard breaks the whole layout | high | closed, f5e5a1c (simulator; confirm on phone) |
+| B20 | Pod 26 DONE | attachments | Photo and File upload unverified until the prod storage migration is applied; check on build 3 | high | open |
+| B21 | Pod 26 DONE | personas | A copied intake coach misses the lasting/known instruction lines, so no profile facts for that owner | medium | open |
+| B22 | Pod 26 DONE | replan | Files added later on the goal card reach only future new-goal runs; replan does not read files | medium | open |
+| B23 | Pod 26 DONE | attachments | Removing an attachment does not delete its storage object | medium | open |
+| B24 | Pod 26 DONE | mockups | Point the mockup GoalCard at the real card | low | open |
+| B25 | Pod 26 DONE | goal card | Top bar says "Goals" instead of the goal name | low | open |
+| B26 | Pod 26 DONE | chat composer | Placeholder says "Message your personas" instead of the lead coach | low | open |

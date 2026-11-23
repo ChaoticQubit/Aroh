@@ -39,6 +39,37 @@ fn title(source: &str) -> &'static str {
     }
 }
 
+/// One question of a run with the owner's answer, `None` when skipped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct RunAnswer {
+    pub id: String,
+    pub text: String,
+    pub answer: Option<String>,
+}
+
+/// What a new-goal run found and was told, from its `state`: the `research` object
+/// (`summary` and `sources`) when written, and each submitted answer with its
+/// question text, in question order. Empty for runs without them.
+pub fn run_found(state: &Map<String, Value>) -> (Option<Value>, Vec<RunAnswer>) {
+    let research = state.get("research").filter(|r| r.is_object()).cloned();
+    let given: Map<String, Value> = state
+        .get("answers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|a| Some((a.get("id")?.as_str()?.to_string(), a.get("answer").cloned().unwrap_or(Value::Null))))
+        .collect();
+    let questions = state.get("intake").and_then(|i| i.get("questions")).and_then(Value::as_array).into_iter().flatten();
+    let answers = questions
+        .filter_map(|q| {
+            let id = q.get("id")?.as_str()?;
+            let answer = given.get(id)?;
+            Some(RunAnswer { id: id.into(), text: q.get("text").and_then(Value::as_str).unwrap_or(id).into(), answer: answer.as_str().map(str::to_string) })
+        })
+        .collect();
+    (research, answers)
+}
+
 /// A one-line summary of a run from its `workflow` and state: the
 /// proposal and its outcome (applied, rejected, waiting, no change) for
 /// replans, the proposed fact for learning runs. `None` before either.
@@ -118,6 +149,26 @@ mod tests {
 
     fn state(v: Value) -> Map<String, Value> {
         v.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn found_and_answers_come_from_the_run_state() {
+        assert_eq!(run_found(&state(json!({}))), (None, vec![]));
+        let s = state(json!({
+            "research": {"summary": "24 chapters.", "sources": [{"title": "Publisher", "url": "https://example.com"}]},
+            "intake": {"questions": [{"id": "pace", "text": "Minutes a day?"}, {"id": "when", "text": "When?"}, {"id": "late", "text": "Asked later"}]},
+            "answers": [{"id": "pace", "answer": "30"}, {"id": "when", "answer": null}]
+        }));
+        let (research, answers) = run_found(&s);
+        assert_eq!(research.unwrap()["summary"], "24 chapters.");
+        assert_eq!(
+            answers,
+            vec![
+                RunAnswer { id: "pace".into(), text: "Minutes a day?".into(), answer: Some("30".into()) },
+                RunAnswer { id: "when".into(), text: "When?".into(), answer: None },
+            ],
+            "only answered or skipped questions, in question order"
+        );
     }
 
     #[test]

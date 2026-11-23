@@ -1,6 +1,6 @@
 use aroh_domain::hlc::Hlc;
 use aroh_domain::lww::{remote_wins, Version};
-use aroh_domain::rows::{samples, Action, ActionSeries, Category, Goal};
+use aroh_domain::rows::{samples, Action, ActionSeries, Category, Goal, PreferenceOrigin};
 use aroh_domain::schema::{Kind, TableDef, SYNCED};
 use aroh_store::codec::WireRow;
 use aroh_store::sync::{apply_page, pending, sync_all, Remote};
@@ -190,6 +190,167 @@ fn sync_future_is_send() {
     let server = Arc::new(Mutex::new(Server::default()));
     let mut d = Device::new("00000000000000aa", &server, 1_763_683_300_000);
     send(sync_all(&mut d.conn, &mut d.remote, samples::USER, &mut d.clock));
+}
+
+/// The `goals` row of build 2, frozen so later column changes cannot hide a break.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct Build2Goal {
+    id: String,
+    user_id: String,
+    category_id: Option<String>,
+    title: String,
+    context: Option<String>,
+    deadline: Option<String>,
+    status: String,
+    autonomy: String,
+    created_at: String,
+    updated_at: String,
+    deleted: bool,
+}
+
+/// The `preferences` row of build 2 and its field rules.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct Build2Preference {
+    id: String,
+    user_id: String,
+    fact: String,
+    source: String,
+    noted_at: String,
+    confirmed: bool,
+    updated_at: String,
+    deleted: bool,
+}
+
+fn build2_goal(row: &serde_json::Value) -> aroh_domain::Result<()> {
+    serde_json::from_value::<Build2Goal>(row.clone()).map(|_| ()).map_err(|e| aroh_domain::Error::Invalid { field: "goals", reason: e.to_string() })
+}
+
+fn build2_preference(row: &serde_json::Value) -> aroh_domain::Result<()> {
+    let p: Build2Preference = serde_json::from_value(row.clone()).map_err(|e| aroh_domain::Error::Invalid { field: "preferences", reason: e.to_string() })?;
+    let ok = (1..=1000).contains(&p.fact.chars().count()) && (1..=60).contains(&p.source.chars().count());
+    if ok { Ok(()) } else { Err(aroh_domain::Error::Invalid { field: "preferences.fact", reason: "build 2 rules".into() }) }
+}
+
+const fn col(name: &'static str, kind: Kind) -> aroh_domain::schema::Column {
+    aroh_domain::schema::Column { name, kind }
+}
+
+static BUILD2_GOALS: TableDef = TableDef {
+    name: "goals",
+    columns: &[
+        col("id", Kind::Text),
+        col("user_id", Kind::Text),
+        col("category_id", Kind::Text),
+        col("title", Kind::Text),
+        col("context", Kind::Text),
+        col("deadline", Kind::Text),
+        col("status", Kind::Text),
+        col("autonomy", Kind::Text),
+        col("created_at", Kind::Time),
+        col("updated_at", Kind::Text),
+        col("deleted", Kind::Bool),
+    ],
+    check: build2_goal,
+};
+
+static BUILD2_PREFERENCES: TableDef = TableDef {
+    name: "preferences",
+    columns: &[
+        col("id", Kind::Text),
+        col("user_id", Kind::Text),
+        col("fact", Kind::Text),
+        col("source", Kind::Text),
+        col("noted_at", Kind::Time),
+        col("confirmed", Kind::Bool),
+        col("updated_at", Kind::Text),
+        col("deleted", Kind::Bool),
+    ],
+    check: build2_preference,
+};
+
+/// The `goal_files` row of build 2, frozen like `Build2Goal`.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct Build2GoalFile {
+    id: String,
+    user_id: String,
+    goal_id: String,
+    name: String,
+    kind: String,
+    storage_path: Option<String>,
+    url: Option<String>,
+    mime: Option<String>,
+    size_bytes: i64,
+    ingest_status: String,
+    updated_at: String,
+    deleted: bool,
+}
+
+fn build2_goal_file(row: &serde_json::Value) -> aroh_domain::Result<()> {
+    serde_json::from_value::<Build2GoalFile>(row.clone()).map(|_| ()).map_err(|e| aroh_domain::Error::Invalid { field: "goal_files", reason: e.to_string() })
+}
+
+static BUILD2_GOAL_FILES: TableDef = TableDef {
+    name: "goal_files",
+    columns: &[
+        col("id", Kind::Text),
+        col("user_id", Kind::Text),
+        col("goal_id", Kind::Text),
+        col("name", Kind::Text),
+        col("kind", Kind::Text),
+        col("storage_path", Kind::Text),
+        col("url", Kind::Text),
+        col("mime", Kind::Text),
+        col("size_bytes", Kind::Int),
+        col("ingest_status", Kind::Text),
+        col("updated_at", Kind::Text),
+        col("deleted", Kind::Bool),
+    ],
+    check: build2_goal_file,
+};
+
+#[test]
+fn build_2_pulls_goal_files_with_extracted_text() {
+    let mut file: aroh_domain::rows::GoalFile = serde_json::from_value(samples::all()[3].clone()).unwrap();
+    file.extracted_text = Some("Chapter one".into());
+    let row = serde_json::to_value(&file).unwrap();
+    let mut wire = row.as_object().unwrap().clone();
+    wire.insert("server_seq".into(), 7.into());
+    let kept = aroh_store::codec::normalize(&BUILD2_GOAL_FILES, &wire).unwrap();
+    assert_eq!(kept.keys().count(), BUILD2_GOAL_FILES.columns.len());
+    assert!(!kept.contains_key("extracted_text"));
+}
+
+#[test]
+fn build_2_pulls_rows_written_with_the_new_columns() {
+    let mut goal = samples::goal();
+    goal.reminders = false;
+    goal.use_calendars = false;
+    goal.run_limit_minutes = Some(10);
+    let mut learned = samples::preference();
+    learned.origin = PreferenceOrigin::Answer;
+    learned.topic = Some("reading time".into());
+    learned.goal_id = Some(samples::goal_id());
+    let mut blocked = learned.clone();
+    blocked.id = aroh_domain::new_id();
+    blocked.blocked = true;
+    for (old, row) in [
+        (&BUILD2_GOALS, serde_json::to_value(&goal).unwrap()),
+        (&BUILD2_PREFERENCES, serde_json::to_value(&learned).unwrap()),
+        (&BUILD2_PREFERENCES, serde_json::to_value(&blocked).unwrap()),
+    ] {
+        let mut wire = row.as_object().unwrap().clone();
+        wire.insert("server_seq".into(), 7.into());
+        let kept = aroh_store::codec::normalize(old, &wire).unwrap_or_else(|e| panic!("{}: {e}", old.name));
+        assert_eq!(kept.keys().count(), old.columns.len(), "{}", old.name);
+        assert_eq!(kept["id"], row["id"]);
+    }
+    assert!(learned.confirmed && blocked.confirmed, "build 2 lists unconfirmed preferences in its Inbox");
 }
 
 #[test]

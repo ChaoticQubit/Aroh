@@ -75,3 +75,9 @@ export type CoachGroup = { title: string; slot: CategorySlot | null; personas: C
 
 /** The editable text of a coach copy: name, style, instructions and rules. */
 export type CoachFields = { display_name: string; role: string; instructions: string; guardrails: string[] };
+
+/** One kept profile fact: its text, where it came from, its ISO date, and whether it can be blocked (it has a topic). */
+export type FactView = { id: string; text: string; source: string; date: string; blockable: boolean };
+
+/** "What Aroh knows about you": kept facts newest first, and the topics the owner never wants learned. */
+export type ProfileView = { facts: FactView[]; blocked: { id: string; label: string }[] };

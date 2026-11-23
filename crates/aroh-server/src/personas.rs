@@ -130,6 +130,20 @@ fn view(name: &str, toml: &str, source: Origin) -> PersonaView {
     }
 }
 
+/// Gives an owner's copy of a shipped persona the shipped `[output]`, which every copy must keep,
+/// so a copy saved before the output grew a field still matches the workflow that reads it.
+/// Returns `text` unchanged when its output already matches, for a persona that is not shipped,
+/// or for a copy that does not parse.
+pub fn with_shipped_output(name: &str, text: String) -> String {
+    let Some(base) = shipped(name).and_then(|b| b.parse::<toml::Table>().ok()) else { return text };
+    let (Ok(mut copy), Some(output)) = (text.parse::<toml::Table>(), base.get("output")) else { return text };
+    if copy.get("output") == Some(output) {
+        return text;
+    }
+    copy.insert("output".into(), output.clone());
+    toml::to_string(&copy).expect("a parsed table serializes")
+}
+
 /// Checks persona `text` as the library copy called `name`: it parses, its
 /// name is `name`, its tools and evals exist on the server, and against the
 /// built-in it keeps the same output and every safety guardrail.
@@ -217,6 +231,19 @@ impl Writer<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_old_copy_takes_the_shipped_output() {
+        let base = shipped("intake-interviewer").unwrap();
+        let old = base.replace(", lasting: {topic: string, label: string}?, known: {fact_id: string, value: string, source: string}?", "");
+        assert_ne!(old, base, "the copy predates lasting and known");
+        let fixed = with_shipped_output("intake-interviewer", old.clone());
+        assert!(check("intake-interviewer", &fixed).is_ok(), "the copy matches the shipped output");
+        assert!(check("intake-interviewer", &old).is_err());
+        assert_eq!(with_shipped_output("no-such-persona", "x".into()), "x");
+        let edited = base.replace("display_name = \"", "display_name = \"My ");
+        assert_eq!(with_shipped_output("intake-interviewer", edited.clone()), edited, "a current copy keeps its text");
+    }
 
     #[test]
     fn check_keeps_runs_working_and_safety_rules_in_place() {

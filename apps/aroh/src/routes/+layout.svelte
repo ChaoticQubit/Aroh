@@ -17,7 +17,7 @@
 	let { children }: { children: Snippet } = $props();
 
 	const TITLES: Record<TabId | 'settings', string> = { today: 'Today', calendar: 'Calendar', goals: 'Goals', inbox: 'Inbox', log: 'Log', settings: 'Settings' };
-	const SUBTITLES: Record<string, string> = { '/settings/location': 'Location', '/settings/location/log': 'Location log', '/settings/places': 'Places' };
+	const SUBTITLES: Record<string, string> = { '/settings/location': 'Location', '/settings/location/log': 'Location log', '/settings/places': 'Places', '/settings/profile': 'What Aroh knows' };
 	const bare = $derived((page.data as { bare?: boolean }).bare === true);
 	const coaches = $derived(page.url.pathname.startsWith('/personas'));
 	const tab = $derived((Object.keys(TITLES) as (TabId | 'settings')[]).find((t) => page.url.pathname.startsWith(`/${t}`)) ?? (coaches ? (page.url.searchParams.has('goal') ? 'goals' : 'settings') : 'today'));

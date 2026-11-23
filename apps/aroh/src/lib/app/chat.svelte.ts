@@ -3,6 +3,9 @@ import * as client from './client';
 import { ACTIVE, chatFromRun, engine, fixedActionIds, NEEDS_ENGINE, questionsOf, type PlanItem, type RunEvent, type RunView } from './engine';
 import { fillNext, groupMessage, submissionOf, withAnswer, withSkip, type QuestionGroup } from './questions';
 import { connectWakeups, wakeups } from './realtime';
+import { blankDraft, startBody } from './newgoal';
+import { deviceZone } from '$lib/ui/clock';
+import { originRun, pickRun } from './goalcard';
 
 const POLL_MAX = 400;
 const DAY_MS = 86_400_000;
@@ -43,6 +46,9 @@ export class GoalChat {
 	log = $state<ChatMessage[]>([]);
 	live = $state<ChatMessage[]>([]);
 	group = $state<QuestionGroup | null>(null);
+	view = $state<RunView | null>(null);
+	origin = $state<RunView | null>(null);
+	private originId: string | null = null;
 	goalId: string | null;
 	private runId: string | null = null;
 	private change: string | null = null;
@@ -58,6 +64,37 @@ export class GoalChat {
 	/** Every message of the thread, in order, with the open question group last. */
 	get messages(): ChatMessage[] {
 		return [...this.log, ...this.live, ...(this.group ? [groupMessage(this.group)] : [])];
+	}
+
+	/** The thread without run state lines (progress, working, stopped), which the goal card's status header shows instead. */
+	get thread(): ChatMessage[] {
+		return this.messages.filter((m) => m.type !== 'progress' && m.type !== 'working' && m.type !== 'stopped');
+	}
+
+	/**
+	 * Picks up the goal card's run: the newest run of this goal that waits for the owner, else
+	 * the newest run. A waiting or moving run is followed in the thread; a finished or stopped
+	 * one only sets `view`, so the card's status reads it and Retry works. `origin` is the newest
+	 * new-goal run, whose research and answers the card keeps showing after later replans.
+	 */
+	async open() {
+		if (!this.goalId) return;
+		const runs = await engine.runs({ goalId: this.goalId });
+		const id = runs.ok ? pickRun(runs.value) : null;
+		const picked = runs.ok ? runs.value.find((r) => r.run_id === id) : undefined;
+		this.originId = runs.ok ? originRun(runs.value) : null;
+		if (this.originId && this.originId !== id) {
+			const first = await engine.run(this.originId);
+			if (first.ok) this.origin = first.value;
+		}
+		if (!id || !picked) return;
+		if (picked.state === 'waiting_human' || ACTIVE.includes(picked.state)) return this.watch(id);
+		const r = await engine.run(id);
+		if (!r.ok) return;
+		this.runId = id;
+		this.view = r.value;
+		if (id === this.originId) this.origin = r.value;
+		this.seq = Math.max(-1, ...r.value.events.map((e) => e.seq));
 	}
 
 	/** Picks up a run of this goal that already waits for the owner, if any, so its open questions show again. */
@@ -81,6 +118,8 @@ export class GoalChat {
 
 	/** Renders a run view when it moved, and opens its question group when it waits at questions. */
 	private show(v: RunView) {
+		this.view = v;
+		if (v.run_id === this.originId) this.origin = v;
 		const top = Math.max(this.seq, ...v.events.map((e) => e.seq));
 		const key = `${v.status.status}:${v.waiting[0]?.node ?? ''}:${top}`;
 		if (key === this.shown) return;
@@ -124,7 +163,7 @@ export class GoalChat {
 		this.freeze();
 		this.log.push({ type: 'message', from: 'owner', name: 'You', text });
 		if (!this.goalId) {
-			const started = await engine.startGoal(text);
+			const started = await engine.startGoal(startBody({ ...blankDraft(), title: text.trim().slice(0, 200), description: text }, deviceZone()));
 			if (!started.ok) return this.say(started.message);
 			this.goalId = started.value.goal_id;
 			return this.watch(started.value.run_id);

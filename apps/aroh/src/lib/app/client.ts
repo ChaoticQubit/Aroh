@@ -13,6 +13,9 @@ export type Goal = {
 	status: 'draft' | 'active' | 'paused' | 'done' | 'archived';
 	autonomy: 'ask' | 'balanced' | 'auto';
 	created_at: string;
+	reminders: boolean;
+	use_calendars: boolean;
+	run_limit_minutes: number | null;
 };
 
 /** An action row; times are RFC 3339 UTC. */
@@ -49,7 +52,17 @@ export type TrackerEntry = { id: string; tracker_id: string; data: Record<string
 export type Proposal = { id: string; goal_id: string; summary: string; diff: unknown; size: 'small' | 'big'; status: string; created_at: string };
 
 /** A suggested user preference. */
-export type Preference = { id: string; fact: string; source: string; noted_at: string; confirmed: boolean };
+export type Preference = {
+	id: string;
+	fact: string;
+	source: string;
+	noted_at: string;
+	confirmed: boolean;
+	topic: string | null;
+	goal_id: string | null;
+	origin: 'edit' | 'answer';
+	blocked: boolean;
+};
 
 /** A persona row; only its name and goal are shown. */
 export type Persona = { id: string; goal_id: string | null; name: string };
@@ -72,21 +85,36 @@ export type DeviceEvent = { calendar_id: string; calendar: string; event_id: str
 /** What one calendar import did; `unmatched` holds one event per series for triage. */
 export type CalendarImport = { kept: number; ignored: number; removed: number; unmatched: DeviceEvent[] };
 
+/** A file or link attached to a goal, as the snapshot lists it (never with its text). */
+export type GoalFile = {
+	id: string;
+	goal_id: string;
+	name: string;
+	kind: 'document' | 'image' | 'audio' | 'video' | 'link';
+	storage_path: string | null;
+	url: string | null;
+	mime: string | null;
+	size_bytes: number;
+	ingest_status: 'pending' | 'processing' | 'done' | 'failed';
+};
+
 /** Every row the screens read, as `app_snapshot` returns it. */
 export type Snapshot = {
 	user_id: string;
 	categories: Category[];
 	goals: Goal[];
+	files: GoalFile[];
 	actions: Action[];
 	trackers: Tracker[];
 	entries: TrackerEntry[];
 	proposals: Proposal[];
 	preferences: Preference[];
+	facts: Preference[];
 	personas: Persona[];
 	providers: ProviderSetting[];
 	search: SearchSetting[];
 	budgets: Budget[];
-	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions', string>>;
+	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions' | 'agent_defaults', string>>;
 	pending_logs: { text: string; at: string }[];
 	busy?: BusyBlock[];
 	notes?: Note[];
@@ -120,8 +148,54 @@ export const decideProposal = (id: string, apply: boolean) => invoke<Proposal>('
 /** Confirms or dismisses a suggested preference. */
 export const decidePreference = (id: string, confirm: boolean) => invoke<null>('app_decide_preference', { id, confirm });
 
+/** Edits a kept profile fact's text, dated now. */
+export const editFact = (id: string, fact: string) => invoke<Preference>('edit_fact', { id, fact });
+
+/** "Never learn this": turns a kept fact into a blocked topic. */
+export const blockTopic = (id: string) => invoke<Preference>('block_topic', { id });
+
+/** "Allow again": removes a blocked topic. */
+export const allowTopic = (id: string) => invoke<null>('allow_topic', { id });
+
 /** Sets a goal's autonomy level. */
+/** Guesses the owner's seeded category of a new goal from its words, offline. Output: the category id or null. */
+export const guessCategory = (title: string, description: string | null) => invoke<string | null>('guess_category', { title, description });
+
+/** Adds an owner category on one of the 6 hues (`#rrggbb`), or the next free hue when `color` is null. */
+export const addCategory = (name: string, color: string | null) => invoke<Category>('add_category', { name, color });
+
 export const setAutonomy = (goalId: string, autonomy: Goal['autonomy']) => invoke<Goal>('app_set_autonomy', { goalId, autonomy });
+
+let storage: Promise<boolean> | null = null;
+
+/**
+ * Whether Attach can offer photos and files: signed in and the project serves the goal-files
+ * bucket. One request per app session, cached; signing in or out asks again.
+ */
+export function filesAvailable(): Promise<boolean> {
+	storage ??= invoke<boolean>('files_available').catch(() => false);
+	return storage;
+}
+
+/**
+ * Attaches `file` to goal `goalId`: the app reads its text off the main thread, uploads it to the
+ * owner's bucket and syncs the row. The bytes go raw, the details in a header. Rejects with a reason.
+ */
+export async function attachFile(goalId: string, file: File): Promise<GoalFile> {
+	const bytes = new Uint8Array(await file.arrayBuffer());
+	const details = encodeURIComponent(JSON.stringify({ goalId, name: file.name, mime: file.type }));
+	return invoke<GoalFile>('attach_file', bytes, { headers: { 'x-aroh-file': details } });
+}
+
+/** Attaches the https link `url` to goal `goalId` for the agents to fetch. */
+export const attachLink = (goalId: string, url: string) => invoke<GoalFile>('attach_link', { goalId, url });
+
+/** Removes goal file `id`. */
+export const removeGoalFile = (id: string) => invoke<void>('remove_goal_file', { id });
+
+/** Sets a goal's reminders, calendar reads and run time limit in minutes (null: the Settings limit). */
+export const setGoalControls = (goalId: string, reminders: boolean, useCalendars: boolean, runLimitMinutes: number | null) =>
+	invoke<Goal>('set_goal_controls', { goalId, reminders, useCalendars, runLimitMinutes });
 
 /** Makes a vendor and model the default provider. Never takes a key. */
 export const saveProvider = (vendor: string, model: string) => invoke<ProviderSetting>('app_save_provider', { vendor, model });
@@ -130,7 +204,7 @@ export const saveProvider = (vendor: string, model: string) => invoke<ProviderSe
 export const saveBudget = (usd: number | null) => invoke<null>('app_save_budget', { usd });
 
 /** Stores one device setting. */
-export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions', value: string) => invoke<null>('app_set_setting', { name, value });
+export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions' | 'agent_defaults', value: string) => invoke<null>('app_set_setting', { name, value });
 
 /** Asks for notification permission once and reports whether it is granted. */
 export const notificationPermission = () => invoke<boolean>('app_notification_permission');
@@ -151,10 +225,10 @@ export type Account = { signed_in: boolean; email: string | null; user_id: strin
 export const account = () => invoke<Account>('app_account');
 
 /** Signs in, or with `create` signs up; the device adopts the account and syncs. */
-export const signIn = (email: string, password: string, create: boolean) => invoke<Account>('app_sign_in', { email, password, create });
+export const signIn = (email: string, password: string, create: boolean) => ((storage = null), invoke<Account>('app_sign_in', { email, password, create }));
 
 /** Signs out; local rows stay. */
-export const signOut = () => invoke<Account>('app_sign_out');
+export const signOut = () => ((storage = null), invoke<Account>('app_sign_out'));
 
 /** Pushes local changes and pulls the account's rows. */
 export const sync = () => invoke<{ pushed: number; pulled: number }>('app_sync');

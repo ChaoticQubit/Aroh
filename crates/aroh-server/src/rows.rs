@@ -113,9 +113,19 @@ pub async fn list_rows<R: Record>(
         q = q.bind(value);
     }
     let rows = q.fetch_all(pool).await?;
-    rows.into_iter()
-        .map(|v| serde_json::from_value(v).map_err(|e| ServerError::Db(format!("{}: {e}", R::TABLE.name))))
-        .collect()
+    rows.into_iter().map(parse_row::<R>).collect()
+}
+
+/// Parses one `to_jsonb` row of `R`'s table, keeping registry columns only,
+/// so a column added by a later migration never breaks a running server.
+/// Input: the row object. Output: the row, or `Db` naming the table.
+pub fn parse_row<R: Record>(value: Value) -> Result<R, ServerError> {
+    let Value::Object(mut row) = value else {
+        return Err(ServerError::Db(format!("{}: row is not an object", R::TABLE.name)));
+    };
+    row.retain(|name, _| R::TABLE.column(name).is_some());
+    assert!(row.len() <= R::TABLE.columns.len());
+    serde_json::from_value(Value::Object(row)).map_err(|e| ServerError::Db(format!("{}: {e}", R::TABLE.name)))
 }
 
 /// Returns the live row `id` of `R` owned by `user`.
@@ -212,5 +222,35 @@ pub async fn run_row_for(pool: &PgPool, user: Uuid, id: RunId) -> Result<RunRow,
     match run_row(pool, id).await? {
         Some(row) if row.user_id == user => Ok(row),
         _ => Err(ServerError::NotFound(format!("run {id}"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aroh_domain::rows::Goal;
+
+    fn goal() -> Value {
+        serde_json::json!({
+            "id": "0190f2a0-0000-7000-8000-000000000091", "user_id": "0190f2a0-0000-7000-8000-00000000000a",
+            "category_id": null, "title": "Read Dune", "context": null, "deadline": "2027-01-31",
+            "status": "active", "autonomy": "ask", "created_at": "2026-11-23T08:00:00Z",
+            "reminders": true, "use_calendars": true, "run_limit_minutes": null,
+            "updated_at": "1763683200000-0000-00000000000000aa", "deleted": false
+        })
+    }
+
+    #[test]
+    fn columns_outside_the_registry_are_ignored() {
+        let mut row = goal();
+        row["added_later"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<Goal>(row.clone()).is_err());
+        let parsed = parse_row::<Goal>(row).unwrap();
+        assert_eq!(parsed, serde_json::from_value::<Goal>(goal()).unwrap());
+        parsed.validate().unwrap();
+        let mut missing = goal();
+        missing.as_object_mut().unwrap().remove("title");
+        assert!(parse_row::<Goal>(missing).is_err());
+        assert!(parse_row::<Goal>(serde_json::json!([1])).is_err());
     }
 }

@@ -1,5 +1,5 @@
 use aroh_domain::hlc::Hlc;
-use aroh_domain::rows::{samples, Action, ActionSeries, ActionStatus, BusyBlock, CalendarRule, Category, DayKind, Goal, Record, Tracker};
+use aroh_domain::rows::{samples, Action, ActionSeries, ActionStatus, BusyBlock, CalendarRule, Category, DayKind, Goal, Preference, PreferenceOrigin, Record, Tracker};
 use aroh_domain::schema::SYNCED;
 use aroh_store::{db, repo, Error};
 use chrono::{TimeZone, Utc};
@@ -159,6 +159,52 @@ fn day_kinds_round_trip_with_and_without_a_kind() {
     repo::put(&conn, &mut clock, &mut block).unwrap();
     let raw: String = conn.query_row("SELECT day_kind FROM busy_blocks WHERE id = ?1", [&block.id], |r| r.get(0)).unwrap();
     assert_eq!(raw, "reminder");
+}
+
+#[test]
+fn migrating_a_fourth_version_file_adds_goal_file_text_and_keeps_rows() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(&format!("{}\nPRAGMA user_version = 4;", db::MIGRATIONS[..4].join("\n"))).unwrap();
+    let file_id = "0190f2a0-0000-7000-8000-0000000000f1";
+    let goal_id = "0190f2a0-0000-7000-8000-000000000091";
+    conn.execute(
+        "INSERT INTO goal_files VALUES (?1, ?2, ?3, 'plan.pdf', 'document', ?4, NULL, 'application/pdf', 1024, 'pending', ?5, 0)",
+        [file_id, samples::USER, goal_id, &format!("goals/{goal_id}/plan.pdf"), samples::STAMP],
+    )
+    .unwrap();
+    db::migrate(&conn).unwrap();
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+    assert_eq!(version, db::SCHEMA_VERSION);
+    let file: aroh_domain::rows::GoalFile = repo::get(&conn, file_id).unwrap();
+    assert_eq!((file.name.as_str(), file.size_bytes, file.extracted_text), ("plan.pdf", 1024, None));
+}
+
+#[test]
+fn migrating_a_third_version_file_adds_goal_controls_and_profile_columns() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(&format!("{}\n{}\n{}\nPRAGMA user_version = 3;", db::MIGRATIONS[0], db::MIGRATIONS[1], db::MIGRATIONS[2])).unwrap();
+    let goal_id = "0190f2a0-0000-7000-8000-000000000091";
+    let pref_id = "0190f2a0-0000-7000-8000-00000000000d";
+    conn.execute(
+        "INSERT INTO goals VALUES (?1, ?2, NULL, 'Read Dune', 'Evenings', '2027-01-31', 'active', 'ask', '2026-11-23T08:00:00Z', ?3, 0)",
+        [goal_id, samples::USER, samples::STAMP],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO preferences VALUES (?1, ?2, 'Mornings', 'chat', '2026-11-23T08:00:00Z', 1, ?3, 0)",
+        [pref_id, samples::USER, samples::STAMP],
+    )
+    .unwrap();
+    db::migrate(&conn).unwrap();
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+    assert_eq!(version, db::SCHEMA_VERSION);
+    let goal: Goal = repo::get(&conn, goal_id).unwrap();
+    assert_eq!((goal.title.as_str(), goal.reminders, goal.use_calendars, goal.run_limit_minutes), ("Read Dune", true, true, None));
+    let pref: Preference = repo::get(&conn, pref_id).unwrap();
+    assert_eq!(
+        (pref.fact.as_str(), pref.topic, pref.goal_id, pref.origin, pref.blocked),
+        ("Mornings", None, None, PreferenceOrigin::Edit, false)
+    );
 }
 
 #[test]

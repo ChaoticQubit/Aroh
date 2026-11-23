@@ -15,6 +15,8 @@ pub mod learning;
 pub mod ledger;
 pub mod personas;
 pub mod plugins;
+pub mod files;
+pub mod profile;
 pub mod push;
 pub mod queue;
 pub mod rows;

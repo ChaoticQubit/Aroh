@@ -19,6 +19,34 @@ export function snap(value: number, step: number, min = -Infinity, max = Infinit
 	return Number(Math.min(max, Math.max(min, value)).toFixed(decimals));
 }
 
+/**
+ * A typed number as the input keeps it: rounded to the decimals of `step`, never cut to any bound.
+ * Input: a finite number and a positive step. Output: the kept number.
+ */
+export function typedNumber(value: number, step: number): number {
+	return snap(value, step);
+}
+
+/**
+ * The slider range of a number input holding `value`: `min`..`max` widened to include the value,
+ * so a typed number always fits the slider. Output: null unless both bounds are given.
+ */
+export function sliderRange(min: number | undefined, max: number | undefined, value: number | null): { min: number; max: number } | null {
+	if (min === undefined || max === undefined) return null;
+	if (min > max) throw new RangeError(`bad bounds ${min}..${max}`);
+	return value === null ? { min, max } : { min: Math.min(min, value), max: Math.max(max, value) };
+}
+
+/**
+ * One press of a step button: `delta` added to `value` (or to 0 when empty). Never above any bound;
+ * never below `min`, or below `value` when it already sits under `min`. Output: the new number.
+ */
+export function stepNumber(value: number | null, delta: number, step: number, min: number | undefined): number {
+	const from = value ?? 0;
+	const floor = min === undefined ? -Infinity : Math.min(min, from);
+	return snap(from + delta, step, floor);
+}
+
 /** Formats minutes as "45 min", "1 h 30 min" or "2 h". Input must be a non-negative integer. */
 export function formatDuration(minutes: number): string {
 	if (!Number.isInteger(minutes) || minutes < 0) throw new RangeError(`bad minutes ${minutes}`);

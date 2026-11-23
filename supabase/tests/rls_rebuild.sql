@@ -302,3 +302,75 @@ end;
 $$;
 
 reset role;
+set role authenticated;
+set request.jwt.claim.sub = '00000000-0000-0000-0000-00000000000a';
+
+create function pg_temp.build2_goal(stamp text, title text) returns void language sql as $$
+  insert into public.goals (id, user_id, category_id, title, context, deadline, status, autonomy, created_at, updated_at, deleted)
+  select id, user_id, category_id, title, context, deadline, status, autonomy, created_at, updated_at, deleted
+  from json_populate_recordset(null::public.goals, json_build_array(json_build_object(
+    'id', '0190f2a0-0000-7000-8000-0000000000b2', 'user_id', '00000000-0000-0000-0000-00000000000a', 'category_id', null,
+    'title', title, 'context', null, 'deadline', null, 'status', 'active', 'autonomy', 'ask',
+    'created_at', '2026-11-23T08:00:00Z', 'updated_at', stamp, 'deleted', false)))
+  on conflict (user_id, id) do update set category_id = excluded.category_id, title = excluded.title, context = excluded.context,
+    deadline = excluded.deadline, status = excluded.status, autonomy = excluded.autonomy, created_at = excluded.created_at,
+    updated_at = excluded.updated_at, deleted = excluded.deleted;
+$$;
+
+create function pg_temp.build2_preference(stamp text, fact text) returns void language sql as $$
+  insert into public.preferences (id, user_id, fact, source, noted_at, confirmed, updated_at, deleted)
+  select id, user_id, fact, source, noted_at, confirmed, updated_at, deleted
+  from json_populate_recordset(null::public.preferences, json_build_array(json_build_object(
+    'id', '0190f2a0-0000-7000-8000-0000000000b3', 'user_id', '00000000-0000-0000-0000-00000000000a', 'fact', fact,
+    'source', 'chat', 'noted_at', '2026-11-23T08:00:00Z', 'confirmed', true, 'updated_at', stamp, 'deleted', false)))
+  on conflict (user_id, id) do update set fact = excluded.fact, source = excluded.source, noted_at = excluded.noted_at,
+    confirmed = excluded.confirmed, updated_at = excluded.updated_at, deleted = excluded.deleted;
+$$;
+
+do $$
+declare
+  g record;
+  p record;
+begin
+  perform pg_temp.build2_goal('1763683200010-0000-aaaaaaaaaaaaaaaa', 'Old client goal');
+  select * into g from public.goals where id = '0190f2a0-0000-7000-8000-0000000000b2';
+  if not (g.reminders and g.use_calendars and g.run_limit_minutes is null) then
+    raise exception 'a build 2 insert must get the goal control defaults';
+  end if;
+  update public.goals set reminders = false, use_calendars = false, run_limit_minutes = 15,
+    updated_at = '1763683200011-0000-aaaaaaaaaaaaaaaa' where id = '0190f2a0-0000-7000-8000-0000000000b2';
+  perform pg_temp.build2_goal('1763683200012-0000-aaaaaaaaaaaaaaaa', 'Renamed on build 2');
+  select * into g from public.goals where id = '0190f2a0-0000-7000-8000-0000000000b2';
+  if g.title <> 'Renamed on build 2' or g.reminders or g.use_calendars or g.run_limit_minutes <> 15 then
+    raise exception 'a build 2 update must keep the goal controls';
+  end if;
+
+  perform pg_temp.build2_preference('1763683200010-0000-aaaaaaaaaaaaaaaa', 'Reads at night');
+  select * into p from public.preferences where id = '0190f2a0-0000-7000-8000-0000000000b3';
+  if not (p.origin = 'edit' and not p.blocked and p.topic is null and p.goal_id is null) then
+    raise exception 'a build 2 insert must get the profile defaults';
+  end if;
+  update public.preferences set origin = 'answer', topic = 'reading time', goal_id = '0190f2a0-0000-7000-8000-0000000000b2',
+    updated_at = '1763683200011-0000-aaaaaaaaaaaaaaaa' where id = '0190f2a0-0000-7000-8000-0000000000b3';
+  perform pg_temp.build2_preference('1763683200012-0000-aaaaaaaaaaaaaaaa', 'Reads at night, 30 min');
+  select * into p from public.preferences where id = '0190f2a0-0000-7000-8000-0000000000b3';
+  if p.fact <> 'Reads at night, 30 min' or p.origin <> 'answer' or p.topic <> 'reading time' then
+    raise exception 'a build 2 update must keep the profile columns';
+  end if;
+
+  begin
+    update public.preferences set blocked = true, topic = null, updated_at = '1763683200013-0000-aaaaaaaaaaaaaaaa' where id = '0190f2a0-0000-7000-8000-0000000000b3';
+    raise exception 'a blocked preference without a topic must be refused';
+  exception when check_violation then
+    null;
+  end;
+  begin
+    update public.goals set run_limit_minutes = 0, updated_at = '1763683200013-0000-aaaaaaaaaaaaaaaa' where id = '0190f2a0-0000-7000-8000-0000000000b2';
+    raise exception 'a run limit of 0 must be refused';
+  exception when check_violation then
+    null;
+  end;
+end;
+$$;
+
+reset role;

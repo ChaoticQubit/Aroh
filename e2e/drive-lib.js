@@ -110,10 +110,21 @@ window.AROH_LIB = (() => {
     await until('key status', () => text().includes(`ends ${cfg.key.slice(-4)}`));
   };
   const SIX_PACK = { title: 'Six pack by Feb 1', asks: 'How many days', answers: ['4', 'No nuts'], plan: 'Approve plan' };
+  const createGoal = async (title, description, shot) => {
+    await go('/goals/new');
+    await until('new goal form', () => text().includes('Create goal'));
+    type(field('Title'), title, false);
+    if (description) type(field('Description'), description, false);
+    await sleep(1200);
+    if (shot) await mark(shot);
+    button('Create goal').click();
+    await until('goal card', () => /^\/goals\/[0-9a-f-]{36}$/.test(location.pathname), 60000);
+    await sleep(800);
+    return location.pathname.split('/').pop();
+  };
   const planGoal = async (shots = {}, planMs = 120000, goal = SIX_PACK) => {
     await go('/today');
-    await go('/goals/new');
-    await say(goal.title);
+    await createGoal(goal.title, goal.description, shots.form);
     await until('question cards', () => text().includes(goal.asks), 120000);
     if (shots.questions) await mark(shots.questions);
     for (const answer of goal.answers) await say(answer);
@@ -121,7 +132,7 @@ window.AROH_LIB = (() => {
     await until('plan', () => text().includes('Approve plan') && text().includes(goal.plan), planMs);
     if (shots.plan) await mark(shots.plan);
     button('Approve plan').click();
-    await until('plan written', () => text().split('The plan is on your calendar').length > 2, 120000);
+    await until('plan written', () => text().includes('The plan is on your calendar'), 120000);
     await sleep(4000);
     if (shots.approved) await mark(shots.approved);
   };
@@ -129,5 +140,5 @@ window.AROH_LIB = (() => {
     await invoke('app_dev_mark', { mark: `fail ${String(e.message ?? e).replace(/[^\x20-\x7e]/g, '?').slice(0, 70)}` }).catch(() => {});
     await mark('shot 99-failure');
   };
-  return { cfg, invoke, sleep, mark, text, until, go, field, type, button, show, openTomorrow, say, started, signUp, saveKey, planGoal, fail, useLocalStack, skipSetup };
+  return { cfg, invoke, sleep, mark, text, until, go, field, type, button, show, openTomorrow, say, started, signUp, saveKey, createGoal, planGoal, fail, useLocalStack, skipSetup };
 })();

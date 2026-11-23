@@ -527,7 +527,7 @@ impl Engine {
         .await?;
         let mut started = 0;
         for value in trackers {
-            let tracker: Tracker = serde_json::from_value(value).map_err(|e| ServerError::Db(format!("trackers: {e}")))?;
+            let tracker: Tracker = crate::rows::parse_row(value)?;
             let user = Uuid::parse_str(&tracker.user_id).map_err(|_| ServerError::Db("bad user id".into()))?;
             let goal_id = Uuid::parse_str(&tracker.goal_id).map_err(|_| ServerError::Db("bad goal id".into()))?;
             let Some(goal) = active_goal(pool, user, goal_id).await? else { continue };

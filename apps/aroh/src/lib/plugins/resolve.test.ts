@@ -24,8 +24,9 @@ function action(id: string, day: string, hour: number, status: Action['status'])
 function fixture(): Snapshot {
 	return {
 		user_id: 'u1',
+		files: [],
 		categories: [{ id: 'c-fit', name: 'Health and Fitness', color: '#4f7a5a', seeded: true }],
-		goals: [{ id: goalId, category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: '2027-02-01', status: 'active', autonomy: 'balanced', created_at: '2026-11-01T00:00:00Z' }],
+		goals: [{ id: goalId, category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: '2027-02-01', status: 'active', autonomy: 'balanced', created_at: '2026-11-01T00:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null }],
 		actions: [
 			action('a1', '2026-11-18', 18, 'done'),
 			action('a2', '2026-11-23', 18, 'done'),
@@ -51,6 +52,7 @@ function fixture(): Snapshot {
 		],
 		proposals: [],
 		preferences: [],
+		facts: [],
 		personas: [],
 		providers: [],
 		search: [],

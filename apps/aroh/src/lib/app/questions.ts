@@ -51,7 +51,9 @@ export function statusOf(g: QuestionGroup): string {
 	const answered = g.questions.length - missing - skipped;
 	const parts = [`${answered} of ${g.questions.length} answered`];
 	if (skipped) parts.push(`${skipped} skipped`);
-	return missing ? `${parts.join(', ')}. ${missing} still open.` : `${parts.join(', ')}. Ready to send.`;
+	const checks = g.questions.filter((q) => q.known && missingOf(g).includes(q.id)).length;
+	if (!missing) return `${parts.join(', ')}. Ready to send.`;
+	return checks ? `${parts.join(', ')}. ${missing} still open, ${checks} to confirm.` : `${parts.join(', ')}. ${missing} still open.`;
 }
 
 /** The `questions` answer to post: every question in order, a skip as `answer: null`. Null while any is open. */
@@ -89,7 +91,12 @@ export function groupMessage(g: QuestionGroup, submitted = false): Extract<ChatM
 		type: 'questions',
 		persona: 'Intake interviewer',
 		prompt: g.prompt,
-		items: g.questions.map((q) => ({ id: q.id, text: q.text, input: inputFor(q, g.values[q.id]) })),
+		items: g.questions.map((q) => ({
+			id: q.id,
+			text: q.text,
+			input: inputFor(q, g.values[q.id]),
+			...(q.known ? { known: { value: q.known.value, source: `From ${q.known.source}` } } : {})
+		})),
 		values: { ...g.values },
 		skipped: [...g.skipped],
 		missing: missingOf(g),

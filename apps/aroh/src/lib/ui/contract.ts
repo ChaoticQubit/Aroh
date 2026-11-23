@@ -78,7 +78,7 @@ export type ChatMessage =
 			type: 'questions';
 			persona: string;
 			prompt: string;
-			items: { id: string; text: string; input: ComponentSpec }[];
+			items: { id: string; text: string; input: ComponentSpec; known?: { value: string; source: string } }[];
 			values: Record<string, string>;
 			skipped: string[];
 			missing: string[];

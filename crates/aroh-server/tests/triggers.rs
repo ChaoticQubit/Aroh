@@ -78,6 +78,9 @@ impl World {
             status: GoalStatus::Active,
             autonomy,
             created_at: utc(T0),
+            reminders: true,
+            use_calendars: true,
+            run_limit_minutes: None,
             updated_at: String::new(),
             deleted: false,
         };
@@ -474,6 +477,9 @@ async fn timezone_moves_every_review_of_the_owner() {
         status: GoalStatus::Active,
         autonomy: Autonomy::Ask,
         created_at: utc(T0),
+        reminders: true,
+        use_calendars: true,
+        run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,
     };

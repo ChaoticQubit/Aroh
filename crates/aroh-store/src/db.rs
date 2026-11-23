@@ -328,6 +328,62 @@ CREATE TABLE place_kinds (
     place_id TEXT PRIMARY KEY,
     kind TEXT NOT NULL
 ) STRICT;
+"#, r#"
+CREATE TABLE goals_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    category_id TEXT,
+    title TEXT NOT NULL,
+    context TEXT,
+    deadline TEXT,
+    status TEXT NOT NULL,
+    autonomy TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    reminders INTEGER NOT NULL DEFAULT 1 CHECK (reminders IN (0, 1)),
+    use_calendars INTEGER NOT NULL DEFAULT 1 CHECK (use_calendars IN (0, 1)),
+    run_limit_minutes INTEGER CHECK (run_limit_minutes BETWEEN 1 AND 120),
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO goals_next SELECT id, user_id, category_id, title, context, deadline, status, autonomy, created_at, 1, 1, NULL, updated_at, deleted FROM goals;
+DROP TABLE goals;
+ALTER TABLE goals_next RENAME TO goals;
+CREATE TABLE preferences_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    fact TEXT NOT NULL,
+    source TEXT NOT NULL,
+    noted_at TEXT NOT NULL,
+    confirmed INTEGER NOT NULL CHECK (confirmed IN (0, 1)),
+    topic TEXT,
+    goal_id TEXT,
+    origin TEXT NOT NULL DEFAULT 'edit' CHECK (origin IN ('edit', 'answer')),
+    blocked INTEGER NOT NULL DEFAULT 0 CHECK (blocked IN (0, 1)),
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO preferences_next SELECT id, user_id, fact, source, noted_at, confirmed, NULL, NULL, 'edit', 0, updated_at, deleted FROM preferences;
+DROP TABLE preferences;
+ALTER TABLE preferences_next RENAME TO preferences;
+"#, r#"
+CREATE TABLE goal_files_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    goal_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    storage_path TEXT,
+    url TEXT,
+    mime TEXT,
+    size_bytes INTEGER NOT NULL,
+    ingest_status TEXT NOT NULL,
+    extracted_text TEXT,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO goal_files_next SELECT id, user_id, goal_id, name, kind, storage_path, url, mime, size_bytes, ingest_status, NULL, updated_at, deleted FROM goal_files;
+DROP TABLE goal_files;
+ALTER TABLE goal_files_next RENAME TO goal_files;
 "#];
 
 /// Schema version after every migration ran.

@@ -26,7 +26,7 @@
 	<main class="@container min-h-0 flex-1 overflow-y-auto bg-surface">
 		{@render children()}
 	</main>
-	<nav aria-label="Main" class="flex shrink-0 border-t border-border bg-bg pb-[env(safe-area-inset-bottom)]">
+	<nav aria-label="Main" data-hide-typing class="flex shrink-0 border-t border-border bg-bg pb-[env(safe-area-inset-bottom)]">
 		{#each tabs as t (t.id)}
 			<button
 				type="button"

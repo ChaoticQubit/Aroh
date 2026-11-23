@@ -230,6 +230,33 @@ def reading_rules(now):
     ]
 
 
+DUNE_GOAL = "Finish reading Dune"
+
+
+def pod26_rules(now):
+    """Script rules for the pod 26 goal redesign flow, matched before the pod 25 reading rules:
+    the first reading goal marks its minutes and time-of-day questions lasting, and a second
+    goal (Dune) asks the kept minutes fact as a known question. The id is left for the server
+    to resolve by topic. Input: aware local now."""
+    minutes = {"id": "daily_reading_minutes", "text": "How many minutes a day can you read?", "kind": "number", "choices": [], "unit": "minutes per day", "min": 0, "max": 180,
+               "lasting": {"topic": "daily_minutes", "label": "Free minutes a day"}}
+    when = {"id": "preferred_reading_time", "text": "When do you prefer to read?", "kind": "choice", "choices": ["Morning", "Midday", "Evening", "It varies"], "unit": None, "min": None, "max": None,
+            "lasting": {"topic": "time_of_day", "label": "Reading time of day"}}
+    first = {"questions": [
+        {"id": "chapters_done", "text": "How many chapters of The Joy of X have you read so far?", "kind": "number", "choices": [], "unit": "chapters", "min": 0, "max": 30},
+        minutes,
+        when,
+    ]}
+    dune = {"questions": [
+        {"id": "chapters_done", "text": "How many chapters of Dune have you read so far?", "kind": "number", "choices": [], "unit": "chapters", "min": 0, "max": 48},
+        {**minutes, "known": {"fact_id": "resolved-by-topic", "value": "30", "source": "your answer on Finish reading The Joy of X by next Sunday"}},
+    ]}
+    return [
+        {"when": ["You are Intake interviewer", DUNE_GOAL, "Free minutes a day"], "reply": {"text": json.dumps(dune)}},
+        {"when": ["You are Intake interviewer", READING_GOAL], "reply": {"text": json.dumps(first)}},
+    ]
+
+
 PREFERENCE = "Plan the morning plank in the evening instead."
 
 
@@ -276,6 +303,21 @@ def pod15(data, plan, now):
     data["rules"].append({"when": ["You are Preference analyst"], "reply": {"text": json.dumps({"fact": PREFERENCE})}})
 
 
+def with_profile_fields(rule):
+    """Gives every intake question in a rule's reply the lasting and known keys, null when unset,
+    since the intake schema requires both. Input: one script rule, changed in place."""
+    try:
+        reply = json.loads(rule["reply"]["text"])
+    except (KeyError, TypeError, ValueError):
+        return
+    if not isinstance(reply, dict) or not isinstance(reply.get("questions"), list):
+        return
+    for q in reply["questions"]:
+        q.setdefault("lasting", None)
+        q.setdefault("known", None)
+    rule["reply"]["text"] = json.dumps(reply)
+
+
 def main():
     """Writes the script to argv[1] for zone argv[2], reminder argv[3] minutes ahead.
     Input: output path, IANA zone, minutes. Output: the file, and the local
@@ -314,6 +356,11 @@ def main():
     if flow == "pod25.js":
         data["rules"] = data["rules"][:1] + reading_rules(now) + data["rules"][1:]
         assert len(data["rules"]) == 11
+    if flow == "pod26.js":
+        data["rules"] = data["rules"][:1] + pod26_rules(now) + reading_rules(now) + data["rules"][1:]
+        assert len(data["rules"]) == 13
+    for rule in data["rules"]:
+        with_profile_fields(rule)
     with open(path, "w", encoding="utf8") as f:
         json.dump(data, f)
     print(json.dumps({"now": now.strftime(FMT), "items": [i["start"] for i in plan["items"]], "meals_at": plan["trackers"][1]["cadence"]["at"]}))

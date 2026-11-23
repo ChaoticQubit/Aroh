@@ -65,8 +65,29 @@ pub fn follow(conn: &Connection, clock: &mut Hlc, user_id: &str, now: DateTime<U
     Ok(Follow::Shifted {
         moved: count(|o| *o == Outcome::Moved),
         fixed: count(|o| *o == Outcome::Fixed),
-        left: count(|o| !matches!(o, Outcome::Moved | Outcome::Fixed)),
+        left: count(|o| matches!(o, Outcome::Clash(_) | Outcome::Past | Outcome::Taken | Outcome::Kept)),
     })
+}
+
+/// Re-keys the untouched occurrence rows of `user_id` that an engine materialized in
+/// an old zone and that arrived after the shift (see [`aroh_domain::travel::settle`]):
+/// tombstones each and inserts the derived row of its slot in the series' zone, in
+/// one transaction. Runs in every tick, so after each sync. Output: rows tombstoned.
+pub fn settle(conn: &Connection, clock: &mut Hlc, user_id: &str, now: DateTime<Utc>) -> Result<usize> {
+    let mine = [("user_id", user_id)];
+    let actions = repo::list::<Action>(conn, &mine)?;
+    let series = repo::list::<ActionSeries>(conn, &mine)?;
+    let previous = local::previous_zone(conn)?.and_then(|z| z.parse::<Tz>().ok());
+    let plan = aroh_domain::travel::settle(previous, now, &actions, &series);
+    let tx = conn.unchecked_transaction()?;
+    for id in &plan.tombstones {
+        repo::delete::<Action>(&tx, clock, id)?;
+    }
+    for row in &plan.inserts {
+        repo::insert_derived(&tx, row)?;
+    }
+    tx.commit()?;
+    Ok(plan.tombstones.len())
 }
 
 fn listed(head: &str, items: Vec<String>) -> Option<String> {
@@ -89,17 +110,24 @@ pub fn note_body(from: Tz, to: Tz, lines: &[Line]) -> String {
     let pick = |want: fn(&Outcome) -> bool| -> Vec<&Line> { lines.iter().filter(|l| want(&l.outcome)).collect() };
     let moved = pick(|o| *o == Outcome::Moved).into_iter().map(|l| format!("{} {}", l.title, when(l))).collect();
     let fixed = pick(|o| *o == Outcome::Fixed).into_iter().map(|l| format!("{} {}", l.title, when(l))).collect();
-    let left = pick(|o| !matches!(o, Outcome::Moved | Outcome::Fixed))
+    let retimed = pick(|o| *o == Outcome::Retimed)
+        .into_iter()
+        .map(|l| format!("{} {}", l.title, l.start_at.with_timezone(&to).format("%b %-d %H:%M")))
+        .collect();
+    let left = pick(|o| matches!(o, Outcome::Clash(_) | Outcome::Past | Outcome::Taken | Outcome::Kept))
         .into_iter()
         .map(|l| match &l.outcome {
             Outcome::Clash(with) => format!("{} (clashes with {with})", l.title),
             Outcome::Past => format!("{} (would be in the past)", l.title),
-            _ => format!("{} (its new slot is taken)", l.title),
+            Outcome::Taken => format!("{} (its new slot is taken)", l.title),
+            Outcome::Kept => format!("{} (its repeat rule does not fit the new zone)", l.title),
+            Outcome::Moved | Outcome::Fixed | Outcome::Retimed => unreachable!("filtered above"),
         })
         .collect();
     let mut parts = vec![format!("Now in {}, was {}.", to.name(), from.name())];
     parts.extend(listed("Moved to the same local time", moved));
     parts.extend(listed("Fixed, kept at their time", fixed));
+    parts.extend(listed("Series start moved past a clock change", retimed));
     parts.extend(listed("Not moved", left));
     if parts.len() == 1 {
         parts.push("Nothing needed to move.".to_string());

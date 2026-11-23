@@ -5,6 +5,7 @@ import { formatYmd, minuteOfDay } from '$lib/ui/format';
 import type { Action } from './client';
 import { editError, type PersonaView } from './personas';
 import { deviceZone } from '$lib/ui/clock';
+import type { StartGoalBody } from './newgoal';
 
 /** Shown wherever an action needs the server engine (Q3) and the app is not connected to it. */
 export const NEEDS_ENGINE = 'This needs a connection to the engine. Sign in and set the server URL in Settings. Everything else works offline.';
@@ -25,7 +26,16 @@ export type KeyInfo = { setting_id: string; vendor: string; last4: string; updat
 export type RunSummary = { run_id: string; goal_id: string | null; workflow: string; state: string; created_at: string; updated_at: string; personas?: string[] };
 
 /** One intake question of the new-goal run. Number questions may carry a unit and slider bounds; runs from before units have none. */
-export type Question = { id: string; text: string; kind: 'text' | 'number' | 'choice'; choices: string[]; unit?: string | null; min?: number | null; max?: number | null };
+export type Question = {
+	id: string;
+	text: string;
+	kind: 'text' | 'number' | 'choice';
+	choices: string[];
+	unit?: string | null;
+	min?: number | null;
+	max?: number | null;
+	known?: { fact_id: string; value: string; source: string } | null;
+};
 
 /** One planned item of a plan proposal, in the plan's local time. */
 export type PlanItem = { title: string; start: string; minutes: number; rrule: string | null; notes: string | null };
@@ -44,7 +54,21 @@ export type RunStatus = {
 export type RunEvent = { seq: number; at_ms: number; body: { type: string; step?: string; error?: string; name?: string } };
 
 /** A run as `GET /v1/runs/{id}` returns it; `summary` is the proposal and its outcome when there is one. */
-export type RunView = { run_id: string; goal_id: string | null; workflow: string; status: RunStatus; waiting: Waiting[]; events: RunEvent[]; summary?: string | null; usage?: { cost_usd_micros?: number } };
+export type RunView = {
+	run_id: string;
+	goal_id: string | null;
+	workflow: string;
+	status: RunStatus;
+	waiting: Waiting[];
+	events: RunEvent[];
+	summary?: string | null;
+	usage?: { cost_usd_micros?: number };
+	research?: { summary: string; sources: { title: string; url: string }[] } | null;
+	answers?: RunAnswer[];
+};
+
+/** One submitted question of a run with its answer, null when skipped. */
+export type RunAnswer = { id: string; text: string; answer: string | null };
 
 /** One insight of `GET /v1/insights`: what the engine noticed and did without being asked. */
 export type Insight = { id: string; goal_id: string | null; run_id: string | null; source: string; title: string; body: string; state: string | null; created_at: string };
@@ -276,9 +300,9 @@ export class Engine {
 		}
 	}
 
-	/** Starts the new-goal run for one line of owner text. */
-	startGoal(text: string): Promise<EngineResult<{ goal_id: string; run_id: string }>> {
-		return this.request('POST', '/v1/goals', { title: text.trim().slice(0, 200), context: text, timezone: deviceZone() });
+	/** Creates the goal from the New Goal form (`startBody`) and starts its new-goal run. */
+	startGoal(body: StartGoalBody): Promise<EngineResult<{ goal_id: string; run_id: string }>> {
+		return this.request('POST', '/v1/goals', body);
 	}
 
 	/** Reads a run with the events after `afterSeq`. */

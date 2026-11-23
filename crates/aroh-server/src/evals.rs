@@ -201,7 +201,7 @@ const COMPUTE_PHRASES: [&str; 12] =
 
 /// Eval `owner_terms(path)`: no question at `path` asks the owner to work
 /// something out (what is left, a reading speed), and every number question
-/// names its unit and a range `min` to `max`. Errors name each failing id.
+/// names its unit and a range with `min` below `max`. Errors name each failing id.
 pub fn owner_terms(output: &Value, args: &[Value]) -> Result<(), String> {
     let path = args.first().and_then(Value::as_str).filter(|_| args.len() == 1).ok_or("takes (path)")?;
     let mut failed = Vec::new();
@@ -214,8 +214,8 @@ pub fn owner_terms(output: &Value, args: &[Value]) -> Result<(), String> {
         if q.get("kind").and_then(Value::as_str) == Some("number") {
             let unit = q.get("unit").and_then(Value::as_str).map(str::trim).unwrap_or_default();
             let (min, max) = (q.get("min").and_then(Value::as_f64), q.get("max").and_then(Value::as_f64));
-            if unit.is_empty() || !matches!((min, max), (Some(lo), Some(hi)) if lo <= hi) {
-                failed.push(format!("{id}: a number question needs a unit and a range min to max"));
+            if unit.is_empty() || !matches!((min, max), (Some(lo), Some(hi)) if lo < hi) {
+                failed.push(format!("{id}: a number question needs a unit and a range with min below max"));
             }
         }
     }
@@ -433,7 +433,7 @@ mod tests {
         fixed["questions"][0] = json!({"id": "chapters_done", "kind": "number", "text": "How many chapters have you read so far?", "choices": [], "unit": "chapters", "min": 0, "max": 30});
         fixed["questions"][3] = json!({"id": "reading_days", "kind": "number", "text": "On how many days this week can you read?", "choices": [], "unit": "days", "min": 1, "max": 7});
         assert_eq!(owner_terms(&fixed, &args), Ok(()));
-        for (key, value) in [("unit", json!(null)), ("unit", json!(" ")), ("min", json!(null)), ("max", json!(null)), ("max", json!(-1))] {
+        for (key, value) in [("unit", json!(null)), ("unit", json!(" ")), ("min", json!(null)), ("max", json!(null)), ("max", json!(-1)), ("min", json!(180))] {
             let mut bad = fixed.clone();
             bad["questions"][1][key] = value.clone();
             assert!(owner_terms(&bad, &args).unwrap_err().contains("daily_reading_minutes"), "{key} = {value}");
