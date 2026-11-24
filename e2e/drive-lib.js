@@ -106,12 +106,22 @@ window.AROH_LIB = (() => {
       await sleep(700);
     }
   };
+  const settled = async () => {
+    let calm = 0;
+    for (let i = 0; i < 120 && calm < 6; i++) {
+      if (onboarding()) {
+        calm = 0;
+        await skipSetup();
+      } else if (text().includes('Calendar') && text().includes('Dashboard')) calm++;
+      else calm = 0;
+      await sleep(500);
+    }
+    if (calm < 6) throw new Error('app did not settle past onboarding');
+  };
   const started = async () => {
     await useLocalStack();
     await until('app or onboarding rendered', () => onboarding() || (text().includes('Calendar') && text().includes('Dashboard')), 120000);
-    await skipSetup();
-    await until('app rendered', () => text().includes('Calendar') && text().includes('Dashboard'), 120000);
-    await sleep(3000);
+    await settled();
     await invoke('app_dev_mark', { mark: 'start' });
   };
   const signUp = async (shot) => {
@@ -187,5 +197,5 @@ window.AROH_LIB = (() => {
     await invoke('app_dev_mark', { mark: `fail ${String(e.message ?? e).replace(/[^\x20-\x7e]/g, '?').slice(0, 70)}` }).catch(() => {});
     await mark('shot 99-failure');
   };
-  return { cfg, invoke, sleep, mark, text, until, go, field, type, keys, button, show, openTomorrow, say, started, signUp, saveKey, createGoal, planGoal, fail, useLocalStack, skipSetup };
+  return { cfg, invoke, sleep, mark, text, until, go, field, type, keys, button, show, openTomorrow, say, started, signUp, saveKey, createGoal, planGoal, fail, useLocalStack, skipSetup, settled };
 })();
