@@ -30,7 +30,7 @@ use uuid::Uuid;
 /// The provider catalog the engine ships with: vendors, models, prices.
 /// Loaded once at start with `Catalog::load`.
 /// Prices marked unverified pause metered runs (Troupekit rule).
-pub const CATALOG: &str = include_str!("../../../troupekit/catalog/providers.toml");
+pub const CATALOG: &str = include_str!("../catalog/providers.toml");
 
 const FETCH_MAX_CHARS: usize = 20_000;
 
