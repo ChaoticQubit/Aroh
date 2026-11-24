@@ -243,14 +243,15 @@ const PACE_TONE: Record<GoalStats['pace'], Tone> = { on_track: 'done', ahead: 'd
 
 /**
  * The status, progress and next step of every non-archived goal, by goal id. Draft is Planning,
- * paused Paused, done Done; an active goal with a proposal waiting is Waiting for you, else its
- * dashboard pace (`stats`; null while loading gives Active). The line names the next planned
- * session, else the sessions missed this week, else null.
+ * paused Paused, done Done; an active goal with a proposal waiting, or listed in `waitingRuns`
+ * (goal ids of runs waiting for the owner), is Waiting for you, else its dashboard pace (`stats`;
+ * null while loading gives Active). The line names the next planned session, else the sessions
+ * missed this week, else null.
  */
-export function goalProgress(s: Snapshot, stats: GoalStats[] | null, clock: Clock): Record<string, GoalProgress> {
+export function goalProgress(s: Snapshot, stats: GoalStats[] | null, clock: Clock, waitingRuns: string[] = []): Record<string, GoalProgress> {
 	const today = formatYmd(clock.now, clock.zone);
 	const figures = new Map((stats ?? []).map((st) => [st.goal_id, st]));
-	const waiting = new Set(s.proposals.filter((p) => p.status === 'proposed').map((p) => p.goal_id));
+	const waiting = new Set([...s.proposals.filter((p) => p.status === 'proposed').map((p) => p.goal_id), ...waitingRuns]);
 	const out: Record<string, GoalProgress> = {};
 	for (const g of s.goals.filter((g) => g.status !== 'archived')) {
 		const st = figures.get(g.id);

@@ -108,7 +108,7 @@ pub async fn list_rows<R: Record>(
         sql.push_str(&format!(" and t.{col}::text = ${}", i + 2));
     }
     sql.push_str(" order by t.id");
-    let mut q = db::query_scalar::<_, Value>(&sql).bind(user);
+    let mut q = db::query_scalar::<Value>(&sql).bind(user);
     for (_, value) in filters {
         q = q.bind(value);
     }

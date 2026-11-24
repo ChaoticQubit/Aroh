@@ -354,7 +354,7 @@ impl Pusher {
     }
 
     async fn devices(&self) -> Result<Vec<Device>, ServerError> {
-        let rows = db::query_scalar::<_, Value>("select to_jsonb(d) from public.devices d order by d.user_id, d.id").fetch_all(&self.pool).await?;
+        let rows = db::query_scalar::<Value>("select to_jsonb(d) from public.devices d order by d.user_id, d.id").fetch_all(&self.pool).await?;
         rows.into_iter().map(|v| serde_json::from_value(v).map_err(|e| ServerError::Db(format!("devices: {e}")))).collect()
     }
 

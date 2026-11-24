@@ -53,7 +53,7 @@
 		if (keep) writeDraft(store, keep, draft);
 	});
 	let approved = $state(false);
-	const dictation = $derived(voice ? new Dictation(voice, (text) => (draft = text)) : null);
+	const dictation = $derived(voice ? new Dictation(voice, () => draft, (text) => (draft = text)) : null);
 	let fixed = $state<number[]>([]);
 	const thread = $derived([...messages, ...sent]);
 	let list = $state<HTMLOListElement>();
@@ -139,7 +139,7 @@
 						plan={m.plan}
 						context={planContext}
 						{slot}
-						{approved}
+						approved={m.approved ?? approved}
 						onapprove={(f) => {
 							approved = true;
 							onchange?.({ type: 'approve', fixed: f });
@@ -155,7 +155,7 @@
 								<li>
 									<span class="flex items-center justify-between gap-3">
 										<span>{item}</span>
-										{#if m.fixable?.[i] && !approved}
+										{#if m.fixable?.[i] && !(m.approved ?? approved)}
 											<label class="flex shrink-0 items-center gap-2 text-xs text-muted">
 												Fixed time
 												<Switch checked={fixed.includes(i)} aria-label="Fixed time for {item}" onCheckedChange={(v) => (fixed = v ? [...fixed, i] : fixed.filter((x) => x !== i))} />
@@ -165,7 +165,7 @@
 								</li>
 							{/each}
 						</ul>
-						{#if approved}
+						{#if m.approved ?? approved}
 							<p class="text-sm text-muted" role="status">Approved. The plan is on your calendar.</p>
 						{:else}
 							<div class="flex gap-2">

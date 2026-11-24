@@ -1,7 +1,7 @@
 use crate::api::AppState;
 use crate::auth::Verifier;
 use crate::config::Config;
-use crate::db::PgPoolOptions;
+use crate::db::{PgPool, PgPoolOptions};
 use crate::engine::Engine;
 use crate::error::ServerError;
 use crate::io::{Deps, CATALOG};
@@ -14,23 +14,30 @@ use troupekit_providers::reqwest_transport::ReqwestTransport;
 use troupekit_providers::Catalog;
 use troupekit_tools::{GuardedHttp, HttpLimits, Transport};
 
-/// Connections one engine instance may hold. The Supabase session pooler
-/// allows 15 clients in all, and Vercel runs several instances at once, so
-/// each keeps few and drops idle ones after 10 seconds.
-pub const MAX_DB_CONNECTIONS: u32 = 3;
+/// Connections one engine instance may hold. The engine reaches Postgres
+/// through the Supabase transaction pooler, which hands a backend out per
+/// transaction, so a client slot is cheap and instances share a few
+/// backends; 4 lets concurrent requests on one instance run without queueing.
+pub const MAX_DB_CONNECTIONS: u32 = 4;
+
+/// The engine's Postgres pool for `database_url`, opening no connection
+/// until a query needs one, so a cold start never fails on a full pooler.
+/// Holds at most [`MAX_DB_CONNECTIONS`] and drops one idle for 2 s; errors only on a malformed URL.
+pub fn lazy_pool(database_url: &str) -> Result<PgPool, ServerError> {
+    Ok(PgPoolOptions::new()
+        .max_connections(MAX_DB_CONNECTIONS)
+        .min_connections(0)
+        .idle_timeout(std::time::Duration::from_secs(2))
+        .acquire_timeout(std::time::Duration::from_secs(20))
+        .connect_lazy(database_url)?)
+}
 
 /// Builds the engine state from `config`: the Postgres pool, vault,
 /// catalog, real transports, optional APNs pusher and JWT verifier.
 /// Shared by the `aroh-server` bin and the Vercel entry, so every host
 /// runs the same engine. Errors name the failing setting or connection.
 pub async fn app(config: Config) -> Result<AppState, ServerError> {
-    let pool = PgPoolOptions::new()
-        .max_connections(MAX_DB_CONNECTIONS)
-        .min_connections(0)
-        .idle_timeout(std::time::Duration::from_secs(10))
-        .acquire_timeout(std::time::Duration::from_secs(20))
-        .connect(&config.database_url)
-        .await?;
+    let pool = lazy_pool(&config.database_url)?;
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
     let http: Arc<dyn Transport> = Arc::new(ReqwestTransport::new().map_err(|e| ServerError::Config(e.to_string()))?);
     let (models, web) = transports(http.clone())?;

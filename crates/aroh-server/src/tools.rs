@@ -232,15 +232,17 @@ async fn written<R: rows::Record>(env: &ToolEnv, id: &str) -> Result<bool, ToolE
 }
 
 /// Ends the goal's old plan before a Run again plan lands: tombstones its
-/// future planned, unlocked actions and its series, except the rows of
-/// `keep_actions` and `keep_series` this call writes. Returns the count.
+/// future planned or missed, unlocked actions and its series, except the
+/// rows of `keep_actions` and `keep_series` this call writes. Done, skipped
+/// and past rows stay. Returns the count.
 async fn clear_old_plan(env: &ToolEnv, goal: &str, keep_actions: &[String], keep_series: &[String]) -> Result<usize, ToolError> {
     let now = env.now();
     let filter = [("goal_id", goal.to_string())];
     let mut cleared = 0;
     for mut a in list_rows::<Action>(&env.pool, env.user, &filter, false).await.map_err(failed)? {
         let kept = keep_actions.contains(&a.id) || a.series_id.as_ref().is_some_and(|s| keep_series.contains(s));
-        if kept || a.locked || a.status != ActionStatus::Planned || a.start_at < now {
+        let open = matches!(a.status, ActionStatus::Planned | ActionStatus::Missed);
+        if kept || a.locked || !open || a.start_at < now {
             continue;
         }
         a.deleted = true;

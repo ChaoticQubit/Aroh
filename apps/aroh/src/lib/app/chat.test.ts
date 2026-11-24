@@ -7,7 +7,8 @@ const fake = vi.hoisted(() => ({
 	questions: [] as unknown[],
 	node: 'questions',
 	card: null as unknown,
-	answerStatus: 202
+	answerStatus: 202,
+	runsStatus: 200
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -15,6 +16,8 @@ vi.mock('@tauri-apps/api/core', () => ({
 		await new Promise((r) => setTimeout(r, fake.latencyMs));
 		const { method, path, body } = args;
 		if (method === 'GET' && path === '/v1/runs?goal_id=g1&state=waiting_human') return { status: 200, body: [{ run_id: 'r1' }] };
+		if (method === 'GET' && path === '/v1/runs?goal_id=g1')
+			return fake.runsStatus === 200 ? { status: 200, body: [{ run_id: 'r1', goal_id: 'g1', workflow: 'run-again', state: 'waiting_human', created_at: '', updated_at: '' }] } : { status: fake.runsStatus, body: null };
 		if (method === 'GET' && path.startsWith('/v1/runs/r1'))
 			return {
 				status: 200,
@@ -24,11 +27,13 @@ vi.mock('@tauri-apps/api/core', () => ({
 					workflow: 'new-goal',
 					status: { status: 'waiting_human', reason: { kind: 'human', node: fake.node } },
 					waiting: [
-						fake.node === 'limit_choice'
+						fake.node === 'approve'
+							? { node: 'approve', ask: 'approval', prompt: 'Approve this plan?', data: { plan: { summary: 'One long core session', timezone: 'UTC', items: [{ title: 'Long core session', start: '2026-12-10T18:00:00', minutes: 90, rrule: null }] } } }
+							: fake.node === 'limit_choice'
 							? { node: 'limit_choice', ask: 'question', prompt: 'Pick what should change.', data: { limits: { fits: false, questions: fake.questions, card: fake.card } } }
 							: { node: 'questions', ask: 'question', prompt: 'Answer these so the plan fits you.', data: { intake: { questions: fake.questions } } }
 					],
-					events: [{ seq: 0, at_ms: 1, body: { type: 'run_started' } }],
+					events: [{ seq: 0, at_ms: 1, body: { type: 'run_started' } }, ...(fake.node === 'approve' ? fake.posts.map((_, i) => ({ seq: i + 1, at_ms: i + 2, body: { type: 'node_finished', node: 'change' } })) : [])],
 					usage: { cost_usd_micros: 1200 }
 				}
 			};
@@ -97,6 +102,7 @@ beforeEach(() => {
 	fake.questions = PROD;
 	fake.node = 'questions';
 	fake.answerStatus = 202;
+	fake.runsStatus = 200;
 });
 
 describe('limits card (Q64)', () => {
@@ -258,5 +264,52 @@ describe('sent goal chat messages (B62)', () => {
 		const again = new GoalChat('g2', 'Tell the agents anything.', store);
 		expect(texts(again.messages)).toEqual(['Tell the agents anything.', 'Move my runs to the mornings']);
 		expect(texts(new GoalChat('g3', 'Hi', store).messages)).toEqual(['Hi']);
+	});
+});
+
+describe('run again at approve (B70, B71)', () => {
+	const plans = (messages: ChatMessage[]) => messages.filter((m) => m.type === 'plan');
+
+	it('b71: typing while the run waits at approve keeps one plan card, not one per message', async () => {
+		fake.node = 'approve';
+		const chat = await opened();
+		expect(plans(chat.thread)).toHaveLength(1);
+		await chat.send('Approve it please');
+		await settle();
+		await chat.send('Yes, approve');
+		await settle();
+		expect(plans(chat.thread)).toHaveLength(1);
+		expect(texts(chat.thread)).toEqual(expect.arrayContaining(['Approve it please', 'Yes, approve']));
+	});
+
+	it('b70: an approved plan card stays approved and the next waiting plan card is not', async () => {
+		fake.node = 'approve';
+		const chat = await opened();
+		expect(plans(chat.thread)).toEqual([expect.objectContaining({ approved: false })]);
+		await chat.decide(true);
+		await settle();
+		expect(plans(chat.thread).every((m) => m.type === 'plan' && m.approved === true)).toBe(true);
+	});
+
+	it('b70: a refused approval leaves the card approvable', async () => {
+		fake.node = 'approve';
+		fake.answerStatus = 409;
+		const chat = await opened();
+		await chat.decide(true);
+		await settle();
+		expect(plans(chat.thread)).toEqual([expect.objectContaining({ approved: false })]);
+	});
+
+	it('b70: a goal whose runs could not be read is unreachable, not idle', async () => {
+		fake.runsStatus = 500;
+		const chat = new GoalChat('g1', 'Hi');
+		await chat.open();
+		expect(chat.unreachable).toBe(true);
+		fake.runsStatus = 200;
+		fake.node = 'approve';
+		await chat.open();
+		await settle();
+		expect(chat.unreachable).toBe(false);
+		expect(chat.view?.waiting[0]?.node).toBe('approve');
 	});
 });

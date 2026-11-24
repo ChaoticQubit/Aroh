@@ -10,6 +10,9 @@ import { originRun, pickRun } from './goalcard';
 import { deviceKeep, readSent, rememberSent, type Keep } from './chatkeep';
 
 const POLL_MAX = 400;
+
+/** The run and node a waiting card belongs to, or null for a message that is not one. */
+const keyOf = (m: ChatMessage): string | null => (m.type === 'plan' ? (m.key ?? null) : null);
 const DAY_MS = 86_400_000;
 const SNAPSHOT_DAYS = 119;
 
@@ -51,6 +54,8 @@ export class GoalChat {
 	group = $state<QuestionGroup | null>(null);
 	view = $state<RunView | null>(null);
 	origin = $state<RunView | null>(null);
+	unreachable = $state(false);
+	private approvedKeys = $state<string[]>([]);
 	private originId: string | null = null;
 	goalId: string | null;
 	private runId: string | null = null;
@@ -67,9 +72,16 @@ export class GoalChat {
 		this.log = [{ type: 'message', from: 'persona', name: 'Aroh', text: greeting }, ...kept];
 	}
 
-	/** Every message of the thread, in order, with the open question group last. */
+	/**
+	 * Every message of the thread, in order, with the open question group last. A card of a waiting
+	 * node renders once: the newest one of its run and node. A plan card the owner approved shows approved.
+	 */
 	get messages(): ChatMessage[] {
-		return [...this.log, ...this.live, ...(this.group ? [groupMessage(this.group)] : [])];
+		const later = new Set(this.live.map(keyOf).filter((k) => k !== null));
+		const shown = [...this.log.filter((m) => !later.has(keyOf(m) ?? '')), ...this.live].map((m) =>
+			m.type === 'plan' && m.key && this.approvedKeys.includes(m.key) ? { ...m, approved: true } : m
+		);
+		return [...shown, ...(this.group ? [groupMessage(this.group)] : [])];
 	}
 
 	/** The thread without run state lines (progress, working, stopped), which the goal card's status header shows instead. */
@@ -86,6 +98,7 @@ export class GoalChat {
 	async open() {
 		if (!this.goalId) return;
 		const runs = await engine.runs({ goalId: this.goalId });
+		this.unreachable = !runs.ok;
 		const id = runs.ok ? pickRun(runs.value) : null;
 		const picked = runs.ok ? runs.value.find((r) => r.run_id === id) : undefined;
 		this.originId = runs.ok ? originRun(runs.value) : null;
@@ -96,6 +109,7 @@ export class GoalChat {
 		if (!id || !picked) return;
 		if (picked.state === 'waiting_human' || ACTIVE.includes(picked.state)) return this.watch(id);
 		const r = await engine.run(id);
+		this.unreachable = !r.ok;
 		if (!r.ok) return;
 		this.runId = id;
 		this.view = r.value;
@@ -110,9 +124,10 @@ export class GoalChat {
 		if (waiting.ok && waiting.value[0]) await this.watch(waiting.value[0].run_id);
 	}
 
-	/** Keeps the rendered run state in the thread, so later events render after it. */
+	/** Keeps the rendered run state in the thread, so later events render after it; an older card of the same run and node is dropped. */
 	private freeze() {
-		this.log.push(...this.live);
+		const later = new Set(this.live.map(keyOf).filter((k) => k !== null));
+		this.log = [...this.log.filter((m) => !later.has(keyOf(m) ?? '')), ...this.live];
 		this.live = [];
 	}
 
@@ -150,6 +165,7 @@ export class GoalChat {
 		}
 		this.runId = runId;
 		const last = await follow(runId, (v) => this.show(v), this.seq);
+		this.unreachable = !last && !this.view;
 		if (!last) return this.say(NEEDS_ENGINE);
 		this.seq = Math.max(this.seq, ...last.events.map((e) => e.seq));
 		if (last.waiting[0]?.node === 'change' && this.change !== null) {
@@ -261,8 +277,13 @@ export class GoalChat {
 	async decide(yes: boolean, fixed: number[] = []) {
 		if (!this.runId) return;
 		const plan = this.plan;
+		const key = `${this.runId}:approve`;
+		if (yes) this.approvedKeys = [...this.approvedKeys, key];
 		const r = await engine.answer(this.runId, 'approve', yes);
-		if (!r.ok) return this.say(r.message);
+		if (!r.ok) {
+			this.approvedKeys = this.approvedKeys.filter((k) => k !== key);
+			return this.say(r.message);
+		}
 		this.freeze();
 		if (!yes) this.say('What should change? Type it below.');
 		await this.watch(this.runId);

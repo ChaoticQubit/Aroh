@@ -12,12 +12,23 @@ services:
       interval: 2s
       timeout: 3s
       retries: 60
+  pooler:
+    image: edoburu/pgbouncer:v1.25.2-p0
+    volumes:
+      - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    depends_on:
+      pg:
+        condition: service_healthy
   test:
     build:
       context: ../../..
       dockerfile: crates/aroh-server/Dockerfile.test
     environment:
       AROH_TEST_PG: postgres://postgres:test@pg:5432
+      AROH_TEST_POOLER: postgres://postgres:test@pooler:6432
     depends_on:
       pg:
         condition: service_healthy
+      pooler:
+        condition: service_started
