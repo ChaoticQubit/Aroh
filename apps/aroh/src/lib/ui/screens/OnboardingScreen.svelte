@@ -1,13 +1,14 @@
 <script lang="ts" module>
 	/**
 	 * What onboarding asks its host to do. Each sign-in, key, consent and server call resolves to
-	 * an owner-readable error, or null on success; `onserver` with empty values returns to the
+	 * an owner-readable error, or null on success; `onemail` resolves to `{ checkEmail }` instead
+	 * when a new account must confirm its address first; `onserver` with empty values returns to the
 	 * hosted server. `onallow` resolves to true once the permission is granted; `ondone` closes
 	 * onboarding with the typed first goal, if any.
 	 */
 	export type OnboardingActions = {
 		onapple: () => Promise<string | null>;
-		onemail: (email: string, password: string, create: boolean) => Promise<string | null>;
+		onemail: (email: string, password: string, create: boolean) => Promise<string | null | { checkEmail: string }>;
 		onserver: (supabaseUrl: string, anonKey: string, serverUrl: string) => Promise<string | null>;
 		onkey: (key: string) => Promise<string | null>;
 		onconsent: () => Promise<string | null>;
@@ -50,6 +51,7 @@
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 	let email = $state('');
+	let checkEmail = $state<string | null>(null);
 	let password = $state('');
 	let supabaseUrl = $state('');
 	let anonKey = $state('');
@@ -96,6 +98,24 @@
 		password = '';
 		key = '';
 		next();
+	}
+
+	/**
+	 * Signs in, or with `create` signs up, by email. A sign-up that must confirm the address
+	 * first shows the check-your-email state instead of moving on; anything else goes as `attempt`.
+	 */
+	async function emailAuth(create: boolean) {
+		let sentTo: string | null = null;
+		await attempt(async () => {
+			const r = await actions.onemail(email.trim(), password, create);
+			if (r === null || typeof r === 'string') return r;
+			sentTo = r.checkEmail;
+			return 'check email';
+		}, true);
+		if (sentTo === null) return;
+		error = null;
+		password = '';
+		checkEmail = sentTo;
 	}
 
 	/** Asks the OS for one permission and marks it when granted. */
@@ -155,14 +175,21 @@
 		</div>
 	{:else if step === 'email'}
 		{@render top()}
+		{#if checkEmail}
+		{@render heading('Check your email', `We sent a confirmation link to ${checkEmail}. Open it, then come back and sign in.`)}
+		<div class="mt-6 flex flex-col gap-3">
+			<Button class="h-12 gap-2 text-lg" onclick={() => (checkEmail = null)}><Mail class="size-5" aria-hidden="true" />I confirmed it, sign in</Button>
+		</div>
+		{:else}
 		{@render heading('Continue with email', 'Sign in, or create an account with a new email.')}
-		<form class="mt-6 flex flex-col gap-4" onsubmit={(e) => (e.preventDefault(), attempt(() => actions.onemail(email.trim(), password, false), true))}>
+		<form class="mt-6 flex flex-col gap-4" onsubmit={(e) => (e.preventDefault(), emailAuth(false))}>
 			<Field label="Email" id="ob-email"><Input id="ob-email" type="email" inputmode="email" autocomplete="username" class={input} bind:value={email} /></Field>
 			<Field label="Password" id="ob-password"><Input id="ob-password" type="password" autocomplete="current-password" class={input} bind:value={password} /></Field>
 			{@render failed()}
 			<Button type="submit" class="h-12 text-lg" disabled={busy || !email.trim() || !password}>Sign in</Button>
-			<Button variant="outline" class="h-12 text-lg" disabled={busy || !email.trim() || !password} onclick={() => attempt(() => actions.onemail(email.trim(), password, true), true)}>Create account</Button>
+			<Button variant="outline" class="h-12 text-lg" disabled={busy || !email.trim() || !password} onclick={() => emailAuth(true)}>Create account</Button>
 		</form>
+		{/if}
 	{:else if step === 'server'}
 		{@render top()}
 		{@render heading('Your own server', noServer ? 'This build has no server set. Enter your own to sign in and run agents.' : 'For self-hosting. Most people use the Aroh hosted server.')}

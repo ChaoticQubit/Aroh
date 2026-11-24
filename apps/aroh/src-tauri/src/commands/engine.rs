@@ -14,11 +14,14 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, State};
 
 /// The sign-in state Settings shows: whether a session is stored, its email and account id.
+/// `check_email` is true only right after a sign-up that needs the address confirmed: no
+/// session yet, so the screen asks the user to open the email, then sign in.
 #[derive(serde::Serialize)]
 pub struct Account {
     pub signed_in: bool,
     pub email: Option<String>,
     pub user_id: Option<String>,
+    pub check_email: bool,
 }
 
 /// Rows one sync moved, for the status line.
@@ -42,7 +45,7 @@ pub(crate) fn supabase(state: &State<'_, AppState>) -> Result<Config, String> {
 }
 
 fn account_of(session: Option<&auth::Session>) -> Account {
-    Account { signed_in: session.is_some(), email: session.and_then(|s| s.email.clone()), user_id: session.map(|s| s.user_id.clone()) }
+    Account { signed_in: session.is_some(), email: session.and_then(|s| s.email.clone()), user_id: session.map(|s| s.user_id.clone()), check_email: false }
 }
 
 /// Runs one sync on a blocking thread that holds the core lock for its whole
@@ -136,14 +139,24 @@ async fn send_zone(app: &AppHandle) {
 
 /// Signs in (or with `create`, signs up) with email and password through GoTrue, stores
 /// the session in the keychain, adopts the account id for every local row, then syncs.
-/// The password is never stored. Returns the account state.
+/// The password is never stored. Returns the account state; after a sign-up that needs
+/// email confirmation it is signed out with `check_email` set and nothing is adopted.
 #[tauri::command]
 pub async fn app_sign_in(app: AppHandle, state: State<'_, AppState>, email: String, password: String, create: bool) -> Result<Account, String> {
     if email.len() > 320 || password.is_empty() || password.len() > 256 {
         return Err("Enter an email and a password.".into());
     }
     let config = supabase(&state)?;
-    let session = if create { auth::sign_up(&config, &email, &password).await } else { auth::sign_in_password(&config, &email, &password).await }.map_err(text)?;
+    let session = if create {
+        match auth::sign_up(&config, &email, &password).await.map_err(text)? {
+            auth::SignUp::SignedIn(session) => session,
+            auth::SignUp::ConfirmEmail => {
+                return Ok(Account { signed_in: false, email: Some(email.trim().to_string()), user_id: None, check_email: true });
+            }
+        }
+    } else {
+        auth::sign_in_password(&config, &email, &password).await.map_err(text)?
+    };
     signed_in(&app, &state, config, session).await
 }
 
@@ -194,6 +207,52 @@ pub async fn app_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<
     }
     let config = supabase(&state).ok();
     auth::sign_out(config.as_ref()).await.map_err(text)?;
+    notify::clear(&app).await;
+    crate::realtime::restart(&app);
+    Ok(account_of(None))
+}
+
+fn wipe_device(state: &State<'_, AppState>) -> Result<(), String> {
+    with_core(state, |c| {
+        local::wipe(&mut c.conn)?;
+        c.user_id = local::user_id(&c.conn)?;
+        aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone())?;
+        Ok(())
+    })
+}
+
+/// When a requested account deletion becomes final, for the confirm screen.
+#[derive(serde::Serialize)]
+pub struct DeletionRequested {
+    pub purge_after: String,
+}
+
+/// Requests account deletion (App Store 5.1.1(v), Q76): the engine disables the account now
+/// and deletes everything after 15 days unless the owner signs in again
+/// (`DELETE /v1/account`); then this device drops the session and every local row. Nothing
+/// local is touched unless the engine confirms. Returns when the deletion becomes final.
+#[tauri::command]
+pub async fn app_delete_account(app: AppHandle, state: State<'_, AppState>) -> Result<DeletionRequested, String> {
+    let answer = engine_call(&state, "DELETE", "/v1/account", None).await?;
+    let purge_after = answer.body["purge_after"].as_str().filter(|_| answer.status == 202).map(str::to_string);
+    let Some(purge_after) = purge_after else {
+        let message = answer.body["error"]["message"].as_str().unwrap_or("The account was not deleted. Try again.");
+        return Err(message.chars().take(300).collect());
+    };
+    auth::sign_out(None).await.map_err(text)?;
+    wipe_device(&state)?;
+    notify::clear(&app).await;
+    crate::realtime::restart(&app);
+    Ok(DeletionRequested { purge_after })
+}
+
+/// Erases this device's Aroh data without touching the server: signs out locally and deletes
+/// every local row, setting and queue. Used after account deletion and as a reset.
+/// Returns signed out.
+#[tauri::command]
+pub async fn app_wipe_local(app: AppHandle, state: State<'_, AppState>) -> Result<Account, String> {
+    auth::sign_out(None).await.map_err(text)?;
+    wipe_device(&state)?;
     notify::clear(&app).await;
     crate::realtime::restart(&app);
     Ok(account_of(None))

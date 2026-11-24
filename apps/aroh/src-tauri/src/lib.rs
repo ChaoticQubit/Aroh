@@ -136,6 +136,8 @@ pub fn run() {
             commands::engine::app_sign_in,
             commands::engine::app_sign_in_apple,
             commands::engine::app_sign_out,
+            commands::engine::app_delete_account,
+            commands::engine::app_wipe_local,
             commands::engine::app_account,
             commands::engine::app_sync,
             commands::engine::app_engine,

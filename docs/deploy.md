@@ -212,6 +212,30 @@ Internal testing only (Q57): builds go to your team, with no App Review.
 57. On the iPhone, install **TestFlight** from the App Store and sign in with the same Apple Account. Open the invitation email and tap **View in TestFlight**, or open TestFlight directly, then tap **Accept** and **Install**. Open Aroh from the home screen.
 58. For a new build, repeat step 55. With automatic distribution on, TestFlight offers the update on the phone.
 
+## K. Public accounts: limits, sign-ups, deletion (Q75, Q76)
+
+Not done yet. Do this when the release that carries `20261202000000_public_accounts.sql` goes out, in this order. Try steps 58 to 64 on a scratch Supabase project first: steps 62 and 65 rely on Supabase behaviour the repo tests only against stubs.
+
+58. Apply `supabase/migrations/20261202000000_public_accounts.sql`, then `supabase/migrations/20261202010000_public_accounts_storage.sql`, then `supabase/migrations/20261202020000_ai_consent_backfill.sql`, in the SQL Editor as in section C, after every earlier migration. Do this before the engine with this change reaches production: the engine reads `account_deletions` on every signed-in request, so on the old schema every route answers 500.
+59. Agents now refuse to run until the account allows sending data to the AI provider. The backfill migration records that consent once for every account that already has a goal of its own, so existing users, the owner included, keep working. New accounts allow it in the app.
+
+60. In Vercel, add `AROH_SUPABASE_URL` (`https://<ref>.supabase.co`) and `AROH_SUPABASE_SECRET_KEY` (Supabase **Project Settings** > **API Keys** > **Secret keys** > **Add new secret key**, named `aroh-engine`), **Sensitive** on, then redeploy. The engine uses the key only to remove the files of deleted accounts. Without it, an account with files is never purged and every tick reports it.
+61. Open **Authentication** > **Sign In / Providers** > **Email** and turn on **Confirm email**. The built-in email sender sends 2 emails an hour for the whole project, so set up custom SMTP under **Authentication** > **Emails** > **SMTP Settings** before opening sign-ups.
+62. Open **Authentication** > **Hooks**, add a **Before User Created** hook, type **Postgres**, schema `public`, function `aroh_before_user_created`, and enable it. It refuses sign-ups while they are paused or the project nears the free tier, and allows 5 sign-ups per network address an hour.
+63. Open **Authentication** > **Rate Limits** and check **Sign-ups and sign-ins** per IP address. Lower it if sign-up abuse shows up.
+64. Open **Authentication** > **Sign In / Providers** and turn on **Allow new users to sign up** (it was turned off in step 17).
+65. Check on the scratch project: a new sign-up gets a confirmation email; `DELETE /v1/account` answers 202; signing in again within 15 days cancels it (the `auth.users.last_sign_in_at` trigger); a tick after `purge_after` removes the user from **Authentication** > **Users** and their files from **Storage**.
+
+Read capacity and pause sign-ups in the SQL Editor:
+
+```sql
+select * from public.aroh_capacity();
+update public.signup_settings set paused = true, updated_at = now();
+update public.signup_settings set paused = false, max_users = 40000, max_db_bytes = 419430400, max_storage_bytes = 838860800, signups_per_ip_hour = 5, updated_at = now();
+```
+
+The thresholds start at 80 % of the Supabase free tier (50,000 monthly active users, 500 MB database, 1 GB file storage). Sign-ups close by themselves when any one is reached.
+
 ## If something fails
 
 | Symptom | Check |

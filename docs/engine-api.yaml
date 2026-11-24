@@ -18,6 +18,59 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Health'
+  /v1/account:
+    get:
+      tags:
+      - account
+      operationId: get_account
+      responses:
+        '200':
+          description: AI consent and use of every per-user limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountView'
+      security:
+      - bearer: []
+    delete:
+      tags:
+      - account
+      operationId: delete_account
+      responses:
+        '202':
+          description: 'Disabled now: devices and sessions signed out, no runs, no data served. Everything is deleted at purge_after unless the user signs in again first. Repeating returns the first date'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionScheduled'
+      security:
+      - bearer: []
+  /v1/account/consent:
+    put:
+      tags:
+      - account
+      operationId: set_consent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetConsent'
+        required: true
+      responses:
+        '200':
+          description: Consent recorded (first time kept) or withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountView'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/actions/{action_id}/chat:
     post:
       tags:
@@ -1060,6 +1113,55 @@ components:
         run_id:
           type: string
           format: uuid
+    AccountView:
+      type: object
+      description: |-
+        A user's account as `GET /v1/account` reports it: when they allowed data to go to the
+        AI provider (none when not), and their use of each limit next to the limit.
+        `runs_today` counts the owner-started runs of the last 24 hours.
+      required:
+      - open_goals
+      - max_open_goals
+      - runs_today
+      - max_runs_per_day
+      - files
+      - max_files
+      - file_bytes
+      - max_file_bytes
+      - max_file_total_bytes
+      properties:
+        ai_consent_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        file_bytes:
+          type: integer
+          format: int64
+        files:
+          type: integer
+          format: int64
+        max_file_bytes:
+          type: integer
+          format: int64
+        max_file_total_bytes:
+          type: integer
+          format: int64
+        max_files:
+          type: integer
+          format: int64
+        max_open_goals:
+          type: integer
+          format: int64
+        max_runs_per_day:
+          type: integer
+          format: int64
+        open_goals:
+          type: integer
+          format: int64
+        runs_today:
+          type: integer
+          format: int64
     Answer:
       type: object
       description: |-
@@ -1097,6 +1199,17 @@ components:
         text:
           type: string
       additionalProperties: false
+    DeletionScheduled:
+      type: object
+      description: |-
+        Answer of `DELETE /v1/account`: when everything of the account is deleted unless the
+        user signs in again before then.
+      required:
+      - purge_after
+      properties:
+        purge_after:
+          type: string
+          format: date-time
     DeviceInfo:
       type: object
       description: |-
@@ -1198,9 +1311,10 @@ components:
     ErrorDetail:
       type: object
       description: |-
-        Code and message of an error response.
-        Codes: bad_request, unauthorized, forbidden, not_found, conflict,
-        setup, internal.
+        Code and message of an error response. Codes: bad_request, unauthorized,
+        forbidden, not_found, conflict, setup, internal, and the refusals
+        consent_required, daily_run_limit, goal_limit, file_too_large, storage_full,
+        files_remain, account_disabled.
       required:
       - code
       - message
@@ -1659,6 +1773,16 @@ components:
           - boolean
           - 'null'
       additionalProperties: false
+    SetConsent:
+      type: object
+      description: |-
+        Body of `PUT /v1/account/consent`: `ai` true records consent now, false withdraws it.
+        Without consent the engine starts no agent run.
+      required:
+      - ai
+      properties:
+        ai:
+          type: boolean
     SetKey:
       type: object
       description: |-

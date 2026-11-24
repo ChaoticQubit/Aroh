@@ -49,11 +49,15 @@ pub async fn app(config: Config) -> Result<AppState, ServerError> {
         eprintln!("aroh-server: push on, topic {}", apns.topic);
         Arc::new(Pusher::new(deps.pool.clone(), http.clone(), Signer::new(apns, clock.clone()), clock.clone()))
     });
+    let storage = config.supabase.map(|(url, key)| crate::account::StorageApi::new(&url, &key, http.clone()));
     let jwks = config.jwks_url.map(|url| (url, http));
-    let verifier = Verifier::new(config.jwt_secret.as_deref(), jwks, &config.jwt_audience, clock);
+    let verifier = Verifier::new(config.jwt_secret.as_deref(), jwks, &config.jwt_audience, clock).with_disabled_check(deps.pool.clone());
     let mut engine = Engine::new(Arc::new(deps));
     if let Some(pusher) = pusher {
         engine = engine.with_push(pusher);
+    }
+    if let Some(storage) = storage {
+        engine = engine.with_storage(storage);
     }
     Ok(AppState { engine: Arc::new(engine), verifier: Arc::new(verifier) })
 }

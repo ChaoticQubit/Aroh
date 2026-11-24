@@ -520,3 +520,34 @@ fn new_categories_take_the_next_free_hue_or_the_owner_pick() {
     assert_eq!(picked.color, hues[4]);
     assert_eq!(pending(&conn, Category::TABLE, &user, clock.node(), "", 50).unwrap().len(), 3);
 }
+
+#[test]
+fn wipe_leaves_an_empty_store_that_another_account_can_adopt() {
+    let (mut conn, mut clock, local_user) = seeded();
+    tick::tick(&conn, &mut clock, &local_user, now(), ZONE).unwrap();
+    local::adopt(&mut conn, ACCOUNT).unwrap();
+    local::set_setting(&conn, "server_url", "https://engine.example.org").unwrap();
+    local::queue_log(&conn, "ran 5 km", now()).unwrap();
+    aroh_store::sync::set_state(&conn, &format!("pull:{ACCOUNT}:goals"), "40").unwrap();
+
+    assert!(local::wipe(&mut conn).unwrap() > 0);
+    let tables: Vec<String> = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(tables.len() > SYNCED.len());
+    for t in &tables {
+        let left: i64 = conn.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0)).unwrap();
+        let kept = if t == "sync_state" { 1 } else { 0 };
+        assert_eq!(left, kept, "{t} holds only the server address");
+    }
+    assert_eq!(local::account(&conn).unwrap(), None);
+    assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("https://engine.example.org"), "the server address stays so the user can sign back in");
+    assert_ne!(local::user_id(&conn).unwrap(), ACCOUNT);
+    local::adopt(&mut conn, "0190f2a0-0000-7000-8000-0000000000ad").unwrap();
+    assert!(local::wipe(&mut conn).unwrap() > 0);
+    assert_eq!(local::wipe(&mut conn).unwrap(), 0, "a second wipe finds nothing");
+}

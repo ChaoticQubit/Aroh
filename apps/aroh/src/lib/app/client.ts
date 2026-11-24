@@ -255,7 +255,7 @@ export const healthConnect = () => invoke<string>('app_health_connect');
 export const devHealthSeed = () => invoke<null>('app_dev_health_seed');
 
 /** The stored sign-in state, read from the keychain. */
-export type Account = { signed_in: boolean; email: string | null; user_id: string | null };
+export type Account = { signed_in: boolean; email: string | null; user_id: string | null; check_email: boolean };
 
 /** The stored sign-in state, without a network call. */
 export const account = () => invoke<Account>('app_account');
@@ -268,6 +268,12 @@ export const signInApple = () => ((storage = null), invoke<Account>('app_sign_in
 
 /** Signs out; local rows stay. */
 export const signOut = () => ((storage = null), invoke<Account>('app_sign_out'));
+
+/**
+ * Asks the server to delete the account (15-day grace, Q76), then signs this device out and
+ * erases its local data, keeping only the server address. Resolves with the purge date.
+ */
+export const deleteAccount = () => ((storage = null), invoke<{ purge_after: string }>('app_delete_account'));
 
 /** Pushes local changes and pulls the account's rows. */
 export const sync = () => invoke<{ pushed: number; pulled: number }>('app_sync');

@@ -7,8 +7,46 @@ use std::time::Duration;
 /// The private bucket that holds goal files.
 pub const BUCKET: &str = "goal-files";
 
-/// Largest file the app uploads, matching the bucket's `file_size_limit`.
-pub const MAX_BYTES: usize = 25 * 1024 * 1024;
+/// Largest file the app uploads, matching the bucket's `file_size_limit` and `goal_files_quota`.
+pub const MAX_BYTES: usize = 10 * 1024 * 1024;
+
+/// Most stored files per account, matching the `goal_files_owner_insert` storage policy.
+pub const MAX_FILES: i64 = 20;
+
+/// Most stored file bytes per account, matching `goal_files_quota`.
+pub const MAX_TOTAL_BYTES: i64 = 50 * 1024 * 1024;
+
+/// The coded refusal for a file of `size` bytes added to `files` stored files of `used`
+/// bytes: `file_too_large`, `file_limit` or `storage_full`, the codes the server uses.
+/// Returns None when the file fits.
+pub fn over_limit(size: i64, files: i64, used: i64) -> Option<Error> {
+    assert!(size >= 0 && files >= 0 && used >= 0, "sizes and counts are never negative");
+    if size > MAX_BYTES as i64 {
+        Some(too_large())
+    } else if files >= MAX_FILES {
+        Some(Error::Refused("file_limit", format!("You have {MAX_FILES} stored files. Delete one to add another.")))
+    } else if used + size > MAX_TOTAL_BYTES {
+        Some(Error::Refused("storage_full", "Your files use the 50 MB allowed. Delete a file to add another.".into()))
+    } else {
+        None
+    }
+}
+
+fn too_large() -> Error {
+    Error::Refused("file_too_large", format!("A file can be at most {} MB.", MAX_BYTES / 1024 / 1024))
+}
+
+fn upload_refusal(error: Error) -> Error {
+    let Error::Status(status, body) = &error else { return error };
+    let body = body.to_lowercase();
+    if *status == 413 || body.contains("\"413\"") || body.contains("maximum allowed size") {
+        too_large()
+    } else if *status == 403 || body.contains("row-level security") {
+        Error::Refused("file_limit", format!("Storage refused the file: an account holds at most {MAX_FILES} files."))
+    } else {
+        error
+    }
+}
 
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -24,10 +62,11 @@ pub fn object_url(config: &Config, user_id: &str, storage_path: &str) -> Result<
 }
 
 /// Uploads `bytes` of type `mime` to `storage_path` in `user_id`'s folder, replacing an
-/// object at that path. Errors on a file over `MAX_BYTES`, a network failure or a non-2xx.
+/// object at that path. Errors on a network failure or a non-2xx; a file over `MAX_BYTES`
+/// (never sent) or one Storage refuses for size or the file cap is a coded `Refused`.
 pub async fn upload(config: &Config, token: &str, user_id: &str, storage_path: &str, mime: &str, bytes: Vec<u8>) -> Result<()> {
     if bytes.len() > MAX_BYTES {
-        return Err(Error::Config(format!("file is over {} MB", MAX_BYTES / 1024 / 1024)));
+        return Err(too_large());
     }
     let url = object_url(config, user_id, storage_path)?;
     let response = http()
@@ -40,7 +79,7 @@ pub async fn upload(config: &Config, token: &str, user_id: &str, storage_path: &
         .body(bytes)
         .send()
         .await?;
-    check(response).await.map(|_| ())
+    check(response).await.map(|_| ()).map_err(upload_refusal)
 }
 
 /// Most objects one removal request names.
@@ -144,13 +183,36 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_upload_is_an_error_and_too_big_never_sends() {
-        let (config, served) = storage_once("403 Forbidden").await;
+        let (config, served) = storage_once("500 Internal Server Error").await;
         let err = upload(&config, "t", "u1", "goals/g1/f1-x.pdf", "application/pdf", vec![1]).await.unwrap_err();
-        assert!(matches!(err, Error::Status(403, _)), "{err}");
+        assert!(matches!(err, Error::Status(500, _)), "{err}");
         served.await.unwrap();
         let config = Config::new("http://127.0.0.1:9", "sb_publishable_test_key_0001").unwrap();
         let err = upload(&config, "t", "u1", "goals/g1/f1-x.pdf", "application/pdf", vec![0; MAX_BYTES + 1]).await.unwrap_err();
-        assert!(matches!(err, Error::Config(_)), "{err}");
+        assert!(matches!(err, Error::Refused("file_too_large", _)), "{err}");
+        assert!(err.to_string().starts_with("file_too_large: A file can be at most 10 MB"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn storage_refusals_carry_the_server_codes() {
+        let rls = r#"{"statusCode":"403","error":"Unauthorized","message":"new row violates row-level security policy"}"#;
+        let (config, served) = storage_reply("400 Bad Request", rls).await;
+        let err = upload(&config, "t", "u1", "goals/g1/f1-x.pdf", "application/pdf", vec![1]).await.unwrap_err();
+        assert!(matches!(err, Error::Refused("file_limit", _)), "{err}");
+        served.await.unwrap();
+        let big = r#"{"statusCode":"413","error":"Payload too large","message":"The object exceeded the maximum allowed size"}"#;
+        let (config, served) = storage_reply("400 Bad Request", big).await;
+        let err = upload(&config, "t", "u1", "goals/g1/f1-x.pdf", "application/pdf", vec![1]).await.unwrap_err();
+        assert!(matches!(err, Error::Refused("file_too_large", _)), "{err}");
+        served.await.unwrap();
+    }
+
+    #[test]
+    fn local_limits_match_the_server_codes() {
+        assert!(over_limit(MAX_BYTES as i64, MAX_FILES - 1, MAX_TOTAL_BYTES - MAX_BYTES as i64).is_none());
+        assert!(matches!(over_limit(MAX_BYTES as i64 + 1, 0, 0), Some(Error::Refused("file_too_large", _))));
+        assert!(matches!(over_limit(1, MAX_FILES, 0), Some(Error::Refused("file_limit", _))));
+        assert!(matches!(over_limit(2, 0, MAX_TOTAL_BYTES - 1), Some(Error::Refused("storage_full", _))));
     }
 
     #[tokio::test]

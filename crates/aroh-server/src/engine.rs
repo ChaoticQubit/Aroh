@@ -36,6 +36,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 const STORE_RETRY_MS: i64 = 1_000;
+const DISABLED_RETRY_MS: i64 = 900_000;
 const DEFAULT_LEASE_MS: i64 = 300_000;
 const PAST_DAYS: i64 = 7;
 const MAX_TEXT: usize = 4_000;
@@ -360,6 +361,7 @@ pub struct Engine {
     queue: Arc<PgQueue>,
     lease_ms: i64,
     push: Option<Arc<crate::push::Pusher>>,
+    storage: Option<Arc<crate::account::StorageApi>>,
     last_scan: std::sync::Mutex<Option<i64>>,
 }
 
@@ -369,7 +371,7 @@ impl Engine {
     /// Returns the engine.
     pub fn new(deps: Arc<Deps>) -> Engine {
         let queue = Arc::new(PgQueue::new(deps.pool.clone(), deps.clock.clone()));
-        Engine { deps, queue, lease_ms: DEFAULT_LEASE_MS, push: None, last_scan: std::sync::Mutex::new(None) }
+        Engine { deps, queue, lease_ms: DEFAULT_LEASE_MS, push: None, storage: None, last_scan: std::sync::Mutex::new(None) }
     }
 
     /// Sets the lease length; it must be positive and outlast one step.
@@ -387,6 +389,21 @@ impl Engine {
     pub fn with_push(mut self, pusher: Arc<crate::push::Pusher>) -> Engine {
         self.push = Some(pusher);
         self
+    }
+
+    /// Attaches the Storage API the account purge removes files through; without one, a
+    /// due account that still has stored files stays pending and the tick reports it.
+    /// Returns the engine.
+    pub fn with_storage(mut self, storage: crate::account::StorageApi) -> Engine {
+        self.storage = Some(Arc::new(storage));
+        self
+    }
+
+    /// Disables `user`'s account now and schedules its deletion after the grace period
+    /// (Q76); see `account::request_deletion`. Safe to repeat.
+    /// Returns when the purge is due.
+    pub async fn delete_account(&self, user: Uuid) -> Result<crate::account::DeletionScheduled, ServerError> {
+        crate::account::request_deletion(&self.deps.pool, user, self.now()).await
     }
 
     /// The APNs pusher, when push is configured.
@@ -487,6 +504,7 @@ impl Engine {
     /// Returns the new run id, or the setup error.
     async fn launch(&self, user: Uuid, goal: Option<Uuid>, wf: Workflow, input: Map<String, Value>) -> Result<RunId, ServerError> {
         let name = wf.name.clone();
+        crate::account::check_run(&self.deps.pool, user, &name).await?;
         let personas = workflows::snapshot(&self.deps.pool, user, goal, &wf).await?;
         let events = Arc::new(EventBuffer::default());
         let io = RunIo::build(self.deps.clone(), user, goal, None, &personas, events.clone()).await?;
@@ -564,12 +582,14 @@ impl Engine {
     pub async fn start_goal(&self, user: Uuid, req: StartGoal) -> Result<Started, ServerError> {
         let tz = parse_tz(&req.timezone)?;
         let now = self.now();
+        crate::account::check_run(&self.deps.pool, user, workflows::NEW_GOAL).await?;
         prepare_reads(&self.deps.pool, user, now, DEFAULT_WINDOW_DAYS).await?;
         let id = req.goal_id.unwrap_or_else(|| Uuid::now_v7());
         let goal = match list_rows::<Goal>(&self.deps.pool, user, &[("id", id.to_string())], true).await?.pop() {
             Some(g) if !g.deleted => g,
             Some(_) => return Err(ServerError::NotFound(format!("goal {id}"))),
             None => {
+                crate::account::check_new_goal(&self.deps.pool, user).await?;
                 let inferred = || aroh_domain::category::guess(&req.title, req.context.as_deref()).and_then(|slug| teams::seeded_id(user, slug));
                 let category = req.category_id.map(|c| c.to_string()).or_else(inferred);
                 let mut g = Goal {
@@ -1032,6 +1052,10 @@ impl Engine {
             self.queue.fail(lease, "run row is gone").await?;
             return Err(ServerError::NotFound(format!("run {}", lease.run_id)));
         };
+        if crate::account::disabled(&self.deps.pool, row.user_id).await? {
+            self.queue.reschedule(lease, self.deps.clock.now_ms() + DISABLED_RETRY_MS).await?;
+            return Ok(Processed::Lost);
+        }
         if let Some(goal) = row.goal_id {
             if goal_deleted(&self.deps.pool, row.user_id, goal).await? {
                 self.cancel(row.user_id, row.id.0).await?;
@@ -1065,6 +1089,10 @@ impl Engine {
         let mut report = TickReport::default();
         if let Err(e) = self.scan_if_due().await {
             report.errors.push(format!("trigger scan: {e}"));
+        }
+        match crate::account::purge_due(&self.deps.pool, self.storage.as_deref(), self.now()).await {
+            Ok((_, errors)) => report.errors.extend(errors.into_iter().map(|e| format!("account purge: {e}"))),
+            Err(e) => report.errors.push(format!("account purge: {e}")),
         }
         while report.processed < opts.max_jobs && self.deps.clock.now_ms() - start < opts.budget_ms {
             let leases = self.queue.claim_due(opts.max_jobs - report.processed, self.lease_ms).await?;

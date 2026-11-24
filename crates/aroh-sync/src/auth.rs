@@ -111,10 +111,15 @@ pub async fn sign_in_id_token(config: &Config, provider: &str, id_token: &str, n
     Ok(session)
 }
 
-/// Creates an account through GoTrue sign-up and returns its session
-/// without touching the keychain. Errors when the project requires email
-/// confirmation (no session comes back) or the email is taken.
-pub async fn sign_up_session(config: &Config, email: &str, password: &str) -> Result<Session> {
+/// What a GoTrue sign-up gave back: a session, or none because the project
+/// requires the new address to be confirmed first ("check your email").
+#[derive(Debug)]
+pub enum SignUp {
+    SignedIn(Session),
+    ConfirmEmail,
+}
+
+async fn sign_up_reply(config: &Config, email: &str, password: &str) -> Result<SignUp> {
     let response = http()
         .post(format!("{}/auth/v1/signup", config.url))
         .header("apikey", &config.anon_key)
@@ -123,18 +128,30 @@ pub async fn sign_up_session(config: &Config, email: &str, password: &str) -> Re
         .await?;
     let body: serde_json::Value = check(response).await?.json().await?;
     if body.get("access_token").is_none() {
-        return Err(Error::Auth("confirm the email, then sign in".into()));
+        return Ok(SignUp::ConfirmEmail);
     }
-    parse(serde_json::from_value(body).map_err(|_| Error::Auth("unexpected sign-up response".into()))?)
+    Ok(SignUp::SignedIn(parse(serde_json::from_value(body).map_err(|_| Error::Auth("unexpected sign-up response".into()))?)?))
 }
 
-/// Creates an account and stores its session in the keychain.
+/// Creates an account through GoTrue sign-up and returns its session
+/// without touching the keychain. Errors when the project requires email
+/// confirmation (no session comes back) or the email is taken.
+pub async fn sign_up_session(config: &Config, email: &str, password: &str) -> Result<Session> {
+    match sign_up_reply(config, email, password).await? {
+        SignUp::SignedIn(session) => Ok(session),
+        SignUp::ConfirmEmail => Err(Error::Auth("confirm the email, then sign in".into())),
+    }
+}
+
+/// Creates an account and stores its session in the keychain when one comes back.
 /// Input: the project config and the new credentials.
-/// Output: the new session.
-pub async fn sign_up(config: &Config, email: &str, password: &str) -> Result<Session> {
-    let session = sign_up_session(config, email, password).await?;
-    save(&session)?;
-    Ok(session)
+/// Output: the session, or `ConfirmEmail` when the address must be confirmed first.
+pub async fn sign_up(config: &Config, email: &str, password: &str) -> Result<SignUp> {
+    let reply = sign_up_reply(config, email, password).await?;
+    if let SignUp::SignedIn(session) = &reply {
+        save(session)?;
+    }
+    Ok(reply)
 }
 
 /// Revokes the session on the server when reachable and always removes it
@@ -201,6 +218,12 @@ mod tests {
     /// Serves one HTTP request on a local port with a GoTrue token reply.
     /// Returns the project URL and a handle that yields the raw request head.
     async fn gotrue_once() -> (String, tokio::task::JoinHandle<String>) {
+        gotrue_reply(json!({"access_token": "a", "refresh_token": "r", "expires_in": 3600, "user": {"id": "0190f2a0-0000-7000-8000-00000000000a"}})).await
+    }
+
+    /// Serves one HTTP request on a local port with `body` as the JSON reply.
+    /// Returns the project URL and a handle that yields the raw request head.
+    async fn gotrue_reply(body: serde_json::Value) -> (String, tokio::task::JoinHandle<String>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
@@ -213,12 +236,24 @@ mod tests {
                 assert!(n > 0, "the client closed before sending headers");
                 seen.extend_from_slice(&chunk[..n]);
             }
-            let body = json!({"access_token": "a", "refresh_token": "r", "expires_in": 3600, "user": {"id": "0190f2a0-0000-7000-8000-00000000000a"}}).to_string();
+            let body = body.to_string();
             let reply = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
             socket.write_all(reply.as_bytes()).await.unwrap();
             String::from_utf8_lossy(&seen).to_lowercase()
         });
         (url, served)
+    }
+
+    #[tokio::test]
+    async fn a_sign_up_that_needs_email_confirmation_is_check_your_email_not_an_error() {
+        let (url, served) = gotrue_reply(json!({"id": "0190f2a0-0000-7000-8000-00000000000a", "email": "me@aroh.test", "confirmation_sent_at": "2026-11-23T12:00:00Z"})).await;
+        let config = Config::new(&url, "sb_publishable_test_key_0001").unwrap();
+        let reply = sign_up_reply(&config, "me@aroh.test", "secret-password").await.unwrap();
+        assert!(matches!(reply, SignUp::ConfirmEmail), "{reply:?}");
+        assert!(served.await.unwrap().starts_with("post /auth/v1/signup "));
+        let (url, _) = gotrue_once().await;
+        let config = Config::new(&url, "sb_publishable_test_key_0001").unwrap();
+        assert!(matches!(sign_up_reply(&config, "me@aroh.test", "secret-password").await.unwrap(), SignUp::SignedIn(_)));
     }
 
     #[tokio::test]

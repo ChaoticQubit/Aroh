@@ -350,6 +350,39 @@ pub fn account(conn: &Connection) -> Result<Option<String>> {
     Ok(get_state(conn, &key(ACCOUNT))?)
 }
 
+/// The settings that say which server this device talks to. A wipe keeps them, so a user
+/// who deleted their account can sign back in within the grace period and cancel it.
+pub const CONNECTION_SETTINGS: [&str; 3] = ["server_url", "supabase_url", "supabase_anon_key"];
+
+/// Deletes every local row and device value (account, settings, queues, sync cursors) in
+/// one transaction, without tombstones, so nothing syncs out and the store is as new; for
+/// account deletion. The schema and the `CONNECTION_SETTINGS` stay. Returns how many rows
+/// were deleted, not counting the kept settings.
+pub fn wipe(conn: &mut Connection) -> Result<usize> {
+    let tables: Vec<String> = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut kept = Vec::new();
+    for name in CONNECTION_SETTINGS {
+        if let Some(value) = get_state(conn, &key(name))? {
+            kept.push((key(name), value));
+        }
+    }
+    let tx = conn.transaction()?;
+    let mut removed = 0;
+    for table in &tables {
+        removed += tx.execute(&format!("DELETE FROM \"{}\"", table.replace('"', "\"\"")), [])?;
+    }
+    for (k, v) in &kept {
+        set_state(&tx, k, v)?;
+    }
+    tx.commit()?;
+    let removed = removed - kept.len();
+    assert!(account(conn)?.is_none(), "a wiped store has no account");
+    Ok(removed)
+}
+
 /// Makes `account` (the Supabase user id) the owner of every local row, once
 /// per device: rows move from the local id, goals point at the account's
 /// seeded categories, and the local seeds are replaced. A device already

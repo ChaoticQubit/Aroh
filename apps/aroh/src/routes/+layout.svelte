@@ -101,7 +101,14 @@
 
 	const actions: OnboardingActions = {
 		onapple: () => attempt(client.signInApple),
-		onemail: (email, password, create) => attempt(() => client.signIn(email, password, create)),
+		onemail: async (email, password, create) => {
+			try {
+				const a = await client.signIn(email, password, create);
+				return a.check_email ? { checkEmail: a.email ?? email } : null;
+			} catch (e) {
+				return String(e);
+			}
+		},
 		onserver: (supabaseUrl, anonKey, serverUrl) =>
 			attempt(async () => {
 				await client.setSetting('supabase_url', supabaseUrl);

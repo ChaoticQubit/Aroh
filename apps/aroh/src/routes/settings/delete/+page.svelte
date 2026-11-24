@@ -3,23 +3,25 @@
 	import { Button } from '$lib/ui/primitives/button';
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
-	import { engine } from '$lib/app/engine';
 
 	let busy = $state(false);
 	let error = $state<string | null>(null);
 
-	/** Asks the server to delete the account (15-day grace, Q76), then signs out into onboarding. */
+	/** Deletes the account (15-day grace, Q76): the server disables it, this device signs out and erases its data, then onboarding opens. */
 	async function remove() {
 		if (busy) return;
 		busy = true;
 		error = null;
-		const r = await engine.deleteAccount();
-		if (!r.ok) {
-			error = r.message;
+		try {
+			await client.deleteAccount();
+		} catch (e) {
+			error = String(e);
 			busy = false;
 			return;
 		}
-		await data.run(async () => (await client.signOut(), await client.setSetting('setup_done', 'false')));
+		await data.run(async () => {
+			await client.setSetting('setup_done', 'false');
+		});
 		busy = false;
 	}
 </script>
