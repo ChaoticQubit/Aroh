@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>0.1.0</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UILaunchStoryboardName</key>
+	<string>LaunchScreen</string>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>metal</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Aroh uses the microphone so you can log food, water and workouts by voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Aroh turns your voice into text on this iPhone to log food, water and workouts. Audio never leaves the device.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Aroh reads your weight, workouts, steps and dietary energy from Apple Health to fill the trackers of your goals.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Aroh writes test samples to Apple Health only in developer builds.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Aroh reads your calendars so plans avoid the time you are busy. Nothing is written back.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Aroh uses the camera so you can take a photo and attach it to a goal for its agents.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Aroh opens your photos so you can attach one to a goal. It syncs only to your account, for that goal's agents.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Aroh notices the places you visit often and asks you to name them. Visits stay on this iPhone.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Aroh nudges you when you reach a place linked to a goal, even while it is closed. Visits stay on this iPhone; only the places you name and the routines you approve sync.</string>
+</dict>
+</plist>

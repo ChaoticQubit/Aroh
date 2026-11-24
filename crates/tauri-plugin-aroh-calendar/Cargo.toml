@@ -1,0 +1,14 @@
+[package]
+name = "tauri-plugin-aroh-calendar"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+publish = false
+links = "tauri-plugin-aroh-calendar"
+
+[build-dependencies]
+tauri-plugin = { version = "2.7", features = ["build"] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = "2.12"

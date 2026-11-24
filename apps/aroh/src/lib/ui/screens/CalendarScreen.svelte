@@ -1,0 +1,187 @@
+<script lang="ts">
+	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import { Button } from '$lib/ui/primitives/button';
+	import Segmented from '../components/Segmented.svelte';
+	import CategoryFilter from '../components/CategoryFilter.svelte';
+	import CalendarGrid from './CalendarGrid.svelte';
+	import WeekStrip from '../components/planning/WeekStrip.svelte';
+	import ActionSheet from './ActionSheet.svelte';
+	import AllDayChoice from '../components/planning/AllDayChoice.svelte';
+	import { allDayOn, applyEdits } from './edits';
+	import { getClock } from '$lib/ui/clock';
+	import { daysBetween, formatDate, formatYmd, mondayOf, shiftDay, shiftMonth } from '$lib/ui/format';
+	import { stepAnchor, swipe } from '$lib/ui/swipe';
+	import type { ActionView } from '$lib/ui/contract';
+	import type { ActionEdit, AllDayView, BusyView, CategoryView, DayKind, DayPick } from './types';
+
+	/**
+	 * Calendar: toolbar with Today, previous, next and the Day, Week, Month switch, category chips,
+	 * then a week hour grid on wide containers or a week strip over a day grid on phones. Kept device
+	 * events (`busy`) show in the hour grids as neutral blocks, device all-day events (`allDay`) in
+	 * an all-day row and as bars in month cells and the week strip, with the kind question for the
+	 * first unanswered one in view; tapping a chip reopens it. A sideways swipe pages a day, week or
+	 * month like the arrows. Tapping an action opens the edit
+	 * sheet; `onedit`, `onlock`, `ondelete` and `onchoose` report the changes. `initialView`, `day`, `editing`,
+	 * `confirming`, `selected` and `inline` (sheet drawn in place for mockups) set the opening state.
+	 */
+	let {
+		actions,
+		categories,
+		busy = [],
+		allDay = [],
+		initialView = 'week',
+		day = undefined,
+		editing: openId = null,
+		confirming = false,
+		selected: selectedId = null,
+		inline = false,
+		onedit,
+		onlock,
+		ondelete,
+		onchoose
+	}: {
+		actions: ActionView[];
+		categories: CategoryView[];
+		busy?: BusyView[];
+		allDay?: AllDayView[];
+		initialView?: 'day' | 'week' | 'month';
+		day?: string;
+		editing?: string | null;
+		confirming?: boolean;
+		selected?: string | null;
+		inline?: boolean;
+		onedit?: (edit: ActionEdit) => void;
+		onlock?: (id: string, locked: boolean) => void;
+		ondelete?: (id: string) => void;
+		onchoose?: (pick: DayPick) => void;
+	} = $props();
+
+	const { now, zone } = getClock();
+	const today = formatYmd(now, zone);
+	const monday = mondayOf(today);
+	let view = $derived(initialView);
+	let anchor = $derived(day ?? today);
+	let hidden = $state<number[]>([]);
+	let edits = $state<Record<string, ActionEdit>>({});
+	let deleted = $state<string[]>([]);
+	let picks = $state<Record<string, DayKind>>({});
+	let choosing = $state<string | null>(null);
+	let editing = $derived(openId);
+	let selected = $derived(selectedId);
+	const events = $derived(allDay.map((e) => (picks[e.id] ? { ...e, kind: picks[e.id] } : e)));
+	const current = $derived(applyEdits(actions, edits, deleted));
+	const used = $derived(categories.filter((c) => current.some((a) => a.category === c.slot)));
+	const visible = $derived(current.filter((a) => !hidden.includes(a.category)));
+	const open = $derived(editing ? current.find((a) => a.id === editing) : undefined);
+	const weekStart = $derived(shiftDay(monday, Math.floor(daysBetween(monday, anchor) / 7) * 7));
+	const week = $derived(Array.from({ length: 7 }, (_, i) => shiftDay(weekStart, i)));
+	const shown = $derived(view === 'month' ? [] : view === 'day' ? [anchor] : week);
+	const reopened = $derived(choosing ? events.find((e) => e.id === choosing) : undefined);
+	const asking = $derived(reopened ?? events.find((e) => e.kind === null && shown.some((d) => allDayOn([e], d).length > 0)));
+	const monthStart = $derived(shiftMonth(anchor, 0));
+	const monthGridStart = $derived(mondayOf(monthStart));
+	const monthDays = $derived(Array.from({ length: 42 }, (_, i) => shiftDay(monthGridStart, i)));
+	const range = $derived(
+		view === 'day'
+			? formatDate(anchor, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+			: view === 'week'
+				? `${formatDate(week[0], { day: 'numeric', month: 'short' })} - ${formatDate(week[6], { day: 'numeric', month: 'short', year: 'numeric' })}`
+				: formatDate(monthStart, { month: 'long', year: 'numeric' })
+	);
+
+	/** Moves the anchor one day, week or month in `dir`. */
+	function step(dir: 1 | -1) {
+		anchor = stepAnchor(view, anchor, dir);
+	}
+
+	/** Opens the edit sheet on an action and keeps it selected for dragging after the sheet closes. */
+	function openAction(id: string) {
+		editing = id;
+		selected = id;
+	}
+
+	/** Applies a move or resize locally and reports it. */
+	function edit(e: ActionEdit) {
+		edits[e.id] = e;
+		editing = null;
+		onedit?.(e);
+	}
+
+	/** Removes an action locally and reports it. */
+	function remove(id: string) {
+		deleted = [...deleted, id];
+		editing = null;
+		selected = null;
+		ondelete?.(id);
+	}
+
+	/** Stores the owner's kind for an all-day event, closes a reopened card and reports it. */
+	function choose(pick: DayPick) {
+		picks[pick.id] = pick.kind;
+		choosing = null;
+		onchoose?.(pick);
+	}
+</script>
+
+<div class="flex flex-col gap-3 p-4 @3xl:p-6">
+	<div class="flex flex-wrap items-center gap-2">
+		<Button variant="outline" size="touch" class="@3xl:h-9" onclick={() => (anchor = today)}>Today</Button>
+		<Button variant="ghost" size="icon-touch" class="@3xl:size-9" aria-label="Previous" onclick={() => step(-1)}><ChevronLeft /></Button>
+		<Button variant="ghost" size="icon-touch" class="@3xl:size-9" aria-label="Next" onclick={() => step(1)}><ChevronRight /></Button>
+		<p class="mr-auto text-sm font-semibold" aria-live="polite">{range}</p>
+		<Segmented label="Calendar view" bind:value={view} options={[{ value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }]} />
+	</div>
+	<CategoryFilter categories={used} bind:hidden />
+	{#if asking && onchoose}<AllDayChoice event={asking} onchoose={choose} onclose={reopened ? () => (choosing = null) : undefined} />{/if}
+
+	<div class="flex flex-col gap-3" use:swipe={step}>
+	{#if view === 'month'}
+		<div class="overflow-hidden rounded-md border border-border bg-bg">
+			<div class="grid grid-cols-7 border-b border-border">
+				{#each week as d (d)}<p class="py-2 text-center text-xs text-muted">{formatDate(d, { weekday: 'short' })}</p>{/each}
+			</div>
+			<div class="grid grid-cols-7">
+				{#each monthDays as d (d)}
+					{@const items = visible.filter((a) => formatYmd(a.start, zone) === d)}
+					{@const marks = allDayOn(events, d)}
+					<button
+						type="button"
+						class="flex min-h-16 flex-col items-stretch gap-0.5 border-t border-l border-border p-1 text-left outline-none first:border-l-0 focus-visible:ring-3 focus-visible:ring-ring/50 @3xl:min-h-24 {d.slice(0, 7) === monthStart.slice(0, 7) ? '' : 'text-muted/60'}"
+						aria-label="{d}, {marks.length ? `${marks.map((e) => e.title).join(', ')}, ` : ''}{items.length} actions"
+						onclick={() => {
+							anchor = d;
+							view = 'day';
+						}}
+					>
+						<span class="w-fit min-w-5 rounded-sm px-1 text-center text-xs leading-5 font-medium tabular-nums {d === today ? 'bg-accent text-accent-fg' : ''}">{Number(d.slice(8))}</span>
+						{#each marks.slice(0, 2) as e (e.id)}
+							<span class="truncate rounded-sm border px-1 text-[10px] leading-3.5 {e.kind === 'busy' || e.kind === 'away' ? 'border-border-strong bg-surface-2 text-fg' : e.kind === 'reminder' ? 'border-border text-muted' : 'border-dashed border-border-strong text-fg'}" title={e.title}>{e.title}</span>
+						{/each}
+						<span class="flex flex-wrap gap-0.5 @3xl:hidden">
+							{#each items.slice(0, 4) as a (a.id)}<span class="size-1.5 rounded-full" style="background: var(--cat-{a.category})"></span>{/each}
+						</span>
+						<span class="hidden flex-col gap-0.5 @3xl:flex">
+							{#each items.slice(0, 3) as a (a.id)}
+								<span class="truncate border-l-3 px-1 text-xs leading-4" style="border-left-color: var(--cat-{a.category}); background: color-mix(in oklch, var(--cat-{a.category}) 8%, var(--bg))">{a.title}</span>
+							{/each}
+							{#if items.length > 3}<span class="px-1 text-xs text-muted">+{items.length - 3} more</span>{/if}
+						</span>
+					</button>
+				{/each}
+			</div>
+		</div>
+	{:else if view === 'week'}
+		<div class="hidden @3xl:block"><CalendarGrid days={week} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} /></div>
+		<div class="flex flex-col gap-3 @3xl:hidden">
+			<WeekStrip spec={{ kind: 'week_strip', label: 'This week', actions: visible, startDay: week[0] }} allDay={events} onchange={(d) => (anchor = d as string)} />
+			<CalendarGrid days={[anchor]} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} />
+		</div>
+	{:else}
+		<CalendarGrid days={[anchor]} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} />
+	{/if}
+	</div>
+</div>
+{#if open}
+	<ActionSheet action={open} {confirming} {inline} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />
+{/if}

@@ -1,0 +1,81 @@
+# Aroh
+
+Aroh is a goal-based calendar. You set a goal with a deadline (for example "finish this course by March 1", with its link). An agent reads the course, asks you a few questions about how much time you have, and plans actions into your calendar up to the deadline. It reminds you before each action. When you miss one, it replans the rest so the goal still lands on time. A small Log screen tracks food, water and workouts by text, quick chips or voice.
+
+The iPhone app is the main target. Android builds from the same code, and the Mac app comes second. The UI is Svelte 5 + SvelteKit inside Tauri 2, the core is Rust, agents use Claude through `rig-core`, and data is local SQLite with optional Supabase sync. YAML plugins place fixed components into named slots (see `docs/plugins.md`).
+
+## Your own server
+
+A build from source has no server set. [docs/self-host.md](docs/self-host.md) runs one with Docker compose, or on Supabase cloud and Vercel; then enter it in Settings, or follow the first-launch **Use my own server** step.
+
+## Layout
+
+- `apps/aroh` - the app: Svelte UI in `src/`, Tauri shell in `src-tauri/`
+- `crates/` - Rust core: `aroh-core` (data, keychain), `aroh-agents`, `aroh-replan`, `aroh-reminders`, `aroh-intake`, `aroh-plugins`, `aroh-sync`, `tauri-plugin-aroh-speech`
+- `docs/decisions.md` - settled decisions
+
+## Tests
+
+Workspace tests (all crates except the Tauri app) run in a small Kiri container. Agent shells may have a sandbox HOME; then set `REAL_HOME` to your real home directory and prefix `kiri` with it:
+
+```sh
+HOME="$REAL_HOME" kiri build -f Dockerfile.test -t aroh-test .
+HOME="$REAL_HOME" kiri run --rm aroh-test
+```
+
+Type check and build of the UI:
+
+```sh
+cd apps/aroh
+pnpm install
+pnpm check
+```
+
+Import shared UI code with `$lib/...`. It resolves through `paths` in `apps/aroh/tsconfig.json` and `resolve.alias` in `apps/aroh/vite.config.ts`, because SvelteKit 3 no longer provides `$lib` by itself.
+
+## Run on Mac
+
+```sh
+cd apps/aroh
+pnpm install
+pnpm tauri dev
+```
+
+`pnpm tauri dev` serves the UI on port 1420 and opens the app window. For a debug app without a dev server, run `pnpm tauri build --debug --no-bundle` and start `target/debug/aroh` from the repo root. Windows 768 px and wider show the sidebar layout; narrower ones show the phone tab bar. On the Mac, reminders come from an in-app timer, so they only fire while the app runs.
+
+Debug builds read one optional variable: `AROH_DEV_SCRIPT` names a JavaScript file that runs in the window 3 s after start. A script can run `window.__TAURI_INTERNALS__.invoke("app_dev_seed")` to load the six-pack sample. Release builds contain neither.
+
+## Run in the iOS simulator
+
+Do not run plain `tauri ios dev`: it tries to Homebrew-install `ios-deploy`. `tauri ios build` also fails here ("Xcode Simulator SDK 27.2 is not installed"), so build by hand:
+
+1. Build the Rust library for the simulator, from the repo root:
+   `SDKROOT=$(xcrun --sdk iphonesimulator --show-sdk-path) cargo rustc -p aroh --lib --crate-type staticlib --target aarch64-apple-ios-sim`
+2. Copy `target/aarch64-apple-ios-sim/debug/libaroh_lib.a` to `apps/aroh/src-tauri/gen/apple/Externals/arm64/debug/libapp.a`.
+3. In `apps/aroh/src-tauri/gen/apple`, with a no-op `pnpm` shim first on `PATH`, run:
+   `xcodebuild -project aroh.xcodeproj -scheme aroh_iOS -configuration debug -sdk iphonesimulator -destination id=<simulator id> -derivedDataPath <dir> ARCHS=arm64 CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= build`
+   Ad-hoc signing (`CODE_SIGN_IDENTITY=-`) is required, or the keychain fails with "keychain platform failure".
+4. In `apps/aroh`, run `pnpm dev` (port 1420).
+5. Install and launch on the iPhone 15 Pro (iOS 26 runtime):
+   `xcrun simctl install booted <dir>/Build/Products/debug-iphonesimulator/Aroh.app`, then `xcrun simctl launch booted io.aroh.app`, and capture with `xcrun simctl io booted screenshot <file>`.
+
+Port 1420 is shared, so run one simulator check at a time.
+
+## iOS release build
+
+`tauri ios build` fails its SDK check on this Mac, so `apps/aroh/ios-release.sh` builds the release app by hand. It runs `pnpm build`, builds the Rust library in release with the `custom-protocol` feature (the UI is embedded, no dev server), copies it to `gen/apple/Externals/arm64/release/libapp.a` and runs `xcodebuild` with a no-op `pnpm` shim, since the Xcode "Build Rust Code" phase would call the Tauri CLI.
+
+- `sh apps/aroh/ios-release.sh` archives for devices with signing off: `target/ios-release/Aroh.xcarchive`. Signing and export stay with the owner: open the archive in Xcode Organizer, or run `xcodebuild -exportArchive` with your team and an export options plist.
+- `sh apps/aroh/ios-release.sh simulator` builds the release app for the simulator, ad-hoc signed: `target/ios-release/dd/Build/Products/release-iphonesimulator/Aroh.app`. Install it with `xcrun simctl install`.
+
+- `sh apps/aroh/ios-testflight.sh` (the same as `ios-release.sh testflight`) reads `apps/aroh/.env.release` (untracked; copy `apps/aroh/.env.release.example`), which sets `AROH_TEAM_ID` and the official build's server defaults `AROH_DEFAULT_SUPABASE_URL`, `AROH_DEFAULT_SUPABASE_ANON_KEY` and `AROH_DEFAULT_SERVER_URL`, archives signed with that team, stamps `CFBundleVersion` with UTC `yyyymmddHHMM` (or `AROH_BUILD_NUMBER`) in a temp copy of Info.plist, and uploads to App Store Connect for internal TestFlight. Owner steps: `docs/deploy.md` section J. `AROH_UNSIGNED=1` runs the same path unsigned and stops before the upload.
+
+`AROH_IOS_OUT` moves the output folder. Run `git checkout -- apps/aroh/src-tauri/gen/apple` afterwards if Xcode touched the project.
+
+## Android
+
+Android is not set up on this Mac yet. It needs the Android SDK (platform, build-tools, platform-tools), the NDK, JDK 17 or newer, the four Rust Android targets, and `ANDROID_HOME`, `NDK_HOME` and `JAVA_HOME` set. Then run `pnpm tauri android init` and `pnpm tauri android build --debug`.
+
+## Contributing and licence
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) (commits need a DCO sign-off), [SECURITY.md](SECURITY.md) for private vulnerability reports, and the [Code of Conduct](CODE_OF_CONDUCT.md). Aroh is licensed under the [Apache License 2.0](LICENSE); third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

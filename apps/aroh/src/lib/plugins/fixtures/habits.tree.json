@@ -1,0 +1,92 @@
+{
+  "description": "A four-week check-in streak, the streak of planned habit actions, this week's ring and today's checks.",
+  "format": 1,
+  "name": "habits",
+  "personas": [],
+  "sections": [
+    {
+      "items": [
+        {
+          "actions": {
+            "bind": "actions",
+            "limit": 6,
+            "when": "today"
+          },
+          "kind": "action_list",
+          "label": "Today's checks"
+        },
+        {
+          "kind": "progress_ring",
+          "label": "This week",
+          "rings": [
+            {
+              "label": "Done",
+              "series": 1,
+              "target": {
+                "bind": "week_planned"
+              },
+              "unit": "count",
+              "value": {
+                "bind": "week_done"
+              }
+            }
+          ]
+        }
+      ],
+      "title": "Today"
+    },
+    {
+      "items": [
+        {
+          "days": {
+            "bind": "streak",
+            "tracker": "Check-in"
+          },
+          "kind": "streak_heatmap",
+          "label": "Check-ins, last 4 weeks",
+          "series": 2
+        },
+        {
+          "days": {
+            "bind": "streak"
+          },
+          "kind": "streak_heatmap",
+          "label": "Planned actions, last 4 weeks",
+          "series": 3
+        },
+        {
+          "entries": {
+            "bind": "entries",
+            "tracker": "Check-in"
+          },
+          "kind": "log_list",
+          "label": "Notes"
+        }
+      ],
+      "title": "Streak"
+    }
+  ],
+  "title": "Habit",
+  "tools": [],
+  "trackers": [
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "done",
+          "kind": "bool",
+          "label": "Done today",
+          "unit": null
+        },
+        {
+          "choices": [],
+          "key": "note",
+          "kind": "text",
+          "label": "Note",
+          "unit": null
+        }
+      ],
+      "name": "Check-in"
+    }
+  ]
+}

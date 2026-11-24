@@ -1,0 +1,228 @@
+aroh_plugin = 1
+name = "all-kinds"
+title = "Every kind"
+description = "Test fixture: every component kind and every binding source."
+tools = ["web_search"]
+
+[[trackers]]
+name = "Weight"
+
+[[trackers.fields]]
+key = "weight"
+label = "Weight"
+kind = "number"
+unit = "kg"
+target = 78
+
+[[trackers]]
+name = "Water"
+
+[[trackers.fields]]
+key = "ml"
+label = "Water"
+kind = "number"
+unit = "ml"
+
+[[trackers.fields]]
+key = "note"
+label = "Note"
+kind = "text"
+
+[trackers.cadence]
+freq = "weekly"
+weekdays = ["Mon", "Thu"]
+at = "20:00"
+
+[[personas]]
+name = "coach"
+toml = "name = \"coach\"\n"
+
+[[sections]]
+title = "Inputs"
+
+[[sections.items]]
+kind = "number_input"
+label = "Weight"
+unit = "kg"
+value = { bind = "latest", tracker = "Weight", field = "weight" }
+step = 0.1
+min = 40
+max = 150
+
+[[sections.items]]
+kind = "rating"
+label = "Mood"
+min = 1
+max = 5
+
+[[sections.items]]
+kind = "choice"
+label = "Session"
+options = ["Gym", "Run"]
+multi = false
+value = []
+
+[[sections.items]]
+kind = "note"
+label = "Notes"
+placeholder = "How did it go?"
+value = ""
+
+[[sections.items]]
+kind = "check_off"
+label = "Stretched"
+done = false
+
+[[sections.items]]
+kind = "counter"
+label = "Water"
+unit = "ml"
+value = { bind = "today_total", tracker = "Water", field = "ml" }
+target = 2000
+
+[[sections.items]]
+kind = "timer"
+label = "Plank"
+targetMinutes = 5
+
+[[sections.items]]
+kind = "capture"
+label = "Progress photo"
+media = "photo"
+
+[[sections]]
+title = "Display"
+
+[[sections.items]]
+kind = "line_chart"
+label = "Weight"
+unit = "kg"
+points = { bind = "series", tracker = "Weight", field = "weight" }
+target = { bind = "target", tracker = "Weight", field = "weight" }
+series = 1
+
+[[sections.items]]
+kind = "bar_chart"
+label = "Water"
+unit = "ml"
+points = { bind = "series", tracker = "Water", field = "ml" }
+series = 3
+
+[[sections.items]]
+kind = "progress_ring"
+label = "This week"
+
+[[sections.items.rings]]
+label = "Actions"
+unit = "count"
+value = { bind = "week_done" }
+target = { bind = "week_planned" }
+series = 1
+
+[[sections.items]]
+kind = "target_vs_actual"
+label = "Weight"
+unit = "kg"
+target = { bind = "target", tracker = "Weight", field = "weight" }
+actual = { bind = "latest", tracker = "Weight", field = "weight" }
+
+[[sections.items]]
+kind = "streak_heatmap"
+label = "Sessions"
+days = { bind = "streak" }
+series = 2
+
+[[sections.items]]
+kind = "streak_heatmap"
+label = "Water logged"
+days = { bind = "streak", tracker = "Water" }
+
+[[sections.items]]
+kind = "stat_tile"
+label = "Weight"
+unit = "kg"
+value = { bind = "latest", tracker = "Weight", field = "weight" }
+delta = { bind = "change", tracker = "Weight", field = "weight" }
+
+[[sections.items]]
+kind = "log_list"
+label = "Weigh-ins"
+entries = { bind = "entries", tracker = "Weight" }
+
+[[sections.items]]
+kind = "photo_timeline"
+label = "Photos"
+photos = []
+
+[[sections]]
+title = "Planning"
+
+[[sections.items]]
+kind = "action_list"
+label = "Today"
+actions = { bind = "actions", when = "today" }
+
+[[sections.items]]
+kind = "action_list"
+label = "Next"
+actions = { bind = "actions", when = "next", limit = 2 }
+
+[[sections.items]]
+kind = "week_strip"
+label = "This week"
+actions = { bind = "actions", when = "week" }
+startDay = { bind = "week_start" }
+
+[[sections.items]]
+kind = "milestone_timeline"
+label = "Milestones"
+
+[[sections.items.milestones]]
+title = "First 5k"
+due = "2026-12-15"
+done = false
+
+[[sections.items]]
+kind = "module_checklist"
+label = "Modules"
+
+[[sections.items.modules]]
+title = "Form basics"
+minutes = 20
+done = true
+
+[[sections.items]]
+kind = "countdown"
+label = "Until the deadline"
+deadline = { bind = "deadline" }
+
+[[sections]]
+title = "Agent"
+
+[[sections.items]]
+kind = "insight_card"
+persona = "Coach"
+title = "Steady progress"
+body = "Weight is down two weeks in a row."
+
+[[sections.items]]
+kind = "proposal_card"
+persona = "Coach"
+summary = "Move Friday's run to Saturday."
+
+[[sections.items.changes]]
+op = "move"
+title = "Run"
+before = "Fri 07:00"
+after = "Sat 09:00"
+
+[[sections.items]]
+kind = "question_card"
+persona = "Coach"
+question = "How much did you weigh this morning?"
+
+[sections.items.input]
+kind = "number_input"
+label = "Weight"
+unit = "kg"
+step = 0.1

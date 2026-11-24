@@ -1,0 +1,89 @@
+aroh_plugin = 1
+name = "learning"
+title = "Learning"
+description = "Days to the deadline, this week's study sessions, minutes studied, modules done, quiz scores, a four-week study streak and the next sessions."
+
+[[trackers]]
+name = "Sessions"
+
+[[trackers.fields]]
+key = "minutes"
+label = "Study time"
+kind = "number"
+unit = "min"
+
+[trackers.cadence]
+freq = "daily"
+at = "21:00"
+
+[[trackers]]
+name = "Modules"
+
+[[trackers.fields]]
+key = "done"
+label = "Modules done"
+kind = "number"
+unit = "count"
+
+[[trackers]]
+name = "Quizzes"
+
+[[trackers.fields]]
+key = "score"
+label = "Quiz score"
+kind = "number"
+unit = "%"
+
+[[sections]]
+title = "Progress"
+
+[[sections.items]]
+kind = "countdown"
+label = "Until the deadline"
+deadline = { bind = "deadline" }
+
+[[sections.items]]
+kind = "progress_ring"
+label = "This week"
+
+[[sections.items.rings]]
+label = "Sessions"
+unit = "count"
+value = { bind = "week_done" }
+target = { bind = "week_planned" }
+series = 1
+
+[[sections.items]]
+kind = "stat_tile"
+label = "Modules done"
+unit = "count"
+value = { bind = "latest", tracker = "Modules", field = "done" }
+delta = { bind = "change", tracker = "Modules", field = "done" }
+
+[[sections.items]]
+kind = "bar_chart"
+label = "Minutes studied"
+unit = "min"
+points = { bind = "series", tracker = "Sessions", field = "minutes" }
+series = 2
+
+[[sections.items]]
+kind = "line_chart"
+label = "Quiz score (%)"
+unit = "count"
+points = { bind = "series", tracker = "Quizzes", field = "score" }
+series = 3
+
+[[sections.items]]
+kind = "streak_heatmap"
+label = "Study, last 4 weeks"
+days = { bind = "streak", tracker = "Sessions" }
+series = 2
+
+[[sections]]
+title = "Upcoming"
+
+[[sections.items]]
+kind = "action_list"
+label = "Next sessions"
+actions = { bind = "actions", when = "next", limit = 4 }

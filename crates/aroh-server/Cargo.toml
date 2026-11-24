@@ -1,0 +1,48 @@
+[package]
+name = "aroh-server"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+fake-transports = []
+
+[[bin]]
+name = "aroh-server"
+path = "src/main.rs"
+
+[dependencies]
+aroh-domain.workspace = true
+aroh-plugins = { path = "../aroh-plugins" }
+troupekit-core = { path = "../../troupekit/crates/troupekit-core" }
+troupekit-providers = { path = "../../troupekit/crates/troupekit-providers" }
+troupekit-tools = { path = "../../troupekit/crates/troupekit-tools" }
+troupekit-agent = { path = "../../troupekit/crates/troupekit-agent" }
+troupekit-graph = { path = "../../troupekit/crates/troupekit-graph" }
+troupekit-host = { path = "../../troupekit/crates/troupekit-host" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+chrono-tz.workspace = true
+uuid.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+async-trait = "0.1"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+axum = "0.8"
+sqlx-core = { version = "0.8.6", default-features = false, features = ["_rt-tokio", "_tls-rustls-ring-webpki", "json", "uuid", "chrono"] }
+sqlx-postgres = { version = "0.8.6", features = ["json", "uuid", "chrono"] }
+aes-gcm = "0.10"
+zeroize = "1"
+base64 = "0.22"
+jsonwebtoken = "9"
+utoipa = { version = "5", features = ["yaml", "uuid", "chrono"] }
+schemars = { version = "1", features = ["chrono04"] }
+url = "2"
+toml = "1"
+
+[dev-dependencies]
+aroh-server = { path = ".", features = ["fake-transports"] }
+ring = "0.17"
+reqwest.workspace = true

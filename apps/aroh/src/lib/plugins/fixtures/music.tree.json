@@ -1,0 +1,157 @@
+{
+  "description": "Days to the deadline, this week's practice sessions, minutes practised, tempo, piece progress, a four-week practice streak and the next sessions.",
+  "format": 1,
+  "name": "music",
+  "personas": [],
+  "sections": [
+    {
+      "items": [
+        {
+          "deadline": {
+            "bind": "deadline"
+          },
+          "kind": "countdown",
+          "label": "Until the deadline"
+        },
+        {
+          "kind": "progress_ring",
+          "label": "This week",
+          "rings": [
+            {
+              "label": "Sessions",
+              "series": 1,
+              "target": {
+                "bind": "week_planned"
+              },
+              "unit": "count",
+              "value": {
+                "bind": "week_done"
+              }
+            }
+          ]
+        },
+        {
+          "kind": "bar_chart",
+          "label": "Minutes practised",
+          "points": {
+            "bind": "series",
+            "field": "minutes",
+            "tracker": "Practice"
+          },
+          "series": 2,
+          "unit": "min"
+        },
+        {
+          "kind": "line_chart",
+          "label": "Tempo (bpm)",
+          "points": {
+            "bind": "series",
+            "field": "bpm",
+            "tracker": "Tempo"
+          },
+          "series": 3,
+          "unit": "count"
+        },
+        {
+          "days": {
+            "bind": "streak",
+            "tracker": "Practice"
+          },
+          "kind": "streak_heatmap",
+          "label": "Practice, last 4 weeks",
+          "series": 2
+        }
+      ],
+      "title": "Progress"
+    },
+    {
+      "items": [
+        {
+          "delta": {
+            "bind": "change",
+            "field": "progress",
+            "tracker": "Pieces"
+          },
+          "kind": "stat_tile",
+          "label": "Current piece progress (%)",
+          "unit": "count",
+          "value": {
+            "bind": "latest",
+            "field": "progress",
+            "tracker": "Pieces"
+          }
+        },
+        {
+          "entries": {
+            "bind": "entries",
+            "tracker": "Pieces"
+          },
+          "kind": "log_list",
+          "label": "Practice notes"
+        }
+      ],
+      "title": "Pieces"
+    },
+    {
+      "items": [
+        {
+          "actions": {
+            "bind": "actions",
+            "limit": 4,
+            "when": "next"
+          },
+          "kind": "action_list",
+          "label": "Next sessions"
+        }
+      ],
+      "title": "Upcoming"
+    }
+  ],
+  "title": "Music practice",
+  "tools": [],
+  "trackers": [
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "minutes",
+          "kind": "number",
+          "label": "Practice",
+          "unit": "min"
+        }
+      ],
+      "name": "Practice"
+    },
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "bpm",
+          "kind": "number",
+          "label": "Tempo",
+          "unit": "bpm"
+        }
+      ],
+      "name": "Tempo"
+    },
+    {
+      "fields": [
+        {
+          "choices": [],
+          "key": "piece",
+          "kind": "text",
+          "label": "Piece or passage",
+          "unit": null
+        },
+        {
+          "choices": [],
+          "key": "progress",
+          "kind": "number",
+          "label": "Progress",
+          "unit": "%"
+        }
+      ],
+      "name": "Pieces"
+    }
+  ]
+}

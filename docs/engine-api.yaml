@@ -1,0 +1,1924 @@
+openapi: 3.1.0
+info:
+  title: Aroh engine API
+  description: 'Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue.'
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  version: 1.0.0
+paths:
+  /healthz:
+    get:
+      tags: []
+      operationId: health
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /v1/actions/{action_id}/chat:
+    post:
+      tags:
+      - runs
+      operationId: card_chat
+      parameters:
+      - name: action_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CardChat'
+        required: true
+      responses:
+        '202':
+          description: Card chat run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/actions/{action_id}/replan:
+    get:
+      tags:
+      - runs
+      operationId: get_edit_replan
+      parameters:
+      - name: action_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Where the replan after the newest owner edit of the action stands
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EditReplan'
+      security:
+      - bearer: []
+  /v1/calendar/triage:
+    post:
+      tags:
+      - runs
+      operationId: start_triage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartTriage'
+        required: true
+      responses:
+        '202':
+          description: Calendar-triage run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: another triage is still open
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/devices/{device_id}:
+    put:
+      tags:
+      - push
+      operationId: register_device
+      parameters:
+      - name: device_id
+        in: path
+        description: Id the app created for this install
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterDevice'
+        required: true
+      responses:
+        '200':
+          description: Registered; the token is never echoed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceInfo'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: device id of another account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    delete:
+      tags:
+      - push
+      operationId: unregister_device
+      parameters:
+      - name: device_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Deleted, for sign-out
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/goals:
+    post:
+      tags:
+      - runs
+      operationId: start_goal
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartGoal'
+        required: true
+      responses:
+        '202':
+          description: New-goal run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: no usable provider key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/goals/{goal_id}/plugins:
+    get:
+      tags:
+      - plugins
+      operationId: list_plugins
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: The goal's plugin versions, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PluginView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    put:
+      tags:
+      - plugins
+      operationId: save_plugin
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavePlugin'
+        required: true
+      responses:
+        '201':
+          description: Stored as the goal's next version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: 'invalid bundle: the error names the file and field'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/goals/{goal_id}/replan:
+    post:
+      tags:
+      - runs
+      operationId: start_replan
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartReplan'
+        required: true
+      responses:
+        '202':
+          description: Replan run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/goals/{goal_id}/review:
+    get:
+      tags:
+      - insights
+      operationId: get_review
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: The goal's weekly review
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSchedule'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    put:
+      tags:
+      - insights
+      operationId: set_review
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetReview'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSchedule'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/goals/{goal_id}/run-again:
+    post:
+      tags:
+      - runs
+      operationId: run_again
+      parameters:
+      - name: goal_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunAgain'
+        required: true
+      responses:
+        '202':
+          description: 'Run again queued: fresh research and plan with the saved answers'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/hooks/enqueue:
+    post:
+      tags:
+      - engine
+      operationId: enqueue_hook
+      requestBody:
+        description: Database webhook payload; ignored
+        content:
+          application/json:
+            schema:
+              type: object
+        required: true
+      responses:
+        '200':
+          description: Same as tick (service role only)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TickSummary'
+        '403':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/insights:
+    get:
+      tags:
+      - insights
+      operationId: list_insights
+      parameters:
+      - name: goal_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: What the engine noticed and did without being asked, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Insight'
+      security:
+      - bearer: []
+  /v1/keys:
+    get:
+      tags:
+      - keys
+      operationId: list_keys
+      responses:
+        '200':
+          description: 'Key status per setting: vendor and last 4 only'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/KeyInfo'
+        '401':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/keys/{setting_id}:
+    put:
+      tags:
+      - keys
+      operationId: set_key
+      parameters:
+      - name: setting_id
+        in: path
+        description: provider_settings or search_settings row id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetKey'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyInfo'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: unknown setting and no model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    delete:
+      tags:
+      - keys
+      operationId: delete_key
+      parameters:
+      - name: setting_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/keys/{setting_id}/test:
+    post:
+      tags:
+      - keys
+      operationId: test_key
+      parameters:
+      - name: setting_id
+        in: path
+        description: provider_settings row id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: One 1-token call with the stored key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeyTest'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/logs:
+    post:
+      tags:
+      - runs
+      operationId: submit_log
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitLog'
+        required: true
+      responses:
+        '202':
+          description: Log-intake run queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Started'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/personas:
+    get:
+      tags:
+      - personas
+      operationId: list_personas
+      responses:
+        '200':
+          description: Every built-in persona, replaced by the owner's library copy when there is one
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PersonaView'
+      security:
+      - bearer: []
+  /v1/personas/{name}:
+    put:
+      tags:
+      - personas
+      operationId: edit_persona
+      parameters:
+      - name: name
+        in: path
+        description: Library persona name
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditPersona'
+        required: true
+      responses:
+        '200':
+          description: The edited library copy; later runs use it
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaView'
+        '400':
+          description: set toml or the fields, not both or neither
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '404':
+          description: 'not in the library: copy it first'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: 'invalid persona: the error names the file and field'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/personas/{name}/copy:
+    post:
+      tags:
+      - personas
+      operationId: copy_persona
+      parameters:
+      - name: name
+        in: path
+        description: Built-in persona name
+        required: true
+        schema:
+          type: string
+      responses:
+        '201':
+          description: Copied into the owner's library
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: already in the library
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/plugins/{plugin_id}:
+    get:
+      tags:
+      - plugins
+      operationId: get_plugin
+      parameters:
+      - name: plugin_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/plugins/{plugin_id}/enable:
+    post:
+      tags:
+      - plugins
+      operationId: enable_plugin
+      parameters:
+      - name: plugin_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Now the only enabled version of its goal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PluginView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/push/tick:
+    post:
+      tags:
+      - push
+      operationId: push_tick
+      responses:
+        '200':
+          description: 'Step mode: one push dispatch pass (service role only)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushSummary'
+        '403':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/runs:
+    get:
+      tags:
+      - runs
+      operationId: list_runs
+      parameters:
+      - name: state
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: goal_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: The 50 newest runs, for the Inbox
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RunSummary'
+      security:
+      - bearer: []
+  /v1/runs/{run_id}:
+    get:
+      tags:
+      - runs
+      operationId: get_run
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after_seq
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunView'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/runs/{run_id}/answers:
+    post:
+      tags:
+      - runs
+      operationId: answer
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Answer'
+        required: true
+      responses:
+        '202':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: not waiting there, answer does not fit, or the run moved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/runs/{run_id}/cancel:
+    post:
+      tags:
+      - runs
+      operationId: cancel_run
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Stopped, or already finished
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/runs/{run_id}/retry:
+    post:
+      tags:
+      - runs
+      operationId: retry_run
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Accepted'
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: the run is not stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/settings/run-limit:
+    get:
+      tags:
+      - runs
+      operationId: get_run_limit
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunLimit'
+      security:
+      - bearer: []
+    put:
+      tags:
+      - runs
+      operationId: set_run_limit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunLimit'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunLimit'
+        '400':
+          description: minutes outside 1 to 120
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/tick:
+    post:
+      tags:
+      - engine
+      operationId: tick
+      responses:
+        '200':
+          description: 'Step mode: due jobs processed (service role only)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TickSummary'
+        '403':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/timezone:
+    put:
+      tags:
+      - insights
+      operationId: set_timezone
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetTimezone'
+        required: true
+      responses:
+        '200':
+          description: Every weekly review of the owner now runs in the zone
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimezoneSet'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+components:
+  schemas:
+    Accepted:
+      type: object
+      description: |-
+        Answer of `POST /v1/runs/{run_id}/answers`: the run that was queued.
+        Poll the run for its next step.
+        Answered with 202.
+      required:
+      - run_id
+      properties:
+        run_id:
+          type: string
+          format: uuid
+    Answer:
+      type: object
+      description: |-
+        Body of `POST /v1/runs/{run_id}/answers`: the human node and its answer.
+        Approval nodes take a bool, `questions` takes `[{id, answer}]` with
+        `answer` a string, or null for a skipped question, and `change` a string.
+      required:
+      - node
+      - answer
+      properties:
+        answer:
+          type: object
+        node:
+          type: string
+      additionalProperties: false
+    ApnsEnv:
+      type: string
+      description: |-
+        APNs environment of a device's build: `sandbox` for debug builds, `production` for
+        TestFlight and App Store builds. Picks the APNs host the push goes to.
+      enum:
+      - sandbox
+      - production
+    CardChat:
+      type: object
+      description: |-
+        Body of `POST /v1/actions/{action_id}/chat`: the scope the owner picked
+        before sending (`this` or `future`) and the change in plain words.
+      required:
+      - scope
+      - text
+      properties:
+        scope:
+          type: string
+        text:
+          type: string
+      additionalProperties: false
+    DeviceInfo:
+      type: object
+      description: |-
+        A registered device as the API reports it. The token is never echoed.
+        `scheduled_until` and `synced_seq` are what the device last reported.
+        Times are UTC.
+      required:
+      - device_id
+      - platform
+      - environment
+      - zone
+      - synced_seq
+      - scheduled_until
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        environment:
+          $ref: '#/components/schemas/ApnsEnv'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        scheduled_until:
+          type: string
+          format: date-time
+        synced_seq:
+          type: integer
+          format: int64
+        zone:
+          type: string
+    EditPersona:
+      type: object
+      description: |-
+        Body of `PUT /v1/personas/{name}`: either the full persona TOML that
+        replaces the owner's library copy, or one or more fields (display name,
+        role, instructions, guardrails) set on the stored copy. Never both.
+        The result is validated by `check` before it is stored.
+      properties:
+        display_name:
+          type:
+          - string
+          - 'null'
+        guardrails:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
+        instructions:
+          type:
+          - string
+          - 'null'
+        role:
+          type:
+          - string
+          - 'null'
+        toml:
+          type:
+          - string
+          - 'null'
+      additionalProperties: false
+    EditReplan:
+      type: object
+      description: |-
+        Where the replan after an owner edit of one action stands (Q77), as
+        `GET /v1/actions/{action_id}/replan` answers: the newest edit event,
+        whether the scan checked it, the run it started (none when nothing
+        conflicted) and, while unchecked, the replan run it waits behind.
+      required:
+      - checked
+      properties:
+        checked:
+          type: boolean
+        event_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        run_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        waiting_on:
+          type:
+          - string
+          - 'null'
+          format: uuid
+    ErrorBody:
+      type: object
+      description: |-
+        The body of every error response: a stable code and a short message.
+        Clients branch on `code`; `message` is for people.
+        Serialized as `{"error": {"code", "message"}}`.
+      required:
+      - error
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+    ErrorDetail:
+      type: object
+      description: |-
+        Code and message of an error response.
+        Codes: bad_request, unauthorized, forbidden, not_found, conflict,
+        setup, internal.
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    GivenAnswer:
+      type: object
+      description: |-
+        One answer the owner gave on the goal card: the question id and the
+        answer text, or null to skip the question.
+        Part of `RunAgain`.
+      required:
+      - id
+      properties:
+        answer:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+      additionalProperties: false
+    Health:
+      type: object
+      description: |-
+        Answer of `GET /healthz`: the process is up.
+        Unauthenticated; carries nothing else.
+        For smoke checks only.
+      required:
+      - ok
+      properties:
+        ok:
+          type: boolean
+    Insight:
+      type: object
+      description: |-
+        One Inbox insight: what the engine noticed and did without being
+        asked. `source` is `actions`, `rule`, `review`, `edits` or `calendar`; `body` is
+        the reason plus the run summary; `state` the run's state, if any.
+      required:
+      - id
+      - source
+      - title
+      - body
+      - created_at
+      properties:
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        run_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        source:
+          type: string
+        state:
+          type:
+          - string
+          - 'null'
+        title:
+          type: string
+    KeyInfo:
+      type: object
+      description: |-
+        What the API shows about a stored key: its setting, vendor, last four
+        characters and when it was set. Never the key itself.
+        Listing never decrypts anything.
+      required:
+      - setting_id
+      - vendor
+      - last4
+      - updated_at
+      properties:
+        last4:
+          type: string
+        setting_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+        vendor:
+          type: string
+    KeyTest:
+      type: object
+      description: |-
+        Result of a key test: whether one 1-token call with the stored key
+        worked, and the provider's error when it did not.
+        The key itself is never part of it.
+      required:
+      - ok
+      properties:
+        error:
+          type:
+          - string
+          - 'null'
+        ok:
+          type: boolean
+    Kind:
+      type: string
+      description: |-
+        The kind of goal a team is built for.
+        Serialized in snake case, as the persona list shows it.
+        `General` covers goals no other kind matches.
+      enum:
+      - general
+      - fitness
+      - learning
+      - music
+      - finance
+      - habits
+    Origin:
+      type: string
+      description: |-
+        Where a listed persona's text comes from: the server's shipped file or
+        the owner's library copy, which runs use instead.
+        Serialized in snake case.
+      enum:
+      - builtin
+      - library
+    PersonaView:
+      type: object
+      description: |-
+        One persona as the library lists it: name, display name, role,
+        instructions and guardrails from its text, the built-in's safety
+        guardrails an edit must keep (`locked`), the team kinds that use it,
+        where the text comes from, whether a built-in exists, and the TOML.
+      required:
+      - name
+      - display_name
+      - role
+      - instructions
+      - guardrails
+      - locked
+      - teams
+      - source
+      - builtin
+      - toml
+      properties:
+        builtin:
+          type: boolean
+        display_name:
+          type: string
+        guardrails:
+          type: array
+          items:
+            type: string
+        instructions:
+          type: string
+        locked:
+          type: array
+          items:
+            type: string
+        name:
+          type: string
+        role:
+          type: string
+        source:
+          $ref: '#/components/schemas/Origin'
+        teams:
+          type: array
+          items:
+            $ref: '#/components/schemas/Kind'
+        toml:
+          type: string
+    Platform:
+      type: string
+      description: Push platform of a device; only iOS for now (FCM comes with Android, Q22).
+      enum:
+      - ios
+    PluginView:
+      type: object
+      description: |-
+        One plugin version as the API returns it: the row's fields.
+        `enabled` marks the version the goal dashboard renders.
+        Newest first in lists.
+      required:
+      - id
+      - name
+      - version
+      - enabled
+      - bundle_toml
+      properties:
+        bundle_toml:
+          type: string
+        enabled:
+          type: boolean
+        goal_id:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+        name:
+          type: string
+        version:
+          type: integer
+          format: int64
+    PushSummary:
+      type: object
+      description: |-
+        Counts of one dispatch pass: pushes sent, skipped because an earlier pass sent them,
+        failed (retried next pass) and devices removed because APNs no longer knows their token.
+        `enabled` is false when no APNs key is configured.
+      required:
+      - enabled
+      - sent
+      - skipped
+      - failed
+      - removed
+      properties:
+        enabled:
+          type: boolean
+        failed:
+          type: integer
+          minimum: 0
+        removed:
+          type: integer
+          minimum: 0
+        sent:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+    RegisterDevice:
+      type: object
+      description: |-
+        Body of `PUT /v1/devices/{device_id}`: the APNs token (hex), the build's APNs
+        environment, the device's IANA zone, the lowest pull cursor of `actions` and
+        `trackers`, and how far its local notification schedule reaches.
+      required:
+      - platform
+      - token
+      - environment
+      - zone
+      - synced_seq
+      - scheduled_until
+      properties:
+        environment:
+          $ref: '#/components/schemas/ApnsEnv'
+        platform:
+          $ref: '#/components/schemas/Platform'
+        scheduled_until:
+          type: string
+          format: date-time
+        synced_seq:
+          type: integer
+          format: int64
+        token:
+          type: string
+        zone:
+          type: string
+      additionalProperties: false
+    ReviewSchedule:
+      type: object
+      description: |-
+        A goal's weekly review: weekday (0 = Sunday), local `at` (`HH:MM`),
+        the owner's zone, whether it runs, and the next slot in UTC.
+        Answer of `GET` and `PUT /v1/goals/{goal_id}/review`.
+      required:
+      - goal_id
+      - weekday
+      - at
+      - timezone
+      - enabled
+      - next_at
+      properties:
+        at:
+          type: string
+        enabled:
+          type: boolean
+        goal_id:
+          type: string
+          format: uuid
+        next_at:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+        weekday:
+          type: integer
+          format: int32
+          minimum: 0
+    RunAgain:
+      type: object
+      description: |-
+        Body of `POST /v1/goals/{goal_id}/run-again`: the owner's timezone and,
+        when the owner edited them first, the changed answers by question id.
+        Left out, the saved answers are kept.
+      required:
+      - timezone
+      properties:
+        answers:
+          type:
+          - array
+          - 'null'
+          items:
+            $ref: '#/components/schemas/GivenAnswer'
+        timezone:
+          type: string
+      additionalProperties: false
+    RunAnswer:
+      type: object
+      description: One question of a run with the owner's answer, `None` when skipped.
+      required:
+      - id
+      - text
+      properties:
+        answer:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+        text:
+          type: string
+    RunLimit:
+      type: object
+      description: |-
+        The owner's run time limit: minutes of active work a run may take
+        before it stops, 1 to 120; time waiting for the owner never counts.
+        Five minutes until the owner sets one.
+      required:
+      - minutes
+      properties:
+        minutes:
+          type: integer
+          format: int32
+          minimum: 0
+      additionalProperties: false
+    RunSummary:
+      type: object
+      description: |-
+        One row of the run list behind the Inbox: ids, workflow, lifecycle
+        state, times, and the sorted slugs of the personas its snapshot holds
+        (the coaches that work on the run). `waiting_human` runs need the
+        owner. Newest first.
+      required:
+      - run_id
+      - workflow
+      - state
+      - created_at
+      - updated_at
+      - personas
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        personas:
+          type: array
+          items:
+            type: string
+        run_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        workflow:
+          type: string
+    RunView:
+      type: object
+      description: |-
+        A run as the app reads it: ids, workflow, status (tagged by `status`),
+        what it waits for, usage so far, and the events after `after_seq`
+        (each a core `Event` with `run_id`, `seq`, `at_ms` and `body`).
+      required:
+      - run_id
+      - workflow
+      - status
+      - waiting
+      - usage
+      - events
+      - answers
+      properties:
+        answers:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunAnswer'
+          description: The submitted answers with their question text.
+        events:
+          type: array
+          items:
+            type: object
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        research:
+          type:
+          - object
+          - 'null'
+          description: What research found (`summary`, `sources`), once written.
+        run_id:
+          type: string
+          format: uuid
+        status:
+          type: object
+        summary:
+          type:
+          - string
+          - 'null'
+        usage:
+          type: object
+        waiting:
+          type: array
+          items:
+            $ref: '#/components/schemas/Waiting'
+        workflow:
+          type: string
+    SavePlugin:
+      type: object
+      description: |-
+        Body of `PUT /v1/goals/{goal_id}/plugins`: a bundle to store as the
+        goal's next version, and whether to enable it (default true).
+        The bundle is validated first.
+      required:
+      - bundle_toml
+      properties:
+        bundle_toml:
+          type: string
+        enable:
+          type:
+          - boolean
+          - 'null'
+      additionalProperties: false
+    SetKey:
+      type: object
+      description: |-
+        Body of `PUT /v1/keys/{setting_id}`: the vendor and the key. When the
+        server has no setting with that id and `model` is given, a provider
+        setting row is created with it, so the key can be used at once.
+      required:
+      - vendor
+      - key
+      properties:
+        is_default:
+          type:
+          - boolean
+          - 'null'
+        key:
+          type: string
+          format: password
+        label:
+          type:
+          - string
+          - 'null'
+        model:
+          type:
+          - string
+          - 'null'
+        vendor:
+          type: string
+      additionalProperties: false
+    SetReview:
+      type: object
+      description: |-
+        Body of `PUT /v1/goals/{goal_id}/review`: weekday 0 to 6 (0 = Sunday),
+        local `HH:MM`, on or off, and the owner's IANA zone.
+        The next slot is computed from these.
+      required:
+      - weekday
+      - at
+      - enabled
+      - timezone
+      properties:
+        at:
+          type: string
+        enabled:
+          type: boolean
+        timezone:
+          type: string
+        weekday:
+          type: integer
+          format: int32
+          minimum: 0
+      additionalProperties: false
+    SetTimezone:
+      type: object
+      description: 'Body of `PUT /v1/timezone`: the IANA zone the owner''s device moved to.'
+      required:
+      - timezone
+      properties:
+        timezone:
+          type: string
+      additionalProperties: false
+    StartGoal:
+      type: object
+      description: |-
+        Body of `POST /v1/goals`: the goal to plan. Without `goal_id`, or when
+        the server has no such goal yet, a draft goal row is created with it.
+        `timezone` is the owner's IANA zone, used for every local time. The
+        agent controls (`reminders`, `use_calendars`, `run_limit_minutes`) are
+        optional: left out, the goal keeps the Settings defaults.
+      required:
+      - title
+      - timezone
+      properties:
+        autonomy:
+          type:
+          - string
+          - 'null'
+          example: balanced
+        category_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        context:
+          type:
+          - string
+          - 'null'
+        deadline:
+          type:
+          - string
+          - 'null'
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        reminders:
+          type:
+          - boolean
+          - 'null'
+        run_limit_minutes:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        timezone:
+          type: string
+        title:
+          type: string
+        use_calendars:
+          type:
+          - boolean
+          - 'null'
+      additionalProperties: false
+    StartReplan:
+      type: object
+      description: |-
+        Body of `POST /v1/goals/{goal_id}/replan`: why to adapt, in the owner's
+        words or the app's (missed actions, drift), and the owner's timezone.
+        The goal's autonomy decides whether the change needs approval.
+      required:
+      - reason
+      - timezone
+      properties:
+        reason:
+          type: string
+        timezone:
+          type: string
+      additionalProperties: false
+    StartTriage:
+      type: object
+      description: |-
+        Body of `POST /v1/calendar/triage`: the owner's IANA zone and 1 to 300
+        unmatched events. The run groups them and waits at `decide` for the
+        owner's keep or ignore per group, then writes `calendar_rules`.
+      required:
+      - timezone
+      - events
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/TriageEvent'
+        timezone:
+          type: string
+      additionalProperties: false
+    Started:
+      type: object
+      description: |-
+        What a start returns: the goal (none for a log) and the new run.
+        Poll `GET /v1/runs/{run_id}` or listen to `run_events` for progress.
+        Answered with 202.
+      required:
+      - run_id
+      properties:
+        goal_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        run_id:
+          type: string
+          format: uuid
+    SubmitLog:
+      type: object
+      description: |-
+        Body of `POST /v1/logs`: one free-text log, when it happened (RFC 3339,
+        default now) and the owner's timezone. The run maps it onto the
+        owner's trackers and stores the entries.
+      required:
+      - text
+      - timezone
+      properties:
+        at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        text:
+          type: string
+        timezone:
+          type: string
+      additionalProperties: false
+    TickSummary:
+      type: object
+      description: |-
+        What a tick did, as `POST /v1/tick` answers it: jobs processed, how
+        many were lost to another worker, and each failure's text.
+        Mirrors Troupekit's `TickReport`.
+      required:
+      - processed
+      - lost
+      - errors
+      properties:
+        errors:
+          type: array
+          items:
+            type: string
+        lost:
+          type: integer
+          minimum: 0
+        processed:
+          type: integer
+          minimum: 0
+    TimezoneSet:
+      type: object
+      description: 'Answer of `PUT /v1/timezone`: how many weekly reviews now run in the zone.'
+      required:
+      - reviews
+      properties:
+        reviews:
+          type: integer
+          minimum: 0
+    TriageEvent:
+      type: object
+      description: |-
+        One device calendar event to triage: EventKit ids, calendar name, title,
+        first occurrence (RFC 3339), the RFC 5545 recurrence when it repeats and
+        whether it is all-day. Notes, places and attendees never leave the device.
+      required:
+      - event_id
+      - calendar_id
+      - calendar
+      - title
+      - start_at
+      - end_at
+      properties:
+        all_day:
+          type: boolean
+        calendar:
+          type: string
+        calendar_id:
+          type: string
+        end_at:
+          type: string
+          format: date-time
+        event_id:
+          type: string
+        rrule:
+          type:
+          - string
+          - 'null'
+        start_at:
+          type: string
+          format: date-time
+        title:
+          type: string
+      additionalProperties: false
+    Waiting:
+      type: object
+      description: |-
+        One human node a run waits at: node id, `approval` or `question`, the
+        prompt, and the state keys the node reads (the plan, the questions or
+        the proposal), as the app shows them.
+      required:
+      - node
+      - ask
+      - data
+      properties:
+        ask:
+          type: string
+        data:
+          type: object
+        node:
+          type: string
+        prompt:
+          type:
+          - string
+          - 'null'
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

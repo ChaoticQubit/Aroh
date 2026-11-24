@@ -1,0 +1,28 @@
+import type { ActionView } from '../contract';
+import type { ActionEdit, AllDayView, DayKind } from './types';
+
+/**
+ * Applies pending local edits to a list of actions: moved or resized actions take their edited
+ * start and end, deleted ids drop out. Returns a new list in start order; the input is untouched.
+ */
+export function applyEdits(actions: ActionView[], edits: Record<string, ActionEdit>, deleted: string[]): ActionView[] {
+	return actions
+		.filter((a) => !deleted.includes(a.id))
+		.map((a) => (edits[a.id] ? { ...a, start: edits[a.id].start, end: edits[a.id].end } : a))
+		.sort((x, y) => Date.parse(x.start) - Date.parse(y.start));
+}
+
+/** The all-day events that cover a "YYYY-MM-DD" day, with local kind picks applied. */
+export function allDayOn(events: AllDayView[], ymd: string, picks: Record<string, DayKind> = {}): AllDayView[] {
+	return events.filter((e) => e.start <= ymd && ymd <= e.end).map((e) => (picks[e.id] ? { ...e, kind: picks[e.id] } : e));
+}
+
+/** Labels of the three kinds as the chips and the choice card show them. */
+export const DAY_KIND_LABEL: Record<DayKind, string> = { reminder: 'Reminder', busy: 'Busy day', away: 'Away' };
+
+/** Moves an ISO instant by whole minutes. Returns an ISO string in UTC. */
+export function shiftMinutes(iso: string, minutes: number): string {
+	const at = Date.parse(iso);
+	if (Number.isNaN(at) || !Number.isInteger(minutes)) throw new RangeError(`bad shift ${iso} ${minutes}`);
+	return new Date(at + minutes * 60_000).toISOString();
+}

@@ -1,0 +1,12 @@
+target
+**/target
+node_modules
+**/node_modules
+.git
+apps/aroh/build
+apps/aroh/.svelte-kit
+.local-state
+.crazyagent
+.claude
+graphify-out
+apps/aroh/src-tauri/gen

@@ -1,0 +1,5 @@
+FROM rust:1-slim
+WORKDIR /src
+COPY . .
+RUN cargo test --workspace --exclude aroh --exclude tauri-plugin-aroh-speech --exclude tauri-plugin-aroh-ios --exclude tauri-plugin-aroh-calendar --no-run
+CMD ["cargo", "test", "--workspace", "--exclude", "aroh", "--exclude", "tauri-plugin-aroh-speech", "--exclude", "tauri-plugin-aroh-ios", "--exclude", "tauri-plugin-aroh-calendar"]

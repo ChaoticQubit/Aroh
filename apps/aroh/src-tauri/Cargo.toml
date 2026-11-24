@@ -1,0 +1,36 @@
+[package]
+name = "aroh"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+name = "aroh_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+rusqlite.workspace = true
+aroh-app.workspace = true
+aroh-domain.workspace = true
+aroh-store.workspace = true
+aroh-plugins = { path = "../../../crates/aroh-plugins" }
+aroh-sync.workspace = true
+tauri-plugin-notification = "2.7"
+chrono.workspace = true
+chrono-tz.workspace = true
+time = "0.3"
+tauri-plugin-aroh-speech = { path = "../../../crates/tauri-plugin-aroh-speech" }
+tauri-plugin-aroh-ios = { path = "../../../crates/tauri-plugin-aroh-ios" }
+tauri-plugin-aroh-calendar = { path = "../../../crates/tauri-plugin-aroh-calendar" }
+iana-time-zone = "0.1"
+tokio = { workspace = true, features = ["sync", "time"] }
+pdf-extract = "0.12.1"

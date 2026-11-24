@@ -1,0 +1,102 @@
+aroh_plugin = 1
+name = "music"
+title = "Music practice"
+description = "Days to the deadline, this week's practice sessions, minutes practised, tempo, piece progress, a four-week practice streak and the next sessions."
+
+[[trackers]]
+name = "Practice"
+
+[[trackers.fields]]
+key = "minutes"
+label = "Practice"
+kind = "number"
+unit = "min"
+
+[trackers.cadence]
+freq = "daily"
+at = "20:00"
+
+[[trackers]]
+name = "Tempo"
+
+[[trackers.fields]]
+key = "bpm"
+label = "Tempo"
+kind = "number"
+unit = "bpm"
+
+[[trackers]]
+name = "Pieces"
+
+[[trackers.fields]]
+key = "piece"
+label = "Piece or passage"
+kind = "text"
+
+[[trackers.fields]]
+key = "progress"
+label = "Progress"
+kind = "number"
+unit = "%"
+
+[[sections]]
+title = "Progress"
+
+[[sections.items]]
+kind = "countdown"
+label = "Until the deadline"
+deadline = { bind = "deadline" }
+
+[[sections.items]]
+kind = "progress_ring"
+label = "This week"
+
+[[sections.items.rings]]
+label = "Sessions"
+unit = "count"
+value = { bind = "week_done" }
+target = { bind = "week_planned" }
+series = 1
+
+[[sections.items]]
+kind = "bar_chart"
+label = "Minutes practised"
+unit = "min"
+points = { bind = "series", tracker = "Practice", field = "minutes" }
+series = 2
+
+[[sections.items]]
+kind = "line_chart"
+label = "Tempo (bpm)"
+unit = "count"
+points = { bind = "series", tracker = "Tempo", field = "bpm" }
+series = 3
+
+[[sections.items]]
+kind = "streak_heatmap"
+label = "Practice, last 4 weeks"
+days = { bind = "streak", tracker = "Practice" }
+series = 2
+
+[[sections]]
+title = "Pieces"
+
+[[sections.items]]
+kind = "stat_tile"
+label = "Current piece progress (%)"
+unit = "count"
+value = { bind = "latest", tracker = "Pieces", field = "progress" }
+delta = { bind = "change", tracker = "Pieces", field = "progress" }
+
+[[sections.items]]
+kind = "log_list"
+label = "Practice notes"
+entries = { bind = "entries", tracker = "Pieces" }
+
+[[sections]]
+title = "Upcoming"
+
+[[sections.items]]
+kind = "action_list"
+label = "Next sessions"
+actions = { bind = "actions", when = "next", limit = 4 }

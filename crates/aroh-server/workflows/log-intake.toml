@@ -1,0 +1,36 @@
+name = "log-intake"
+start = "map"
+max_steps = 50
+
+[state]
+log = "{text: string, at: string, timezone: string}"
+trackers = "list<{id: string, goal_id: string, name: string, fields: list<{key: string, label: string, kind: string, unit: string?, choices: list<string>}>}>"
+entries = "{entries: list<{tracker_id: string, values: list<{key: string, value: string}>}>}"
+saved = "{entries: int}"
+
+[[nodes]]
+id = "map"
+kind = "agent"
+persona = "log-intake"
+prompt = "Map this log to tracker entries."
+reads = ["log", "trackers"]
+writes = "entries"
+
+[[nodes]]
+id = "save"
+kind = "tool"
+tool = "write_entries"
+reads = ["log", "entries"]
+writes = "saved"
+
+[[nodes]]
+id = "done"
+kind = "end"
+
+[[edges]]
+from = "map"
+to = "save"
+
+[[edges]]
+from = "save"
+to = "done"

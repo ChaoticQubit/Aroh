@@ -1,0 +1,36 @@
+name = "learn-preference"
+start = "analyze"
+max_steps = 20
+
+[state]
+edits = "list<{title: string, op: string, before: string, after: string?}>"
+pattern = "{key: string, text: string}"
+preference = "{fact: string}"
+saved = "{preference_id: string, new: bool}"
+
+[[nodes]]
+id = "analyze"
+kind = "agent"
+persona = "preference-analyst"
+prompt = "Propose the preference these similar edits show."
+reads = ["edits", "pattern"]
+writes = "preference"
+
+[[nodes]]
+id = "save"
+kind = "tool"
+tool = "propose_preference"
+reads = ["pattern", "preference"]
+writes = "saved"
+
+[[nodes]]
+id = "done"
+kind = "end"
+
+[[edges]]
+from = "analyze"
+to = "save"
+
+[[edges]]
+from = "save"
+to = "done"

@@ -1,0 +1,741 @@
+<title>Aroh Architecture</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #ffffff;
+  --surface: #f6f8fb;
+  --surface-2: #eef2f7;
+  --border: #d5dbe3;
+  --fg: #1d2330;
+  --muted: #5b6475;
+  --accent: #2f63d6;
+  --accent-soft: #e6eefc;
+  --ok: #1e7f4f;
+  --warn: #9a6400;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15181e; --surface: #1c2028; --surface-2: #232834; --border: #363d4b;
+    --fg: #e6e9ef; --muted: #9aa3b5; --accent: #7aa2f7; --accent-soft: #1f2a44;
+    --ok: #5fc792; --warn: #e0b154; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15181e; --surface: #1c2028; --surface-2: #232834; --border: #363d4b;
+  --fg: #e6e9ef; --muted: #9aa3b5; --accent: #7aa2f7; --accent-soft: #1f2a44;
+  --ok: #5fc792; --warn: #e0b154; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 32px 64px; }
+header.top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 20px; }
+h1 { font-size: 26px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.meta { color: var(--muted); font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.meta code { font-family: var(--mono); font-size: 12px; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 20px 0 8px; }
+nav.toc a { font-size: 13px; color: var(--fg); text-decoration: none; border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; background: var(--surface); }
+nav.toc a:hover, nav.toc a:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+section { margin-top: 44px; }
+h2 { font-size: 19px; font-weight: 600; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 15px; font-weight: 600; margin: 24px 0 8px; }
+p.lead { color: var(--muted); margin: 0 0 16px; max-width: 72ch; }
+figure { margin: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.scroll { overflow-x: auto; padding: 16px; }
+figure svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--muted); }
+figcaption { border-top: 1px solid var(--border); padding: 10px 16px; font-size: 13px; color: var(--muted); background: var(--surface); border-radius: 0 0 10px 10px; }
+.frame { fill: var(--surface); stroke: var(--border); stroke-width: 1; }
+.box { fill: var(--bg); stroke: var(--border); stroke-width: 1; }
+.box-accent { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+.box-ext { fill: var(--bg); stroke: var(--border); stroke-width: 1; stroke-dasharray: 4 3; }
+.t-frame { fill: var(--fg); font-size: 14px; font-weight: 600; font-family: var(--font); }
+.t-title { fill: var(--fg); font-size: 13px; font-weight: 600; font-family: var(--font); }
+.t-sub { fill: var(--muted); font-size: 11.5px; font-family: var(--font); }
+.t-label { fill: var(--muted); font-size: 11px; font-family: var(--font); }
+.t-mono { fill: var(--muted); font-size: 11px; font-family: var(--mono); }
+.wire { stroke: currentColor; stroke-width: 1.3; fill: none; }
+.wire-accent { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.grid2 > * { min-width: 0; }
+.card { border: 1px solid var(--border); border-radius: 10px; padding: 16px; background: var(--bg); }
+.card h3 { margin-top: 0; }
+.card ul { margin: 0; padding-left: 18px; }
+.card li { margin: 4px 0; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.tbl { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--surface); font-weight: 600; font-size: 12.5px; color: var(--muted); letter-spacing: 0.02em; }
+tr:last-child td { border-bottom: none; }
+td code, li code, p code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+pre.tree { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto; margin: 0; }
+.pill { display: inline-block; font-size: 11.5px; font-weight: 500; padding: 1px 9px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.pill.proposed { color: var(--muted); background: var(--surface); }
+.pill.building { color: var(--warn); border-color: var(--warn); }
+.pill.built { color: var(--ok); border-color: var(--ok); }
+.where { font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.mermaid-box { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); overflow-x: auto; }
+.mermaid-box pre.mermaid { margin: 0; padding: 16px; background: transparent; }
+.mermaid-box .cap { border-top: 1px solid var(--border); padding: 10px 16px; font-size: 13px; color: var(--muted); background: var(--surface); border-radius: 0 0 10px 10px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Aroh Architecture</h1>
+      <div class="meta">
+        <span>Status: <span class="pill proposed">Proposed</span></span>
+        <span>Version 2.0, 2026-11-22</span>
+        <span>Branch <code>docs/engine-architecture</code></span>
+        <span>Source of decisions: <code>docs/decisions.md</code></span>
+      </div>
+    </div>
+    <div class="meta">
+      <span><span class="pill proposed">Proposed</span> designed, no code</span>
+      <span><span class="pill building">Building</span> in a pod branch</span>
+      <span><span class="pill built">Built</span> merged and tested</span>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="Sections">
+    <a href="#high-level">High level</a>
+    <a href="#framework">Framework layers</a>
+    <a href="#model-call">Model call path</a>
+    <a href="#agents">Agent hierarchy</a>
+    <a href="#flows">Data flows</a>
+    <a href="#runs">Run lifecycle</a>
+    <a href="#data">Data model</a>
+    <a href="#code">Code layout</a>
+    <a href="#rules">Code rules</a>
+    <a href="#status">Build status</a>
+  </nav>
+
+  <section id="high-level">
+    <h2>High level: app engine, Supabase, server engine</h2>
+    <p class="lead">The app engine owns data, UI and everything deterministic, and works offline. The server engine owns all AI work and holds the provider keys. Supabase connects them: auth, rows, vectors, files, live events and the scheduler.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 1100 600" role="img" aria-label="The device app syncs rows with Supabase and calls the server engine over HTTPS. The server engine runs the framework, reads and writes Supabase, and calls model, search, web and MCP providers. Push notifications return to the device through APNs.">
+        <defs>
+          <marker id="ha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+        </defs>
+
+        <rect class="frame" x="20" y="60" width="280" height="430" rx="10"/>
+        <text class="t-frame" x="36" y="86">Device: Tauri app</text>
+        <rect class="box" x="36" y="110" width="248" height="46" rx="6"/>
+        <text class="t-title" x="50" y="129">Svelte UI</text>
+        <text class="t-sub" x="50" y="146">shadcn-svelte, plugin view renderer</text>
+        <rect class="box" x="36" y="170" width="248" height="34" rx="6"/>
+        <text class="t-title" x="50" y="192">Typed command API</text>
+        <rect class="box-accent" x="36" y="218" width="248" height="140" rx="6"/>
+        <text class="t-title" x="50" y="238">App engine (Rust)</text>
+        <text class="t-sub" x="50" y="258">local SQLite, offline first</text>
+        <text class="t-sub" x="50" y="276">sync client (LWW, HLC)</text>
+        <text class="t-sub" x="50" y="294">reminders, check-in schedule</text>
+        <text class="t-sub" x="50" y="312">recurrence window (RRULE)</text>
+        <text class="t-sub" x="50" y="330">offline job queue</text>
+        <rect class="box" x="36" y="372" width="248" height="104" rx="6"/>
+        <text class="t-title" x="50" y="392">Native bridges</text>
+        <text class="t-sub" x="50" y="412">HealthKit (iPhone)</text>
+        <text class="t-sub" x="50" y="430">EventKit calendars</text>
+        <text class="t-sub" x="50" y="448">Apple Speech</text>
+        <text class="t-sub" x="50" y="466">local notifications, push token</text>
+
+        <rect class="frame" x="410" y="60" width="280" height="430" rx="10"/>
+        <text class="t-frame" x="426" y="86">Supabase</text>
+        <rect class="box" x="426" y="110" width="248" height="34" rx="6"/>
+        <text class="t-title" x="440" y="132">Auth (user JWT)</text>
+        <rect class="box" x="426" y="154" width="248" height="96" rx="6"/>
+        <text class="t-title" x="440" y="174">Postgres + RLS</text>
+        <text class="t-sub" x="440" y="194">domain rows, scoped by user_id</text>
+        <text class="t-sub" x="440" y="212">jobs, runs, checkpoints</text>
+        <text class="t-sub" x="440" y="230">run_events, proposals, credentials</text>
+        <rect class="box" x="426" y="260" width="248" height="34" rx="6"/>
+        <text class="t-title" x="440" y="282">pgvector (goal knowledge)</text>
+        <rect class="box" x="426" y="304" width="248" height="34" rx="6"/>
+        <text class="t-title" x="440" y="326">Storage (goal files)</text>
+        <rect class="box" x="426" y="348" width="248" height="34" rx="6"/>
+        <text class="t-title" x="440" y="370">Realtime</text>
+        <rect class="box" x="426" y="392" width="248" height="34" rx="6"/>
+        <text class="t-title" x="440" y="414">pg_cron + pg_net</text>
+
+        <rect class="frame" x="800" y="60" width="280" height="430" rx="10"/>
+        <text class="t-frame" x="816" y="86">Server engine (Rust)</text>
+        <rect class="box" x="816" y="110" width="248" height="34" rx="6"/>
+        <text class="t-title" x="830" y="132">HTTPS API (OpenAPI)</text>
+        <rect class="box" x="816" y="154" width="248" height="40" rx="6"/>
+        <text class="t-title" x="830" y="172">Host adapter</text>
+        <text class="t-sub" x="830" y="187">worker or step mode</text>
+        <rect class="box" x="816" y="204" width="248" height="70" rx="6"/>
+        <text class="t-title" x="830" y="224">Aroh domain</text>
+        <text class="t-sub" x="830" y="244">persona library, workflows</text>
+        <text class="t-sub" x="830" y="262">toolkits: actions, trackers, calendar</text>
+        <rect class="box-accent" x="816" y="284" width="248" height="146" rx="6"/>
+        <text class="t-title" x="830" y="304">Troupekit framework</text>
+        <text class="t-sub" x="830" y="324">providers and dialect catalog</text>
+        <text class="t-sub" x="830" y="342">tools, search, fetch, MCP</text>
+        <text class="t-sub" x="830" y="360">context: memory, RAG, embeddings</text>
+        <text class="t-sub" x="830" y="378">durable graph runtime</text>
+        <text class="t-sub" x="830" y="396">plugin manager</text>
+        <text class="t-sub" x="830" y="414">budgets, guardrails, evals</text>
+        <rect class="box" x="816" y="440" width="248" height="40" rx="6"/>
+        <text class="t-title" x="830" y="458">Credential store</text>
+        <text class="t-sub" x="830" y="473">encrypted, decrypted per call</text>
+
+        <path class="wire" d="M160 60 V36 H1040 V110" marker-end="url(#ha)"/>
+        <text class="t-label" x="560" y="28" text-anchor="middle">HTTPS API calls with the Supabase user JWT</text>
+
+        <line class="wire" x1="284" y1="234" x2="426" y2="234" marker-start="url(#ha)" marker-end="url(#ha)"/>
+        <text class="t-label" x="355" y="226" text-anchor="middle">row sync</text>
+        <text class="t-label" x="355" y="250" text-anchor="middle">LWW + HLC</text>
+
+        <line class="wire" x1="426" y1="352" x2="284" y2="352" marker-end="url(#ha)"/>
+        <text class="t-label" x="355" y="344" text-anchor="middle">run events</text>
+
+        <line class="wire" x1="674" y1="222" x2="816" y2="222" marker-start="url(#ha)" marker-end="url(#ha)"/>
+        <text class="t-label" x="725" y="214" text-anchor="middle">jobs, checkpoints</text>
+        <text class="t-label" x="725" y="238" text-anchor="middle">domain rows</text>
+
+        <line class="wire" x1="816" y1="290" x2="674" y2="290" marker-start="url(#ha)" marker-end="url(#ha)"/>
+        <text class="t-label" x="725" y="282" text-anchor="middle">embeddings</text>
+
+        <line class="wire" x1="816" y1="322" x2="674" y2="322" marker-start="url(#ha)" marker-end="url(#ha)"/>
+        <text class="t-label" x="725" y="314" text-anchor="middle">goal files</text>
+
+        <path class="wire-accent" d="M674 409 H795 V176 H816" marker-end="url(#ha)"/>
+        <text class="t-label" x="735" y="401" text-anchor="middle">tick (step mode)</text>
+
+        <line class="wire" x1="1000" y1="490" x2="1000" y2="512"/>
+        <line class="wire" x1="150" y1="512" x2="1000" y2="512"/>
+        <text class="t-label" x="880" y="506" text-anchor="middle">outbound calls (TLS)</text>
+        <line class="wire" x1="150" y1="512" x2="150" y2="532" marker-end="url(#ha)"/>
+        <line class="wire" x1="337" y1="512" x2="337" y2="532" marker-end="url(#ha)"/>
+        <line class="wire" x1="558" y1="512" x2="558" y2="532" marker-end="url(#ha)"/>
+        <line class="wire" x1="779" y1="512" x2="779" y2="532" marker-end="url(#ha)"/>
+        <line class="wire" x1="1000" y1="512" x2="1000" y2="532" marker-end="url(#ha)"/>
+        <line class="wire" x1="60" y1="532" x2="60" y2="490" marker-end="url(#ha)"/>
+        <text class="t-label" x="68" y="516">push</text>
+
+        <rect class="box-ext" x="20" y="532" width="192" height="56" rx="6"/>
+        <text class="t-title" x="36" y="556">Apple Push (APNs)</text>
+        <text class="t-sub" x="36" y="574">reminders, check-ins</text>
+        <rect class="box-ext" x="241" y="532" width="192" height="56" rx="6"/>
+        <text class="t-title" x="257" y="556">Model providers</text>
+        <text class="t-sub" x="257" y="574">Claude, OpenAI, Gemini, more</text>
+        <rect class="box-ext" x="462" y="532" width="192" height="56" rx="6"/>
+        <text class="t-title" x="478" y="556">Search providers</text>
+        <text class="t-sub" x="478" y="574">Brave, Tavily, Exa, SearXNG</text>
+        <rect class="box-ext" x="683" y="532" width="192" height="56" rx="6"/>
+        <text class="t-title" x="699" y="556">Web pages and links</text>
+        <text class="t-sub" x="699" y="574">fetched as untrusted data</text>
+        <rect class="box-ext" x="904" y="532" width="192" height="56" rx="6"/>
+        <text class="t-title" x="920" y="556">MCP servers</text>
+        <text class="t-sub" x="920" y="574">stdio or HTTP</text>
+      </svg>
+      </div>
+      <figcaption>The app never holds a provider key and never calls a model. A self-hosted server engine on the Mac is the same binary in worker mode, and it adds Ollama or LM Studio as a local provider. The blue path is the step-mode trigger: on Vercel no process runs between requests, so Supabase calls the engine every minute.</figcaption>
+    </figure>
+  </section>
+
+  <section id="framework">
+    <h2>Troupekit framework layers (published separately)</h2>
+    <p class="lead">The framework is its own Cargo workspace in <code>troupekit/</code>, with no Aroh imports. Each layer depends only on the layers below it.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 1000 470" role="img" aria-label="Framework crates in five layers: host and plugins on top, then graph, then agent, then providers, tools and context, then core at the bottom. Each layer depends only on the layers below.">
+        <defs>
+          <marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+        </defs>
+        <rect class="box" x="20" y="20" width="470" height="70" rx="6"/>
+        <text class="t-title" x="36" y="44">troupekit-host</text>
+        <text class="t-sub" x="36" y="64">worker mode loop, step mode handler</text>
+        <text class="t-sub" x="36" y="80">Vercel, Fly, VPS or Mac adapters</text>
+        <rect class="box" x="510" y="20" width="470" height="70" rx="6"/>
+        <text class="t-title" x="526" y="44">troupekit-plugins</text>
+        <text class="t-sub" x="526" y="64">bundle manifest: trackers, view tree, personas, tools</text>
+        <text class="t-sub" x="526" y="80">validate, version, enable</text>
+
+        <rect class="box-accent" x="20" y="110" width="960" height="70" rx="6"/>
+        <text class="t-title" x="36" y="134">troupekit-graph</text>
+        <text class="t-sub" x="36" y="154">workflows in TOML: steps, fan-out and join, human approval nodes</text>
+        <text class="t-sub" x="36" y="170">checkpointer after every step, resume after crash or deploy</text>
+
+        <rect class="box" x="20" y="200" width="960" height="70" rx="6"/>
+        <text class="t-title" x="36" y="224">troupekit-agent</text>
+        <text class="t-sub" x="36" y="244">persona TOML loader (goal folder, user library, built in), run state machine</text>
+        <text class="t-sub" x="36" y="260">typed output with one repair round, guardrails, evals, layered budgets</text>
+
+        <rect class="box" x="20" y="290" width="300" height="70" rx="6"/>
+        <text class="t-title" x="36" y="314">troupekit-providers</text>
+        <text class="t-sub" x="36" y="334">wire encode, decoder, transport</text>
+        <text class="t-sub" x="36" y="350">dialect catalog, middleware</text>
+        <rect class="box" x="350" y="290" width="300" height="70" rx="6"/>
+        <text class="t-title" x="366" y="314">troupekit-tools</text>
+        <text class="t-sub" x="366" y="334">Tool trait, toolkits, MCP client</text>
+        <text class="t-sub" x="366" y="350">TOML HTTP tools, search, fetch</text>
+        <rect class="box" x="680" y="290" width="300" height="70" rx="6"/>
+        <text class="t-title" x="696" y="314">troupekit-context</text>
+        <text class="t-sub" x="696" y="334">memory scopes, ingest, chunk</text>
+        <text class="t-sub" x="696" y="350">embed (ONNX), hybrid retrieval</text>
+
+        <rect class="box" x="20" y="380" width="960" height="70" rx="6"/>
+        <text class="t-title" x="36" y="404">troupekit-core</text>
+        <text class="t-sub" x="36" y="424">messages and content parts, tool calls, Secret, error types, event enum, ids, clock</text>
+        <text class="t-sub" x="36" y="440">store traits (checkpoint, memory, vector, blob) that apps implement</text>
+
+        <line class="wire" x1="255" y1="90" x2="255" y2="108" marker-end="url(#fa)"/>
+        <line class="wire" x1="745" y1="90" x2="745" y2="108" marker-end="url(#fa)"/>
+        <line class="wire" x1="500" y1="180" x2="500" y2="198" marker-end="url(#fa)"/>
+        <line class="wire" x1="170" y1="270" x2="170" y2="288" marker-end="url(#fa)"/>
+        <line class="wire" x1="500" y1="270" x2="500" y2="288" marker-end="url(#fa)"/>
+        <line class="wire" x1="830" y1="270" x2="830" y2="288" marker-end="url(#fa)"/>
+        <line class="wire" x1="170" y1="360" x2="170" y2="378" marker-end="url(#fa)"/>
+        <line class="wire" x1="500" y1="360" x2="500" y2="378" marker-end="url(#fa)"/>
+        <line class="wire" x1="830" y1="360" x2="830" y2="378" marker-end="url(#fa)"/>
+      </svg>
+      </div>
+      <figcaption>Arrows mean "depends on". Storage is a trait in <code>troupekit-core</code>: Aroh implements it on Postgres, pgvector and Supabase Storage, and the framework ships in-memory and SQLite versions for tests and examples.</figcaption>
+    </figure>
+  </section>
+
+  <section id="model-call">
+    <h2>One model call, end to end</h2>
+    <p class="lead">Taken from rig 0.47: the request is built without I/O, the transport is injected, and one decoder serves streaming and non-streaming replies. The middleware chain comes from AutoAgents.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 1100 130" role="img" aria-label="A model call passes the budget gate and middleware, resolves vendor/model from the catalog, is encoded, sent by the transport to the provider, decoded, and emitted as events.">
+        <defs>
+          <marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+        </defs>
+        <rect class="box" x="10" y="30" width="120" height="70" rx="6"/>
+        <text class="t-title" x="70" y="58" text-anchor="middle">Agent step</text>
+        <text class="t-sub" x="70" y="76" text-anchor="middle">persona prompt</text>
+        <rect class="box" x="148" y="30" width="120" height="70" rx="6"/>
+        <text class="t-title" x="208" y="58" text-anchor="middle">Budget gate</text>
+        <text class="t-sub" x="208" y="76" text-anchor="middle">call, run, goal, user</text>
+        <rect class="box" x="286" y="30" width="120" height="70" rx="6"/>
+        <text class="t-title" x="346" y="58" text-anchor="middle">Middleware</text>
+        <text class="t-sub" x="346" y="76" text-anchor="middle">retry, fallback</text>
+        <text class="t-sub" x="346" y="91" text-anchor="middle">cache, guardrail</text>
+        <rect class="box-accent" x="424" y="30" width="120" height="70" rx="6"/>
+        <text class="t-title" x="484" y="58" text-anchor="middle">Model handle</text>
+        <text class="t-mono" x="484" y="76" text-anchor="middle">vendor/model</text>
+        <text class="t-sub" x="484" y="91" text-anchor="middle">from catalog</text>
+        <rect class="box" x="562" y="30" width="120" height="70" rx="6"/>
+        <text class="t-title" x="622" y="58" text-anchor="middle">Wire encode</text>
+        <text class="t-sub" x="622" y="76" text-anchor="middle">pure, no I/O</text>
+        <rect class="box" x="700" y="30" width="120" height="70" rx="6"/>
+        <text class="t-title" x="760" y="58" text-anchor="middle">Transport</text>
+        <text class="t-sub" x="760" y="76" text-anchor="middle">HTTPS, injected</text>
+        <rect class="box-ext" x="838" y="30" width="120" height="70" rx="6"/>
+        <text class="t-title" x="898" y="58" text-anchor="middle">Provider API</text>
+        <text class="t-sub" x="898" y="76" text-anchor="middle">key decrypted here</text>
+        <rect class="box" x="976" y="30" width="114" height="70" rx="6"/>
+        <text class="t-title" x="1033" y="58" text-anchor="middle">Decoder</text>
+        <text class="t-sub" x="1033" y="76" text-anchor="middle">to events</text>
+        <line class="wire" x1="130" y1="65" x2="146" y2="65" marker-end="url(#ma)"/>
+        <line class="wire" x1="268" y1="65" x2="284" y2="65" marker-end="url(#ma)"/>
+        <line class="wire" x1="406" y1="65" x2="422" y2="65" marker-end="url(#ma)"/>
+        <line class="wire" x1="544" y1="65" x2="560" y2="65" marker-end="url(#ma)"/>
+        <line class="wire" x1="682" y1="65" x2="698" y2="65" marker-end="url(#ma)"/>
+        <line class="wire" x1="820" y1="65" x2="836" y2="65" marker-end="url(#ma)"/>
+        <line class="wire" x1="958" y1="65" x2="974" y2="65" marker-end="url(#ma)"/>
+        <text class="t-label" x="550" y="20" text-anchor="middle">a new provider is a catalog entry when it speaks an existing protocol: Anthropic, OpenAI, Gemini or OpenAI-compatible</text>
+        <text class="t-label" x="550" y="122" text-anchor="middle">decoded events feed three places: the UI (Realtime), telemetry, and the run checkpoint</text>
+      </svg>
+      </div>
+      <figcaption>The dropdown picks a <code>vendor/model</code> string at runtime. The agent is not generic over the provider type, which is what makes runtime selection work.</figcaption>
+    </figure>
+  </section>
+
+  <section id="agents">
+    <h2>Agent hierarchy</h2>
+    <p class="lead">The orchestrator persona classifies a goal, picks a workflow and writes any persona the library is missing. Workflows are graphs: setup runs once per goal, and ongoing workflows run on triggers.</p>
+    <figure>
+      <div class="scroll">
+      <svg viewBox="0 0 1000 560" role="img" aria-label="The orchestrator starts the goal setup workflow (research and domain experts in parallel, intake interview, planner and dashboard designer in parallel, safety review, your approval) and the ongoing workflows, where each trigger starts one persona that produces an output for you.">
+        <defs>
+          <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+        </defs>
+        <rect class="box-accent" x="350" y="16" width="300" height="62" rx="6"/>
+        <text class="t-title" x="500" y="42" text-anchor="middle">Orchestrator persona</text>
+        <text class="t-sub" x="500" y="61" text-anchor="middle">classify goal, pick workflow, write missing personas</text>
+        <path class="wire" d="M450 78 V98 H255 V118" marker-end="url(#aa)"/>
+        <path class="wire" d="M550 78 V98 H745 V118" marker-end="url(#aa)"/>
+        <text class="t-label" x="330" y="93" text-anchor="middle">new goal</text>
+        <text class="t-label" x="670" y="93" text-anchor="middle">trigger</text>
+
+        <rect class="frame" x="20" y="120" width="470" height="420" rx="10"/>
+        <text class="t-frame" x="40" y="146">Goal setup workflow</text>
+        <rect class="box" x="40" y="160" width="205" height="50" rx="6"/>
+        <text class="t-title" x="54" y="181">Researcher</text>
+        <text class="t-sub" x="54" y="199">links, files, web search</text>
+        <rect class="box" x="265" y="160" width="205" height="50" rx="6"/>
+        <text class="t-title" x="279" y="181">Domain experts</text>
+        <text class="t-sub" x="279" y="199">coach, tutor, planner, generated</text>
+        <rect class="box" x="40" y="240" width="430" height="50" rx="6"/>
+        <text class="t-title" x="54" y="261">Intake interviewer</text>
+        <text class="t-sub" x="54" y="279">question cards to you: weight, diet, schedule</text>
+        <rect class="box" x="40" y="320" width="205" height="50" rx="6"/>
+        <text class="t-title" x="54" y="341">Planner</text>
+        <text class="t-sub" x="54" y="359">actions and RRULE series</text>
+        <rect class="box" x="265" y="320" width="205" height="50" rx="6"/>
+        <text class="t-title" x="279" y="341">Dashboard designer</text>
+        <text class="t-sub" x="279" y="359">plugin: trackers and view</text>
+        <rect class="box" x="40" y="400" width="430" height="50" rx="6"/>
+        <text class="t-title" x="54" y="421">Safety reviewer</text>
+        <text class="t-sub" x="54" y="439">schema, deterministic evals, judge, health and money rules</text>
+        <rect class="box-accent" x="40" y="474" width="430" height="50" rx="6"/>
+        <text class="t-title" x="54" y="495">Approval node: you</text>
+        <text class="t-sub" x="54" y="513">first plan always needs your approval</text>
+        <line class="wire" x1="142" y1="210" x2="142" y2="238" marker-end="url(#aa)"/>
+        <line class="wire" x1="367" y1="210" x2="367" y2="238" marker-end="url(#aa)"/>
+        <line class="wire" x1="142" y1="290" x2="142" y2="318" marker-end="url(#aa)"/>
+        <line class="wire" x1="367" y1="290" x2="367" y2="318" marker-end="url(#aa)"/>
+        <line class="wire" x1="142" y1="370" x2="142" y2="398" marker-end="url(#aa)"/>
+        <line class="wire" x1="367" y1="370" x2="367" y2="398" marker-end="url(#aa)"/>
+        <line class="wire" x1="255" y1="450" x2="255" y2="472" marker-end="url(#aa)"/>
+
+        <rect class="frame" x="510" y="120" width="470" height="420" rx="10"/>
+        <text class="t-frame" x="530" y="146">Ongoing workflows</text>
+        <text class="t-label" x="530" y="166">trigger</text>
+        <text class="t-label" x="680" y="166">persona</text>
+        <text class="t-label" x="850" y="166">output</text>
+
+        <rect class="box" x="530" y="176" width="130" height="48" rx="6"/>
+        <text class="t-sub" x="540" y="196">action missed, edited</text>
+        <text class="t-sub" x="540" y="212">or tracker rule</text>
+        <rect class="box" x="680" y="176" width="150" height="48" rx="6"/>
+        <text class="t-title" x="690" y="204">Adaptation analyst</text>
+        <rect class="box" x="850" y="176" width="110" height="48" rx="6"/>
+        <text class="t-sub" x="860" y="204">plan change</text>
+
+        <rect class="box" x="530" y="236" width="130" height="48" rx="6"/>
+        <text class="t-sub" x="540" y="264">scheduled review</text>
+        <rect class="box" x="680" y="236" width="150" height="48" rx="6"/>
+        <text class="t-title" x="690" y="264">Progress reviewer</text>
+        <rect class="box" x="850" y="236" width="110" height="48" rx="6"/>
+        <text class="t-sub" x="860" y="256">insight or</text>
+        <text class="t-sub" x="860" y="272">plan change</text>
+
+        <rect class="box" x="530" y="296" width="130" height="48" rx="6"/>
+        <text class="t-sub" x="540" y="324">your message</text>
+        <rect class="box" x="680" y="296" width="150" height="48" rx="6"/>
+        <text class="t-title" x="690" y="324">Goal personas</text>
+        <rect class="box" x="850" y="296" width="110" height="48" rx="6"/>
+        <text class="t-sub" x="860" y="316">reply or</text>
+        <text class="t-sub" x="860" y="332">plan change</text>
+
+        <rect class="box" x="530" y="356" width="130" height="48" rx="6"/>
+        <text class="t-sub" x="540" y="384">3+ similar edits</text>
+        <rect class="box" x="680" y="356" width="150" height="48" rx="6"/>
+        <text class="t-title" x="690" y="384">Preference learner</text>
+        <rect class="box" x="850" y="356" width="110" height="48" rx="6"/>
+        <text class="t-sub" x="860" y="384">preference card</text>
+
+        <rect class="box" x="530" y="416" width="130" height="48" rx="6"/>
+        <text class="t-sub" x="540" y="436">free log, new</text>
+        <text class="t-sub" x="540" y="452">calendar event</text>
+        <rect class="box" x="680" y="416" width="150" height="48" rx="6"/>
+        <text class="t-title" x="690" y="436">Log intake,</text>
+        <text class="t-title" x="690" y="452">Calendar triage</text>
+        <rect class="box" x="850" y="416" width="110" height="48" rx="6"/>
+        <text class="t-sub" x="860" y="436">entries,</text>
+        <text class="t-sub" x="860" y="452">busy blocks</text>
+
+        <rect class="box" x="530" y="476" width="130" height="48" rx="6"/>
+        <text class="t-sub" x="540" y="504">check-in due</text>
+        <rect class="box" x="680" y="476" width="150" height="48" rx="6"/>
+        <text class="t-title" x="690" y="504">Check-in scheduler</text>
+        <rect class="box" x="850" y="476" width="110" height="48" rx="6"/>
+        <text class="t-sub" x="860" y="496">question card,</text>
+        <text class="t-sub" x="860" y="512">push</text>
+
+        <line class="wire" x1="660" y1="200" x2="678" y2="200" marker-end="url(#aa)"/>
+        <line class="wire" x1="830" y1="200" x2="848" y2="200" marker-end="url(#aa)"/>
+        <line class="wire" x1="660" y1="260" x2="678" y2="260" marker-end="url(#aa)"/>
+        <line class="wire" x1="830" y1="260" x2="848" y2="260" marker-end="url(#aa)"/>
+        <line class="wire" x1="660" y1="320" x2="678" y2="320" marker-end="url(#aa)"/>
+        <line class="wire" x1="830" y1="320" x2="848" y2="320" marker-end="url(#aa)"/>
+        <line class="wire" x1="660" y1="380" x2="678" y2="380" marker-end="url(#aa)"/>
+        <line class="wire" x1="830" y1="380" x2="848" y2="380" marker-end="url(#aa)"/>
+        <line class="wire" x1="660" y1="440" x2="678" y2="440" marker-end="url(#aa)"/>
+        <line class="wire" x1="830" y1="440" x2="848" y2="440" marker-end="url(#aa)"/>
+        <line class="wire" x1="660" y1="500" x2="678" y2="500" marker-end="url(#aa)"/>
+        <line class="wire" x1="830" y1="500" x2="848" y2="500" marker-end="url(#aa)"/>
+      </svg>
+      </div>
+      <figcaption>Every plan change goes through the goal's autonomy level: Ask makes a proposal in Inbox, Balanced auto-applies small changes with undo, Auto applies everything with undo and a daily digest. Actions you locked are never moved without asking. All personas share one tool set and one memory layer.</figcaption>
+    </figure>
+  </section>
+
+  <section id="flows">
+    <h2>Data flows</h2>
+    <p class="lead">Three flows cover most of the system: creating a goal, a step-mode tick on Vercel, and an offline log that leads to an adaptation.</p>
+    <h3>Create a goal</h3>
+    <div class="mermaid-box">
+<pre class="mermaid">
+sequenceDiagram
+  participant U as You
+  participant A as App engine
+  participant S as Server engine
+  participant D as Supabase
+  participant M as Models and search
+  U->>A: goal text, links, files
+  A->>D: upload files to Storage
+  A->>S: POST /goals (JWT)
+  S->>D: insert goal, enqueue setup run
+  S-->>A: 202 run_id
+  loop each graph step
+    S->>M: persona or tool call
+    S->>D: checkpoint and run_events
+    D-->>A: Realtime run_events
+  end
+  S->>D: pause at approval node
+  D-->>A: proposal ready
+  U->>A: approve plan
+  A->>S: POST /runs/{id}/resume
+  S->>D: write actions, trackers, plugin
+  D-->>A: row sync to SQLite
+</pre>
+      <div class="cap">Question cards from the intake interviewer pause the run the same way the approval does: the run waits at a human node until you answer.</div>
+    </div>
+
+    <h3>Step-mode tick (Vercel)</h3>
+    <div class="mermaid-box">
+<pre class="mermaid">
+sequenceDiagram
+  participant C as pg_cron + pg_net
+  participant H as Host adapter
+  participant G as Graph runtime
+  participant D as Postgres
+  C->>H: POST /tick every minute (signed)
+  H->>D: claim due job (SKIP LOCKED)
+  H->>G: load checkpoint, run one step
+  G->>D: save checkpoint, emit events
+  G-->>H: next step or done
+  H->>D: re-enqueue or finish
+  Note over H,G: each request stays under 300 s
+</pre>
+      <div class="cap">Enqueueing a job also fires a webhook, so new work starts at once instead of waiting for the next minute. Worker mode runs the same claim-and-step loop without the trigger.</div>
+    </div>
+
+    <h3>Offline log to adaptation</h3>
+    <div class="mermaid-box">
+<pre class="mermaid">
+sequenceDiagram
+  participant U as You
+  participant A as App engine
+  participant D as Supabase
+  participant S as Server engine
+  participant P as APNs
+  U->>A: log "skipped gym, ate pizza" (offline)
+  A->>A: store raw entry in SQLite, queue parse job
+  A->>D: sync when back online
+  D->>S: job webhook
+  S->>S: log intake persona maps entry to trackers
+  S->>S: tracker rule crossed, adaptation analyst runs
+  S->>D: proposal or auto-applied change
+  S->>P: push "plan updated"
+  P-->>U: notification
+  D-->>A: row sync, Inbox card
+</pre>
+      <div class="cap">Deterministic work (marking done, editing, the recurrence window, local reminders) never waits for the server.</div>
+    </div>
+  </section>
+
+  <section id="runs">
+    <h2>Run lifecycle</h2>
+    <p class="lead">Every graph run is a serializable state machine stored in Postgres, so a crash, a deploy or a 300-second request limit loses at most one step.</p>
+    <div class="mermaid-box">
+<pre class="mermaid">
+stateDiagram-v2
+  [*] --> queued
+  queued --> running: claimed
+  running --> checkpointed: step done
+  checkpointed --> running: next step
+  checkpointed --> waiting_human: approval or question node
+  checkpointed --> waiting_budget: limit reached
+  waiting_human --> queued: you answer
+  waiting_budget --> queued: you raise limit
+  running --> failed: error after retries
+  checkpointed --> done: end node
+  done --> [*]
+  failed --> [*]
+</pre>
+      <div class="cap">A failed eval sends the step back for one repair round. If it fails again, the run moves to waiting_human with the reason.</div>
+    </div>
+  </section>
+
+  <section id="data">
+    <h2>Data model</h2>
+    <p class="lead">Every synced row carries <code>id</code> (uuid v7), <code>user_id</code>, <code>updated_at</code> (HLC) and <code>deleted</code>. Server-only tables never reach the device.</p>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Table</th><th>Holds</th><th>Lives in</th></tr></thead>
+        <tbody>
+          <tr><td><code>categories</code></td><td>seeded and custom categories, color</td><td class="where">device + server</td></tr>
+          <tr><td><code>goals</code></td><td>title, category, deadline, status, autonomy level</td><td class="where">device + server</td></tr>
+          <tr><td><code>goal_links</code></td><td>parent, depends_on, supports, conflicts</td><td class="where">device + server</td></tr>
+          <tr><td><code>goal_files</code></td><td>Storage path, kind, size, ingest status</td><td class="where">device + server</td></tr>
+          <tr><td><code>personas</code></td><td>persona TOML per goal or user library</td><td class="where">device + server</td></tr>
+          <tr><td><code>plugins</code></td><td>bundle TOML, version, enabled</td><td class="where">device + server</td></tr>
+          <tr><td><code>trackers</code></td><td>field schema, unit, cadence, rules</td><td class="where">device + server</td></tr>
+          <tr><td><code>tracker_entries</code></td><td>value, source (check-in, log, Health), raw text</td><td class="where">device + server</td></tr>
+          <tr><td><code>action_series</code></td><td>RRULE, duration, preferred time</td><td class="where">device + server</td></tr>
+          <tr><td><code>actions</code></td><td>occurrence, start, end, status, locked</td><td class="where">device + server</td></tr>
+          <tr><td><code>proposals</code></td><td>plan diff, size, status, undo data</td><td class="where">device + server</td></tr>
+          <tr><td><code>preferences</code></td><td>user profile facts with source and date</td><td class="where">device + server</td></tr>
+          <tr><td><code>busy_blocks</code></td><td>kept calendar events as busy time, with group</td><td class="where">device + server</td></tr>
+          <tr><td><code>calendar_rules</code></td><td>triage result: keep or ignore by calendar, series, pattern</td><td class="where">device + server</td></tr>
+          <tr><td><code>jobs</code>, <code>runs</code>, <code>run_checkpoints</code></td><td>queue, graph run state, step snapshots</td><td class="where">server</td></tr>
+          <tr><td><code>run_events</code></td><td>step, token, tool, proposal events (Realtime)</td><td class="where">server, streamed</td></tr>
+          <tr><td><code>knowledge_chunks</code></td><td>text, embedding, goal, source, recency</td><td class="where">server (pgvector)</td></tr>
+          <tr><td><code>memory_logs</code></td><td>append-only run and chat history</td><td class="where">server</td></tr>
+          <tr><td><code>provider_credentials</code></td><td>encrypted keys per provider instance</td><td class="where">server only</td></tr>
+          <tr><td><code>provider_settings</code>, <code>search_settings</code></td><td>chosen vendor/model, search instances, fallback order</td><td class="where">device + server</td></tr>
+          <tr><td><code>budgets</code>, <code>usage</code></td><td>limits per level, token and USD usage</td><td class="where">device + server</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="code">
+    <h2>Code layout</h2>
+    <p class="lead">One copy of every function. Shared code lives in one module and is imported everywhere it is needed.</p>
+<pre class="tree">troupekit/                    own Cargo workspace, publishable, no Aroh imports
+  crates/troupekit-core       messages, Secret, errors, events, store traits
+  crates/troupekit-providers  wire, decoder, transport, catalog, middleware
+  crates/troupekit-tools      Tool trait, toolkits, MCP, TOML tools, search, fetch
+  crates/troupekit-context    memory, ingest, chunk, embed, retrieve
+  crates/troupekit-agent      persona loader, run state machine, evals, budgets
+  crates/troupekit-graph      workflows, checkpointer, human nodes
+  crates/troupekit-plugins    bundle manifest and validation
+  crates/troupekit-host       worker and step adapters
+  catalog/                    providers.toml, search.toml
+  examples/
+crates/
+  aroh-domain                 row types, HLC, validation, shared by both engines
+  aroh-store                  SQLite and Postgres repositories, sync
+  aroh-server                 HTTPS API, jobs, store-trait impls, Aroh toolkits
+  aroh-app                    app engine: commands, reminders, recurrence, offline queue
+  tauri-plugin-aroh-native HealthKit, EventKit, Speech, push token
+personas/                     built-in persona TOML library
+workflows/                    built-in workflow TOML (setup, adaptation, review)
+apps/aroh/                    Tauri shell and Svelte app
+  src/lib/ui/tokens           design tokens, one source
+  src/lib/ui/components       inputs, data display, planning, agent surfaces
+  src/lib/ui/renderer         plugin view tree to components
+  src/lib/api                 typed command client, the only bridge to Rust
+  src/routes/                 today, calendar, goals, inbox, log, settings, gallery
+  src/routes/mockups/         approved-design mockups, ported from here
+supabase/                     migrations, RLS, pg_cron jobs, tests</pre>
+  </section>
+
+  <section id="rules">
+    <h2>Code rules</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3>One copy of everything</h3>
+        <ul>
+          <li>Shared logic lives in one module (<code>troupekit-core</code>, <code>aroh-domain</code>, <code>src/lib/ui</code>) and is imported, never copied.</li>
+          <li>Before adding a helper, search for an existing one. Two call sites with the same logic move into the common module.</li>
+          <li>The UI reaches Rust only through <code>src/lib/api</code>. Components never call Tauri directly.</li>
+          <li>Plugin views are TOML trees that the renderer maps to components, so the UI stays replaceable.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>How work lands</h3>
+        <ul>
+          <li>Each ticket starts with a Svelte mockup shown in an artifact. You approve it, then its code is ported, not rewritten.</li>
+          <li>One pod per feature: a PM plans and asks you, an engineer writes tests first, then code.</li>
+          <li>Tests run in Kiri containers. The leader takes a quick look and merges. No review tracks on this project.</li>
+          <li>Minimum code that works, with assertions on invariants and docstrings only, no comments.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="status">
+    <h2>Build status</h2>
+    <p class="lead">Updated as pods land. The first slice is the framework spine plus one fitness goal end to end.</p>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Part</th><th>Slice</th><th>Status</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Design tokens and component gallery</td><td>1</td><td><span class="pill built">Built</span></td><td>14ccd75, owner approved round 3</td></tr>
+          <tr><td><code>troupekit-core</code></td><td>1</td><td><span class="pill built">Built</span></td><td>0cbe06e, 18 tests, boundary check</td></tr>
+          <tr><td><code>troupekit-providers</code> (4 protocols, catalog)</td><td>1</td><td><span class="pill built">Built</span></td><td>63 tests; non-Anthropic prices unverified</td></tr>
+          <tr><td><code>troupekit-tools</code> (fetch, search with 2 adapters)</td><td>1</td><td><span class="pill built">Built</span></td><td>308a275, 57 tests; MCP client is follow-up</td></tr>
+          <tr><td><code>troupekit-context</code> (memory, RAG on pgvector)</td><td>1</td><td><span class="pill built">Built</span></td><td>b3ebe78, 43 tests; pgvector store lands with aroh-server</td></tr>
+          <tr><td><code>troupekit-agent</code> (persona TOML, evals, budgets)</td><td>1</td><td><span class="pill built">Built</span></td><td>e05093b, 44 tests; one shared Transport</td></tr>
+          <tr><td><code>troupekit-graph</code> (durable runs)</td><td>1</td><td><span class="pill built">Built</span></td><td>31 tests</td></tr>
+          <tr><td><code>troupekit-host</code> step mode on Vercel</td><td>1</td><td><span class="pill built">Built</span></td><td>16 tests incl. crash and concurrency; Postgres impls in pod 9</td></tr>
+          <tr><td>Aroh domain, store, sync</td><td>1</td><td><span class="pill built">Built</span></td><td>67aca37, RLS on 25 tables proven; network adapter lands in pod 10</td></tr>
+          <tr><td>Settings, New Goal chat, Goals, Today, Calendar, Inbox</td><td>1</td><td><span class="pill built">Built</span></td><td>six-pack goal verified end to end (443d99a)</td></tr>
+          <tr><td>Plugins: per-goal trackers and views (pod 12)</td><td>2</td><td><span class="pill built">Built</span></td><td>9d53768, contract drift test, version switch</td></tr>
+          <tr><td>Apple Health and APNs push (pod 13)</td><td>2</td><td><span class="pill built">Built</span></td><td>simulator verified; real APNs needs owner's Apple key</td></tr>
+          <tr><td>Calendar triage (pod 14)</td><td>2</td><td><span class="pill built">Built</span></td><td>f4b6e80, busy blocks respected by no_overlap</td></tr>
+          <tr><td>Triggers, scheduled reviews, learning, insights (pod 15)</td><td>2</td><td><span class="pill built">Built</span></td><td>cf945b6, pg_cron deploy pending owner secrets</td></tr>
+          <tr><td>Crash fix and leftovers (pod 16)</td><td>2</td><td><span class="pill built">Built</span></td><td>bb66bec, own notification delegate, Realtime with polling fallback, goal chat</td></tr>
+          <tr><td>Calendar editing: all-day events, edit sheet (pod 18)</td><td>2</td><td><span class="pill built">Built</span></td><td>beb8804, Reminder, Busy day, Away kinds; move, resize, delete</td></tr>
+          <tr><td>Persona library screen (pod 19)</td><td>2</td><td><span class="pill built">Built</span></td><td>dd9987a, copy and edit coaches, Safety lines locked, coaches per goal</td></tr>
+          <tr><td>Production: Vercel engine, Supabase, TestFlight (pods 21, 24)</td><td>3</td><td><span class="pill built">Built</span></td><td>82085e3, ab071f0; engine live, build 1 on TestFlight</td></tr>
+          <tr><td>Travel and time zones (pod 22)</td><td>3</td><td><span class="pill built">Built</span></td><td>0fe7344, flexible follows local time, fixed keeps instant</td></tr>
+          <tr><td>Follow-ups and fixed items never move (pod 20)</td><td>3</td><td><span class="pill built">Built</span></td><td>1ee8414, Q53, Fixed time switch; simulator steps 7-10 open (B10)</td></tr>
+          <tr><td>Location awareness (pod 23)</td><td>3</td><td><span class="pill built">Built</span></td><td>3f49de8, Q56, places, nudges, routines; migration places applied</td></tr>
+          <tr><td>Travel high findings B1, B2 (pod 27)</td><td>3</td><td><span class="pill built">Built</span></td><td>one live occurrence per slot after a zone change; DST-gap series never block it</td></tr>
+          <tr><td>Hotfixes: blank text blocks, thinking room, cadence spellings (pod 29)</td><td>3</td><td><span class="pill built">Built</span></td><td>a8eed02, f978f84, b339d13, b638eb1; prod PRs #4, #5</td></tr>
+          <tr><td>Delete goal (pod 33)</td><td>3</td><td><span class="pill built">Built</span></td><td>d71002e, Q68: delete all or keep actions (to Routines)</td></tr>
+          <tr><td>Web search, plan limits, coach intake (pod 29)</td><td>3</td><td><span class="pill built">Built</span></td><td>a23d3dd, Q63, Q64, coach questions, session notes</td></tr>
+          <tr><td>Plan view, back bar, Dashboard tab (pod 30)</td><td>3</td><td><span class="pill built">Built</span></td><td>bf40a43, Q65, Q66, Q69 shell, B41</td></tr>
+          <tr><td>Dashboard screen (pod 34)</td><td>3</td><td><span class="pill built">Built</span></td><td>052fd24, Q69: pace, weekly minutes, streaks, tracker trends</td></tr>
+          <tr><td>Build 3 UI bugs (pod 31)</td><td>3</td><td><span class="pill built">Built</span></td><td>d99cc5c, overflow, spinner, calendar status, swipe</td></tr>
+          <tr><td>Mic, camera, attachments (pod 32)</td><td>3</td><td><span class="pill built">Built</span></td><td>023168f, B31; phone confirms</td></tr>
+          <tr><td>Build 2 bugs: number answers never clamped (pod 28)</td><td>3</td><td><span class="pill built">Built</span></td><td>9f402c1, slider grows to typed value; keyboard fix rides with pod 26</td></tr>
+          <tr><td>Server reads registry columns only (pod 26 step a)</td><td>3</td><td><span class="pill built">Built</span></td><td>67786d5, new columns never break an older server</td></tr>
+          <tr><td>Quick-fix build 2 (pod 25)</td><td>3</td><td><span class="pill built">Built</span></td><td>746ebee, Q59, Q60: one Send answers, skippable questions, defaults, permissions, run limits</td></tr>
+          <tr><td>Goal redesign and profile memory (pod 26)</td><td>3</td><td><span class="pill built">Built</span></td><td>f5e5a1c, Q61, Q62: form, custom categories, goal card, facts, attachments, keyboard fix</td></tr>
+          <tr><td>Other goal categories and persona library (pod 17)</td><td>2</td><td><span class="pill built">Built</span></td><td>15 personas, 5 teams; piano goal verified in simulator</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Change log</h3>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Date</th><th>Version</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td>2026-11-23</td><td>2.8</td><td>Build 4 gate failed (D1, D2, D4, D5, D6); pod 35 fixed all five, re-gate PASS. Release PR #6 live on prod. TestFlight build 4 (202611231449) uploaded. PR #6 review findings B52-B54 in backlog.</td></tr>
+          <tr><td>2026-11-23</td><td>2.7</td><td>Pods 29-34 merged: web search, plans within limits, coach intake, plan week strip, can't-fit card, back bar, Dashboard tab, delete goal, mic and attachments, build 3 UI fixes. Hotfix PRs #4, #5 live. Build 4 waits on the Q67 gate.</td></tr>
+          <tr><td>2026-11-23</td><td>2.6</td><td>Pods 26, 27, 28 merged: goal redesign, profile memory, attachments, keyboard and slider fixes, travel high findings. TestFlight build 2 uploaded (202611230222). Production update (c) and build 3 next.</td></tr>
+          <tr><td>2026-11-22</td><td>2.5</td><td>Pods 20, 23, 25 merged; production update (b) live with run limits, fixed items, places; migrations run_limits and places applied; prod updates go through pull requests. Waiting: pod 27, then TestFlight build 2.</td></tr>
+          <tr><td>2026-11-22</td><td>2.4</td><td>Production live (Vercel, Supabase, TestFlight build 1); travel and time zones merged; quick fixes, location, redesign in progress.</td></tr>
+          <tr><td>2026-11-22</td><td>2.3</td><td>Calendar editing merged; slice 2 complete.</td></tr>
+          <tr><td>2026-11-22</td><td>2.2</td><td>Persona library screen merged.</td></tr>
+          <tr><td>2026-11-22</td><td>2.1</td><td>Crash fix and slice 2 leftovers merged; calendar editing and persona library screen started.</td></tr>
+          <tr><td>2026-11-22</td><td>2.0</td><td>Categories and persona library merged; slice 2 features complete, pod 16 fixes running.</td></tr>
+          <tr><td>2026-11-22</td><td>1.9</td><td>Triggers and learning merged; pod 16 started.</td></tr>
+          <tr><td>2026-11-22</td><td>1.8</td><td>Calendar triage merged.</td></tr>
+          <tr><td>2026-11-22</td><td>1.7</td><td>Plugins merged; categories and persona library pod started.</td></tr>
+          <tr><td>2026-11-22</td><td>1.6</td><td>Apple Health import and APNs push merged.</td></tr>
+          <tr><td>2026-11-21</td><td>1.5</td><td>Slice 2 started: pods 12 to 15 running.</td></tr>
+          <tr><td>2026-11-21</td><td>1.4</td><td>Slice 1 verified: full simulator loop passed at the tip (443d99a), reminder fired in background.</td></tr>
+          <tr><td>2026-11-21</td><td>1.3</td><td>App wired to engine, sync back, e2e loop passed once in the simulator. Slice 1 complete pending a clean rerun.</td></tr>
+          <tr><td>2026-11-21</td><td>1.2</td><td>Server engine merged: API, key vault, Postgres stores, goal and replan workflows. Pod 11 wires app to engine.</td></tr>
+          <tr><td>2026-11-21</td><td>1.1</td><td>App screens ported onto the local store (9177987). Server engine pod running.</td></tr>
+          <tr><td>2026-11-21</td><td>1.0</td><td>troupekit-graph and troupekit-host merged: all framework crates built.</td></tr>
+          <tr><td>2026-11-21</td><td>0.9</td><td>Design mockups approved and merged (14ccd75).</td></tr>
+          <tr><td>2026-11-21</td><td>0.8</td><td>troupekit-agent merged. Graph and host pod started.</td></tr>
+          <tr><td>2026-11-21</td><td>0.7</td><td>troupekit-providers merged. Mockup round 3: functional color.</td></tr>
+          <tr><td>2026-11-21</td><td>0.6</td><td>aroh-domain and aroh-store merged with the rebuild Supabase schema.</td></tr>
+          <tr><td>2026-11-21</td><td>0.5</td><td>troupekit-tools merged. Mockup round 2 in progress: monochrome direction.</td></tr>
+          <tr><td>2026-11-21</td><td>0.4</td><td>troupekit-context merged (e5-small, 384 dims, hybrid retrieval).</td></tr>
+          <tr><td>2026-11-21</td><td>0.3</td><td>troupekit-core merged. Design pod building.</td></tr>
+          <tr><td>2026-11-21</td><td>0.2</td><td>Framework named Troupekit.</td></tr>
+          <tr><td>2026-11-21</td><td>0.1</td><td>First proposal from the grill session (Q1 to Q40).</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
