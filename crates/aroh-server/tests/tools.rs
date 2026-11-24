@@ -174,6 +174,28 @@ async fn replace_plan_swaps_future_planned_actions_and_keeps_the_rest() {
 
 #[tokio::test]
 #[ignore = "needs AROH_TEST_PG"]
+async fn b74_run_again_ends_future_missed_actions_and_keeps_past_and_finished_ones() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let goal = env.goal.unwrap();
+    action(&env, "Missed past", -24, ActionStatus::Missed, false).await;
+    action(&env, "Missed future", 48, ActionStatus::Missed, false).await;
+    action(&env, "Missed future fixed", 50, ActionStatus::Missed, true).await;
+    action(&env, "Skipped future", 52, ActionStatus::Skipped, false).await;
+    action(&env, "Done future", 54, ActionStatus::Done, false).await;
+    let new = json!({"plan": {"summary": "new", "timezone": "UTC", "trackers": [],
+        "items": [{"title": "New run", "start": "2026-11-25T08:00:00", "minutes": 30, "rrule": null, "notes": null}]}});
+    tool(&env, "replace_plan").call(new, &ToolContext::for_call(RunId::new(), 7, 0)).await.unwrap();
+    assert_eq!(
+        live(&pool, "actions", goal).await,
+        ["Done future", "Missed future fixed", "Missed past", "New run", "Skipped future"],
+        "a future missed action does not survive next to the new plan"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
 async fn moving_the_date_on_the_limits_card_sets_the_deadline() {
     let pool = pg().await;
     let u = user(&pool).await;

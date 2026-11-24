@@ -21,7 +21,7 @@ pub struct Tick {
 }
 
 /// Seeds the categories of `user_id` (insert-or-ignore), settles occurrences pulled in an
-/// old zone ([`crate::travel::settle`]) and rows of deleted goals ([`crate::remove::settle_orphans`]), materializes every live series for `[now, now +
+/// old zone ([`crate::travel::settle`]), rows of deleted goals ([`crate::remove::settle_orphans`]) and untouched occurrences of tombstoned series ([`crate::remove::end_dead_occurrences`]), materializes every live series for `[now, now +
 /// 14 days)`, keeps actions off Busy days from today on (local in `zone`), and marks planned
 /// actions missed once their local day in `zone` is over ([`missed_at`], Q78).
 /// Running it twice changes nothing. Output: the counts changed.
@@ -33,7 +33,7 @@ pub fn tick(conn: &Connection, clock: &mut Hlc, user_id: &str, now: DateTime<Utc
         }
     }
     crate::travel::settle(conn, clock, user_id, now)?;
-    report.settled = crate::remove::settle_orphans(conn, clock, user_id)?;
+    report.settled = crate::remove::settle_orphans(conn, clock, user_id)? + crate::remove::end_dead_occurrences(conn, user_id, now)?;
     for series in repo::list::<ActionSeries>(conn, &[("user_id", user_id)])? {
         report.materialized += repo::materialize(conn, &series.id, now, DEFAULT_WINDOW_DAYS)?.len();
     }

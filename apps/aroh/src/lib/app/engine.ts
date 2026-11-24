@@ -13,6 +13,13 @@ export const NEEDS_ENGINE = 'This needs a connection to the engine. Sign in and 
 /** The outcome of an engine call: a value, or the reason it could not run. */
 export type EngineResult<T> = { ok: true; value: T } | { ok: false; reason: 'needs_engine' | 'error'; message: string };
 
+/**
+ * Whether a read failed against a configured engine (down, 5xx, network), so a screen must say
+ * it could not reach the engine instead of showing an empty or "On track" state. No engine set
+ * up (`needs_engine`) and a good read are not unreachable.
+ */
+export const unreachable = <T>(r: EngineResult<T>): boolean => !r.ok && r.reason === 'error';
+
 /** What the engine answered: HTTP status and JSON body. */
 export type Answer = { status: number; body: unknown };
 
@@ -222,7 +229,7 @@ export function chatFromRun(view: RunView): ChatMessage[] {
 		if (w.node === 'approve' && w.data.plan) {
 			const plan = w.data.plan as { summary: string; items: PlanItem[]; timezone?: string };
 			const items = plan.items.map(({ title, start, minutes, rrule }) => ({ title, start, minutes, rrule }));
-			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine), fixable: plan.items.map((i) => !i.rrule), plan: { items, timezone: plan.timezone ?? null } });
+			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine), fixable: plan.items.map((i) => !i.rrule), plan: { items, timezone: plan.timezone ?? null }, key: `${view.run_id}:${w.node}`, approved: false });
 		} else if (w.node === 'approve' && w.data.proposal_record) {
 			const p = w.data.proposal_record as { summary: string };
 			out.push({ type: 'message', from: 'persona', name: 'Adaptation analyst', text: `${p.summary} It is in your Inbox to apply.` });

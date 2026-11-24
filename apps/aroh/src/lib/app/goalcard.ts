@@ -53,10 +53,12 @@ function clockText(ms: number): string {
  * The goal card status for the followed run `view` (null: none yet), with the run time limit
  * `limitMin` in minutes and `now` in epoch ms: Working with the step, time of the limit and
  * cost; Waiting for you with what it waits for; Stopped with Retry; Failed with Retry after a
- * transient error; Paused or Failed with the reason; On track when agents are idle.
+ * transient error; Paused or Failed with the reason; On track when agents are idle. With
+ * `unreachable` and no view the engine was not read: Offline with Retry, never On track.
  */
-export function goalStatus(view: RunView | null, limitMin: number, now: number): GoalStatus {
+export function goalStatus(view: RunView | null, limitMin: number, now: number, unreachable = false): GoalStatus {
 	const idle = { tone: 'done' as Tone, chip: 'On track', title: 'Agents are idle', stop: false, retry: false, limit: false };
+	if (!view && unreachable) return { tone: 'missed', chip: 'Offline', title: 'Could not reach the engine', detail: 'Tap Retry to check again.', stop: false, retry: true, limit: false };
 	if (!view) return { ...idle, detail: 'No run yet.' };
 	const cost = formatCost(view.usage?.cost_usd_micros);
 	const stopped = stopMessage(view.status);
@@ -90,4 +92,14 @@ export function answersReason(changed: RunAnswer[]): string {
 	console.assert(changed.length > 0, 'only changed answers replan');
 	const lines = changed.map((a) => `${a.text}: ${a.answer ?? 'skipped'}.`);
 	return `I changed my answers. ${lines.join(' ')} Update the plan to fit.`;
+}
+
+/**
+ * The key the goal page refetches its coaches and plugins on: `run_id:status` once a run has
+ * settled (waiting, done, failed or stopped), null while it is queued or running or when there
+ * is no run. Keying on the snapshot instead refetched them on every sync during a run (B73).
+ */
+export function settledMark(view: RunView | null): string | null {
+	if (!view || ACTIVE.includes(view.status.status)) return null;
+	return `${view.run_id}:${view.status.status}`;
 }

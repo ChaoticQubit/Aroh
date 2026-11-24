@@ -73,7 +73,7 @@ export type ChatMessage =
 	| { type: 'message'; from: 'owner' | 'persona'; name: string; text: string }
 	| { type: 'card'; spec: ComponentSpec }
 	| { type: 'progress'; lines: { text: string; done: boolean }[]; working: boolean }
-	| { type: 'plan'; title: string; items: string[]; fixable?: boolean[]; plan?: { items: PlanItemLike[]; timezone: string | null } }
+	| { type: 'plan'; title: string; items: string[]; fixable?: boolean[]; plan?: { items: PlanItemLike[]; timezone: string | null }; key?: string; approved?: boolean }
 	| { type: 'working'; step: string | null; cost: string }
 	| { type: 'stopped'; text: string; retry: boolean }
 	| {

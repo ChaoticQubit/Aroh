@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeMs, answersReason, goalStatus, originRun, pickRun, planWaits } from './goalcard';
+import { activeMs, answersReason, goalStatus, originRun, pickRun, planWaits, settledMark } from './goalcard';
 import type { RunEvent, RunSummary, RunView } from './engine';
 
 const at = (seq: number, ms: number, type: string, step: string): RunEvent => ({ seq, at_ms: ms, body: { type, step } });
@@ -7,6 +7,13 @@ const summary = (run_id: string, state: string): RunSummary => ({ run_id, goal_i
 const view = (patch: Partial<RunView>): RunView => ({ run_id: 'r', goal_id: 'g', workflow: 'new-goal', status: { status: 'running' }, waiting: [], events: [], usage: { cost_usd_micros: 10_000 }, ...patch });
 
 describe('goal card status', () => {
+	it('b70: an engine read that failed never shows On track; it says so and offers Retry', () => {
+		const s = goalStatus(null, 5, 0, true);
+		expect(s.chip).not.toBe('On track');
+		expect(s).toMatchObject({ tone: 'missed', chip: 'Offline', title: 'Could not reach the engine', retry: true, stop: false });
+		expect(goalStatus(null, 5, 0, false)).toMatchObject({ chip: 'On track', detail: 'No run yet.' });
+	});
+
 	it('follows the run that waits for the owner, else the newest run', () => {
 		expect(pickRun([])).toBeNull();
 		expect(pickRun([summary('new', 'done'), summary('old', 'waiting_human')])).toBe('old');
@@ -75,5 +82,14 @@ describe('run again while a plan waits', () => {
 		expect(planWaits(view({ status: { status: 'waiting_human' }, waiting: [{ node: 'questions', ask: 'question', prompt: null, data: {} }] }))).toBe(false);
 		expect(planWaits(view({ status: { status: 'done' }, waiting: [] }))).toBe(false);
 		expect(planWaits(view({ status: { status: 'running' }, waiting: [plan] }))).toBe(false);
+	});
+});
+
+describe('settledMark (B73)', () => {
+	it('b73: polls of a live run keep one mark, so coaches and plugins are fetched once per settled run, not per poll', () => {
+		const marks = (['queued', 'running', 'running', 'checkpointed', 'running', 'waiting_human', 'waiting_human', 'running', 'done'] as const).map((status) => settledMark(view({ status: { status } })));
+		expect(new Set(marks.filter((m) => m !== null))).toEqual(new Set(['r:waiting_human', 'r:done']));
+		expect(marks.slice(0, 5)).toEqual([null, null, null, null, null]);
+		expect(settledMark(null)).toBeNull();
 	});
 });

@@ -13,7 +13,7 @@
 
 	const id = $props.id();
 	let draft = $state('');
-	const dictation = $derived(voice ? new Dictation(voice, (text) => (draft = text)) : null);
+	const dictation = $derived(voice ? new Dictation(voice, () => draft, (text) => (draft = text)) : null);
 </script>
 
 <div class="sticky bottom-0">

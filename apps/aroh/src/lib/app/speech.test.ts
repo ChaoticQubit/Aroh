@@ -21,7 +21,7 @@ function fakeSpeech(partials: string[], final: string, fail?: { at: 'start' | 's
 describe('chat voice input', () => {
 	it('streams what the owner says into the message and keeps the final words on stop', async () => {
 		const seen: string[] = [];
-		const d = new Dictation(fakeSpeech(['I read', 'I read two'], 'I read two chapters'), (text) => seen.push(text));
+		const d = new Dictation(fakeSpeech(['I read', 'I read two'], 'I read two chapters'), () => '', (text) => seen.push(text));
 		await d.toggle();
 		expect(d.listening).toBe(true);
 		expect(seen).toEqual(['I read', 'I read two']);
@@ -32,7 +32,7 @@ describe('chat voice input', () => {
 	});
 
 	it('a denied microphone says how to turn it on, offers Settings, and is not left listening', async () => {
-		const d = new Dictation(fakeSpeech([], '', { at: 'start', code: 'mic_denied' }), () => {});
+		const d = new Dictation(fakeSpeech([], '', { at: 'start', code: 'mic_denied' }), () => '', () => {});
 		await d.toggle();
 		expect(d.listening).toBe(false);
 		expect(d.error).toBe('Microphone is off for Aroh. Turn it on in Settings.');
@@ -40,14 +40,14 @@ describe('chat voice input', () => {
 	});
 
 	it('denied speech recognition offers Settings too', async () => {
-		const d = new Dictation(fakeSpeech([], '', { at: 'start', code: 'speech_denied' }), () => {});
+		const d = new Dictation(fakeSpeech([], '', { at: 'start', code: 'speech_denied' }), () => '', () => {});
 		await d.toggle();
 		expect(d.error).toBe('Speech recognition is off for Aroh. Turn it on in Settings.');
 		expect(d.denied).toBe(true);
 	});
 
 	it('any other failure shows its reason without the Settings button', async () => {
-		const d = new Dictation(fakeSpeech([], '', { at: 'stop', code: 'audio_failed' }), () => {});
+		const d = new Dictation(fakeSpeech([], '', { at: 'stop', code: 'audio_failed' }), () => '', () => {});
 		await d.toggle();
 		await d.toggle();
 		expect(d.error).toBe('Nothing was heard.');
@@ -67,9 +67,44 @@ describe('chat voice input', () => {
 
 	it('an empty transcript leaves the typed message alone', async () => {
 		const seen: string[] = [];
-		const d = new Dictation(fakeSpeech([], '  '), (text) => seen.push(text));
+		const d = new Dictation(fakeSpeech([], '  '), () => 'typed', (text) => seen.push(text));
 		await d.toggle();
 		await d.toggle();
 		expect(seen).toEqual([]);
+	});
+
+	it('a second mic session after a pause appends to the draft instead of replacing it', async () => {
+		let draft = 'Buy milk';
+		let ended: ((text: string) => void) | undefined;
+		const sessions = [['and eggs'], ['then bread']];
+		const voice: Speech = {
+			async start(onPartial, onEnded) {
+				ended = onEnded;
+				(sessions.shift() ?? []).forEach(onPartial);
+			},
+			async stop() {
+				return 'then bread';
+			}
+		};
+		const d = new Dictation(voice, () => draft, (text) => (draft = text));
+		await d.toggle();
+		expect(draft).toBe('Buy milk and eggs');
+		ended?.('and eggs');
+		expect(d.listening).toBe(false);
+		expect(draft).toBe('Buy milk and eggs');
+		await d.toggle();
+		expect(d.listening).toBe(true);
+		expect(draft).toBe('Buy milk and eggs then bread');
+		await d.toggle();
+		expect(draft).toBe('Buy milk and eggs then bread');
+	});
+
+	it('partials that restart after a pause keep the words heard before it', async () => {
+		let draft = '';
+		const d = new Dictation(fakeSpeech(['I read', 'I read two chapters', 'then slept'], 'then slept'), () => draft, (text) => (draft = text));
+		await d.toggle();
+		expect(draft).toBe('I read two chapters then slept');
+		await d.toggle();
+		expect(draft).toBe('I read two chapters then slept');
 	});
 });

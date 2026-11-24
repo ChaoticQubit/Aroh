@@ -387,7 +387,7 @@ async fn three_similar_edits_produce_a_preference_proposal() {
     assert_eq!(w.count("select count(*) from public.runs where user_id = $1 and workflow = 'learn-preference'").await, 1);
 
     let mut pref: Preference = serde_json::from_value(
-        db::query_scalar::<_, Value>("select to_jsonb(p) - 'server_seq' from public.preferences p where user_id = $1")
+        db::query_scalar::<Value>("select to_jsonb(p) - 'server_seq' from public.preferences p where user_id = $1")
             .bind(w.user)
             .fetch_one(&w.pool)
             .await

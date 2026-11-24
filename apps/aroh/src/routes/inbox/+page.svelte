@@ -4,7 +4,7 @@
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { follow } from '$lib/app/chat.svelte';
-	import { engine, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
+	import { engine, unreachable, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
 	import { decisionsFrom, deviceSuggestions, finishTriage, refreshSuggestions, triageCards } from '$lib/app/calendar';
 	import { inboxView } from '$lib/app/views';
 	import * as location from '$lib/app/location';
@@ -18,10 +18,12 @@
 	let triage = $state<{ runId: string; waiting: Waiting } | null>(null);
 	let answers: Record<string, unknown> = {};
 	let places = $state<location.LocationView | null>(null);
+	let offline = $state(false);
 
-	/** Reads the engine's newest runs, what the waiting ones wait for, and insights; offline leaves all empty. */
+	/** Reads the engine's newest runs, what the waiting ones wait for, and insights; a failed read leaves them empty and sets `offline`. */
 	async function loadRuns() {
 		const [r, i] = await Promise.all([engine.runs(), engine.insights()]);
+		offline = unreachable(r);
 		runs = r.ok ? r.value : [];
 		insights = i.ok ? i.value : [];
 		waits = await engine.waits(runs);
@@ -99,6 +101,12 @@
 	}
 </script>
 
+{#if offline}
+	<div class="flex items-center gap-3 px-4 pt-3" role="alert">
+		<p class="min-w-0 flex-1 text-sm text-status-missed">Could not reach the engine, so runs waiting for you may be missing.</p>
+		<button type="button" class="min-h-11 rounded-sm border border-border bg-bg px-3 text-sm text-fg outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => void loadRuns()}>Retry</button>
+	</div>
+{/if}
 {#if s}
 	{@const inbox = inboxView(s, runs, insights, clock.zone, clock.now, waits)}
 	<InboxScreen

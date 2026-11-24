@@ -29,7 +29,7 @@
 	 * cards: Overview, Plan (open while agents wait, closed after approval; "Keep sessions in
 	 * order" through `ordered` and `onordered`, Q79), Questions and answers
 	 * (`onanswers`; open for Run again with `rerun`, `onrerun`, `oncancelrerun`), Research with
-	 * files, Agent activity (`steps`), Coaches and plugins (`coaches`, `plugins`, `oncontrols`)
+	 * files, Agent activity (`steps`), Coaches and plugins (`coaches`, `plugins`, `helpersLoading`, `oncontrols`)
 	 * and Chat, where questions and the plan to approve appear.
 	 */
 	let {
@@ -47,6 +47,7 @@
 		oncontrols,
 		coaches = [],
 		plugins = [],
+		helpersLoading = false,
 		oncoaches,
 		versions = [],
 		version = '',
@@ -82,6 +83,7 @@
 		oncontrols?: (value: AgentSettings) => void;
 		coaches?: CoachView[];
 		plugins?: PluginUsed[];
+		helpersLoading?: boolean;
 		oncoaches?: () => void;
 		versions?: { value: string; label: string }[];
 		version?: string;
@@ -119,7 +121,7 @@
 	const researchSummary = $derived([research ? `${research.sources.length} sources` : 'No research yet', files.length ? `${files.length} ${files.length === 1 ? 'file' : 'files'}` : ''].filter(Boolean).join(' · '));
 	const activitySummary = $derived(steps.length ? (steps.find((x) => !x.done)?.text ?? `${steps.length} steps done`) : 'No run yet');
 	const helperSummary = $derived(
-		[coaches.length === 1 ? '1 coach' : `${coaches.length} coaches`, plugins.length ? (plugins.length === 1 ? '1 plugin' : `${plugins.length} plugins`) : '', `${controls.autonomy[0].toUpperCase()}${controls.autonomy.slice(1)}`, `${limit} min limit`].filter(Boolean).join(' · ')
+		[helpersLoading ? 'Loading coaches' : coaches.length === 1 ? '1 coach' : `${coaches.length} coaches`, plugins.length ? (plugins.length === 1 ? '1 plugin' : `${plugins.length} plugins`) : '', `${controls.autonomy[0].toUpperCase()}${controls.autonomy.slice(1)}`, `${limit} min limit`].filter(Boolean).join(' · ')
 	);
 	let folds = $state({ overview: true, plan: false, answers: false, research: false, activity: false, helpers: false, chat: false });
 	let open = $state(false);

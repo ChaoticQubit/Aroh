@@ -130,3 +130,29 @@ pub fn settle_orphans(conn: &Connection, clock: &mut Hlc, user_id: &str) -> Resu
     tx.commit()?;
     Ok(changed)
 }
+
+/// Removes the untouched occurrences of `user_id` (planned, unlocked, derived stamp,
+/// starting at or after `now`) whose series is a tombstone here. The server ends an old
+/// plan by tombstoning the series and the occurrences it holds; one this device derived
+/// after the server last materialized gets no tombstone and would stay next to the new
+/// plan (B77). Derived rows are never pushed, so they are deleted, not tombstoned: nothing
+/// syncs out and a series revived with the same id derives them again. Output: rows removed.
+pub fn end_dead_occurrences(conn: &Connection, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<usize> {
+    let mut stmt = conn.prepare("SELECT id FROM action_series WHERE user_id = ?1 AND deleted = 1")?;
+    let dead = stmt.query_map([user_id], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<BTreeSet<_>>>()?;
+    if dead.is_empty() {
+        return Ok(0);
+    }
+    let ended: Vec<Action> = repo::list::<Action>(conn, &[("user_id", user_id)])?
+        .into_iter()
+        .filter(|a| a.series_id.as_ref().is_some_and(|s| dead.contains(s)))
+        .filter(|a| a.status == aroh_domain::rows::ActionStatus::Planned && !a.locked && a.start_at >= now && a.updated_at == aroh_domain::seed::SEED_STAMP)
+        .collect();
+    let tx = conn.unchecked_transaction()?;
+    for a in &ended {
+        let removed = tx.execute("DELETE FROM actions WHERE id = ?1 AND updated_at = ?2", [a.id.as_str(), aroh_domain::seed::SEED_STAMP])?;
+        assert_eq!(removed, 1, "an untouched derived occurrence is removed once");
+    }
+    tx.commit()?;
+    Ok(ended.len())
+}

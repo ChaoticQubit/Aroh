@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { chatFromRun, Engine, fixedActionIds, flushLogs, keyStatus, NEEDS_ENGINE, pauseMessage, route, waitLabel, type Answer, type Call, type RunView, type Waiting } from './engine';
+import { chatFromRun, Engine, fixedActionIds, flushLogs, keyStatus, NEEDS_ENGINE, pauseMessage, route, unreachable, waitLabel, type Answer, type Call, type RunView, type Waiting } from './engine';
 import type { Action } from './client';
 import { deviceZone } from '$lib/ui/clock';
 
@@ -41,7 +41,7 @@ describe('engine client', () => {
 		expect(waitLabel(view({ status: 'waiting_human' }, [{ node: 'change', ask: 'question', prompt: null, data: {} }]))).toBe('What to change in the plan');
 		expect(waitLabel(view({ status: 'running' }))).toBeNull();
 		const plan = chatFromRun(view({ status: 'waiting_human' }, [approve])).at(-1);
-		expect(plan).toEqual({ type: 'plan', title: 'Core work and a daily plank.', items: ['Core workout, 2026-11-22 07:00, 30 min'], fixable: [true], plan: { items: [{ title: 'Core workout', start: '2026-11-22T07:00:00', minutes: 30, rrule: null }], timezone: null } });
+		expect(plan).toEqual({ type: 'plan', title: 'Core work and a daily plank.', items: ['Core workout, 2026-11-22 07:00, 30 min'], fixable: [true], plan: { items: [{ title: 'Core workout', start: '2026-11-22T07:00:00', minutes: 30, rrule: null }], timezone: null }, key: 'r1:approve', approved: false });
 		expect(chatFromRun(view({ status: 'done' })).at(-1)).toMatchObject({ text: 'Approved. The plan is on your calendar.' });
 	});
 
@@ -258,5 +258,13 @@ describe('run limits (Q60)', () => {
 		expect(sent).toEqual(['GET /v1/account null', 'GET /v1/account null', 'PUT /v1/account/consent {"ai":true}', 'DELETE /v1/account null']);
 		const old = new Engine(async () => ({ status: 404, body: null }));
 		await expect(old.giveConsent()).resolves.toEqual({ ok: true, value: false });
+	});
+});
+
+describe('unreachable (B69)', () => {
+	it('b69: a failed engine read is unreachable, while no engine set up or a good read is not', () => {
+		expect(unreachable({ ok: false, reason: 'error', message: 'The engine answered 500.' })).toBe(true);
+		expect(unreachable({ ok: false, reason: 'needs_engine', message: 'Set up the engine.' })).toBe(false);
+		expect(unreachable({ ok: true, value: [] })).toBe(false);
 	});
 });

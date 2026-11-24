@@ -233,6 +233,13 @@ describe('goal progress on the Goals list', () => {
 		expect(p).toEqual({ tone: 'warn', label: 'Waiting for you', done: 9, due: 12, line: 'Next: Strength session, today 18:00' });
 	});
 
+	it('b70: says waiting for you while a run of the goal waits for the owner, with no proposal', () => {
+		const s = fixture();
+		s.proposals = [];
+		expect(goalProgress(s, [stats('on_track')], clock, [goalId])[goalId]).toMatchObject({ tone: 'warn', label: 'Waiting for you' });
+		expect(goalProgress(s, [stats('on_track')], clock, [])[goalId]).toMatchObject({ label: 'On track' });
+	});
+
 	it('takes the pace from the dashboard figures once nothing waits', () => {
 		const s = fixture();
 		s.proposals = [];

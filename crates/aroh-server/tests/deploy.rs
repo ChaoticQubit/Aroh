@@ -21,7 +21,7 @@ fn token(claims: Value) -> String {
 /// Same constructor as the `serve` bin and the Vercel entry.
 async fn serve(pool: &PgPool) -> String {
     let name: String = db::query_scalar("select current_database()").fetch_one(pool).await.unwrap();
-    let base = std::env::var("AROH_TEST_PG").unwrap();
+    let base = common::pooler();
     let vars: BTreeMap<String, String> = [
         ("DATABASE_URL", format!("{base}/{name}")),
         ("AROH_MASTER_KEY", MASTER.to_string()),
@@ -100,7 +100,7 @@ async fn wake_trigger_posts_the_hook_only_when_a_job_becomes_queued() {
     ] {
         db::query(sql).execute(&pool).await.unwrap();
     }
-    let calls = || async { db::query_scalar::<_, i64>("select count(*) from net.calls").fetch_one(&pool).await.unwrap() };
+    let calls = || async { db::query_scalar::<i64>("select count(*) from net.calls").fetch_one(&pool).await.unwrap() };
     let owner = user(&pool).await;
     let job = Uuid::now_v7();
     db::query("insert into public.jobs (id, user_id, kind, status) values ($1, $2, 'run', 'queued')").bind(job).bind(owner).execute(&pool).await.unwrap();

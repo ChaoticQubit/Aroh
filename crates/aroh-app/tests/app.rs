@@ -591,3 +591,138 @@ fn wipe_leaves_an_empty_store_that_another_account_can_adopt() {
     assert!(local::wipe(&mut conn).unwrap() > 0);
     assert_eq!(local::wipe(&mut conn).unwrap(), 0, "a second wipe finds nothing");
 }
+
+/// Pulls `rows` of `R` as the server wrote them: stamped by the server node after
+/// every local stamp, each with the next `server_seq`.
+fn pull_server_rows<R: Record + serde::Serialize>(conn: &mut Connection, clock: &mut Hlc, user: &str, rows: Vec<R>, first_seq: i64) {
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() + 1000;
+    let wire: Vec<serde_json::Map<String, serde_json::Value>> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let mut v = serde_json::to_value(r).unwrap();
+            v["updated_at"] = json!(format!("{ms}-{i:04x}-00000000000000e5"));
+            v["server_seq"] = json!(first_seq + i as i64);
+            v.as_object().unwrap().clone()
+        })
+        .collect();
+    aroh_store::sync::apply_page(conn, R::TABLE, user, &wire, clock).unwrap();
+}
+
+/// B77: Run again ends the old plan on the server (`clear_old_plan`) by tombstoning
+/// the old series and the occurrences the server holds. An occurrence the device
+/// derived after the server last materialized (a later tick, as during a run that
+/// waits for the owner) exists only on the device and gets no tombstone. The device
+/// must not keep it next to the new plan.
+#[test]
+fn b77_occurrences_only_the_device_derived_end_with_their_tombstoned_series() {
+    let (mut conn, mut clock, user) = seeded();
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
+    let daily = repo::list::<ActionSeries>(&conn, &[]).unwrap().into_iter().find(|s| s.rrule == "FREQ=DAILY").unwrap();
+    let server_window = now() + Duration::days(i64::from(aroh_domain::recur::DEFAULT_WINDOW_DAYS));
+    tick::tick(&conn, &mut clock, &user, now() + Duration::days(1), ZONE).unwrap();
+    let derived: Vec<Action> = repo::list::<Action>(&conn, &[("series_id", &daily.id)]).unwrap();
+    let (server_known, device_only): (Vec<Action>, Vec<Action>) = derived.into_iter().filter(|a| a.start_at >= now()).partition(|a| a.start_at < server_window);
+    assert!(!device_only.is_empty(), "the later tick derived occurrences past the server's window");
+    let old = ActionSeries { deleted: true, ..daily.clone() };
+    pull_server_rows(&mut conn, &mut clock, &user, vec![old], 1);
+    let ended: Vec<Action> = server_known.into_iter().map(|a| Action { deleted: true, ..a }).collect();
+    pull_server_rows(&mut conn, &mut clock, &user, ended, 2);
+    tick::tick(&conn, &mut clock, &user, now() + Duration::days(1), ZONE).unwrap();
+    let left: Vec<String> = repo::list::<Action>(&conn, &[("series_id", &daily.id)])
+        .unwrap()
+        .into_iter()
+        .filter(|a| a.start_at >= now() + Duration::days(1))
+        .map(|a| format!("{} {}", a.title, a.start_at))
+        .collect();
+    assert!(left.is_empty(), "occurrences of a tombstoned series stayed live on the device: {left:?}");
+}
+
+/// B77 self-heal: a phone already in the broken state (a tombstoned series with live,
+/// untouched future occurrences) is cleaned by its first tick after the upgrade. Past
+/// occurrences and occurrences the owner touched (done, moved, locked) stay as they are.
+#[test]
+fn b77_the_first_tick_heals_a_store_with_live_occurrences_of_a_dead_series() {
+    let (mut conn, mut clock, user) = seeded();
+    tick::tick(&conn, &mut clock, &user, now() - Duration::days(2), ZONE).unwrap();
+    let daily = repo::list::<ActionSeries>(&conn, &[]).unwrap().into_iter().find(|s| s.rrule == "FREQ=DAILY").unwrap();
+    let mut rows: Vec<Action> = repo::list::<Action>(&conn, &[("series_id", &daily.id)]).unwrap();
+    rows.sort_by_key(|a| a.start_at);
+    let past = rows.iter().find(|a| a.start_at < now()).unwrap().id.clone();
+    let future: Vec<Action> = rows.iter().filter(|a| a.start_at >= now()).cloned().collect();
+    let mut done = future[0].clone();
+    done.status = ActionStatus::Done;
+    done.done_at = Some(now());
+    repo::put(&conn, &mut clock, &mut done).unwrap();
+    let mut locked = future[1].clone();
+    locked.locked = true;
+    repo::put(&conn, &mut clock, &mut locked).unwrap();
+    let mut moved = future[2].clone();
+    moved.start_at += Duration::hours(1);
+    moved.end_at += Duration::hours(1);
+    repo::put(&conn, &mut clock, &mut moved).unwrap();
+    let untouched: Vec<String> = future[3..].iter().map(|a| a.id.clone()).collect();
+    assert!(!untouched.is_empty());
+    pull_server_rows(&mut conn, &mut clock, &user, vec![ActionSeries { deleted: true, ..daily.clone() }], 1);
+    let report = tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
+    let live: Vec<String> = repo::list::<Action>(&conn, &[("series_id", &daily.id)]).unwrap().into_iter().map(|a| a.id).collect();
+    for id in &untouched {
+        assert!(!live.contains(id), "untouched future occurrence {id} of the dead series stayed live");
+    }
+    for id in [&past, &done.id, &locked.id, &moved.id] {
+        assert!(live.contains(id), "row {id} the owner touched or that is past was removed");
+    }
+    assert!(report.settled >= untouched.len());
+    let again = tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
+    assert_eq!((again.settled, again.materialized), (0, 0), "a second tick neither ends nor re-derives anything");
+}
+
+/// B77 reverse case: a series the server revives with the same id (its tombstone replaced
+/// by a newer live row through a pull) gets its untouched occurrences back on the next tick.
+#[test]
+fn b77_a_series_revived_with_the_same_id_derives_its_occurrences_again() {
+    let (mut conn, mut clock, user) = seeded();
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
+    let daily = repo::list::<ActionSeries>(&conn, &[]).unwrap().into_iter().find(|s| s.rrule == "FREQ=DAILY").unwrap();
+    let future = |conn: &Connection| repo::list::<Action>(conn, &[("series_id", &daily.id)]).unwrap().into_iter().filter(|a| a.start_at >= now()).count();
+    let before = future(&conn);
+    assert!(before > 0);
+    pull_server_rows(&mut conn, &mut clock, &user, vec![ActionSeries { deleted: true, ..daily.clone() }], 1);
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
+    assert_eq!(future(&conn), 0);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    pull_server_rows(&mut conn, &mut clock, &user, vec![daily.clone()], 2);
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
+    assert_eq!(future(&conn), before, "the revived series derives its occurrences again");
+}
+
+/// B77 edit in place: a replan that moves a series to a new time keeps its id, so no
+/// tombstone of the series reaches the device. The next tick must leave no untouched
+/// occurrence at the old time next to the new ones; a done occurrence and past rows stay.
+#[test]
+fn b77_a_series_edited_in_place_leaves_no_stale_occurrences_at_the_old_time() {
+    let (mut conn, mut clock, user) = seeded();
+    tick::tick(&conn, &mut clock, &user, now() - Duration::days(2), ZONE).unwrap();
+    let daily = repo::list::<ActionSeries>(&conn, &[]).unwrap().into_iter().find(|s| s.rrule == "FREQ=DAILY").unwrap();
+    let mut rows: Vec<Action> = repo::list::<Action>(&conn, &[("series_id", &daily.id)]).unwrap();
+    rows.sort_by_key(|a| a.start_at);
+    let past = rows.iter().find(|a| a.start_at < now()).unwrap().id.clone();
+    let mut done = rows.iter().find(|a| a.start_at >= now()).unwrap().clone();
+    done.status = ActionStatus::Done;
+    done.done_at = Some(now());
+    repo::put(&conn, &mut clock, &mut done).unwrap();
+    let local = chrono::NaiveDateTime::parse_from_str(&daily.dtstart_local, "%Y-%m-%dT%H:%M:%S").unwrap();
+    let moved = ActionSeries { dtstart_local: (local + Duration::hours(2)).format("%Y-%m-%dT%H:%M:%S").to_string(), ..daily.clone() };
+    pull_server_rows(&mut conn, &mut clock, &user, vec![moved], 1);
+    tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
+    let live: Vec<Action> = repo::list::<Action>(&conn, &[("series_id", &daily.id)]).unwrap();
+    let ahead: Vec<&Action> = live.iter().filter(|a| a.start_at >= now() && a.id != done.id).collect();
+    let mut days = std::collections::BTreeMap::new();
+    for a in &ahead {
+        *days.entry(a.start_at.with_timezone(&ZONE).date_naive()).or_insert(0) += 1;
+    }
+    assert!(days.values().all(|n| *n == 1), "a day holds the old and the new occurrence: {days:?}");
+    assert!(!ahead.is_empty(), "the moved series derives its new occurrences");
+    let ids: Vec<&str> = live.iter().map(|a| a.id.as_str()).collect();
+    assert!(ids.contains(&past.as_str()) && ids.contains(&done.id.as_str()), "past and done rows stay");
+}

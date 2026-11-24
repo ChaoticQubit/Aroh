@@ -4,20 +4,20 @@
 	import GoalCard from '$lib/ui/components/goal/GoalCard.svelte';
 	import RoutinesScreen from '$lib/ui/screens/RoutinesScreen.svelte';
 	import * as location from '$lib/app/location';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { getClock } from '$lib/ui/clock';
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { goalHeader, goalView } from '$lib/app/views';
 	import { engine, progressLines } from '$lib/app/engine';
 	import { GoalChat } from '$lib/app/chat.svelte';
-	import { answersReason, goalStatus, planWaits } from '$lib/app/goalcard';
+	import { answersReason, goalStatus, planWaits, settledMark } from '$lib/app/goalcard';
 	import type { AgentSettings } from '$lib/app/newgoal';
 	import { speech } from '$lib/app/speech.svelte';
 	import { activeVersion, enablePlugin, listPlugins, type PluginVersion } from '$lib/plugins/api';
 	import { parseTree, resolve } from '$lib/plugins/resolve';
 	import type { CoachView } from '$lib/ui/screens/types';
-	import { loadCoaches, pluginsUsed, type GoalRun } from '$lib/app/personas';
+	import { coachesOn, loadCoaches, pluginsUsed, type GoalRun, type PersonaView } from '$lib/app/personas';
 	import { goalAttachments, pendingAttachment, uploadFailed } from '$lib/app/files';
 	import type { Attachment } from '$lib/ui/components/goal/Attachments.svelte';
 	import DeleteGoalSheet from '$lib/ui/components/goal/DeleteGoalSheet.svelte';
@@ -38,7 +38,8 @@
 	let plugins = $state<PluginVersion[]>([]);
 	let places = $state<location.LocationView | null>(null);
 	const routines = $derived(!!goal && !!places && goal.id === places.routines_goal);
-	let coaches = $state<CoachView[]>([]);
+	let library = $state<PersonaView[]>([]);
+	let helpersFor = $state<string | null>(null);
 	let goalRuns = $state<GoalRun[]>([]);
 	let settingsLimit = $state(DEFAULT_LIMIT);
 	let now = $state(Date.now());
@@ -99,19 +100,39 @@
 	const chat = $derived(new GoalChat(page.params.id ?? null, 'Tell the agents anything about this goal. They read it at their next step.'));
 	$effect(() => void chat.open());
 
+	const ready = $derived(!!s);
+	let runMark = $state('');
 	$effect(() => {
-		const id = goal?.id;
-		if (s && id) void loadCoaches(s, id).then((r) => ((coaches = r.coaches), (goalRuns = r.runs)));
+		const mark = settledMark(chat.view);
+		if (mark) runMark = mark;
+	});
+
+	$effect(() => {
+		const id = page.params.id;
+		if (!ready || !id) return;
+		void runMark;
+		untrack(() => {
+			const snap = data.snapshot;
+			if (!snap) return;
+			void loadCoaches(snap, id).then((r) => {
+				if (page.params.id !== id) return;
+				library = r.views;
+				goalRuns = r.runs;
+				helpersFor = id;
+			});
+		});
 	});
 
 	$effect(() => {
 		const id = goal?.id;
 		if (!s || !id) return;
 		listPlugins(id).then(
-			(list) => (plugins = list),
+			(list) => page.params.id === id && (plugins = list),
 			(e) => (data.error = String(e))
 		);
 	});
+
+	const coaches = $derived<CoachView[]>(s && goal ? coachesOn(library, s.personas, goalRuns, goal.id) : []);
 
 	const shown = $derived(activeVersion(plugins));
 	const view = $derived.by(() => {
@@ -132,7 +153,7 @@
 			: []
 	);
 	const controls = $derived<AgentSettings | null>(goal ? { autonomy: goal.autonomy, reminders: goal.reminders, useCalendars: goal.use_calendars, runLimit: goal.run_limit_minutes } : null);
-	const status = $derived(goalStatus(chat.view, goal?.run_limit_minutes ?? settingsLimit, now));
+	const status = $derived(goalStatus(chat.view, goal?.run_limit_minutes ?? settingsLimit, now, chat.unreachable));
 	const blocked = $derived(planWaits(chat.view));
 	const planContext = $derived<PlanContext | undefined>(
 		s && goal ? { busy: s.busy ?? [], actions: s.actions, goalId: goal.id, deadline: goal.deadline, knownUntil: shiftDay(formatYmd(clock.now, clock.zone), AHEAD_DAYS) } : undefined
@@ -164,8 +185,9 @@
 		});
 	}
 
-	/** Syncs first, so a time limit just changed in the agents sheet reaches the engine, then retries. */
+	/** Reads the engine again when it could not be reached; else syncs first, so a time limit just changed in the agents sheet reaches the engine, then retries. */
 	async function onretry() {
+		if (chat.unreachable) return chat.open();
 		await client.sync().catch(() => null);
 		await chat.retry();
 	}
@@ -231,6 +253,7 @@
 			defaultLimit={settingsLimit}
 			{oncontrols}
 			{coaches}
+			helpersLoading={helpersFor !== goal.id}
 			plugins={pluginsUsed(plugins, goalRuns)}
 			oncoaches={() => void goto(`/personas?goal=${goal.id}`)}
 			{versions}

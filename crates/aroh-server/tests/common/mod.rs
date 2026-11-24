@@ -23,10 +23,11 @@ pub const MASTER: &str = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=";
 /// Milliseconds since the Unix epoch.
 pub const T0: i64 = 1_795_348_800_000;
 
-/// Opens a fresh database cloned from the migrated `aroh_template`, so
-/// each test owns its jobs and rows. Clones are serialized with an
-/// advisory lock because Postgres rejects concurrent template copies.
-pub async fn pg() -> PgPool {
+/// Creates a fresh database cloned from the migrated `aroh_template` over
+/// a direct admin connection (advisory lock and `create database` need a
+/// session), so each test owns its jobs and rows. Returns its URL through
+/// the transaction-mode pooler (`AROH_TEST_POOLER`).
+pub async fn pg_url() -> String {
     let base = std::env::var("AROH_TEST_PG").expect("AROH_TEST_PG is set; run crates/aroh-server/tests/run.sh");
     let admin = PgPoolOptions::new().max_connections(1).connect(&format!("{base}/postgres")).await.expect("admin connects");
     let name = format!("t_{}", Uuid::now_v7().simple());
@@ -34,7 +35,17 @@ pub async fn pg() -> PgPool {
     db::query(&format!("create database {name} template aroh_template")).execute(&admin).await.expect("clone template");
     db::query("select pg_advisory_unlock(4242)").execute(&admin).await.expect("unlock");
     admin.close().await;
-    PgPoolOptions::new().max_connections(8).connect(&format!("{base}/{name}")).await.expect("test db connects")
+    format!("{}/{name}", pooler())
+}
+
+/// Opens a pool of 8 connections on a fresh database from [`pg_url`].
+pub async fn pg() -> PgPool {
+    PgPoolOptions::new().max_connections(8).connect(&pg_url().await).await.expect("test db connects")
+}
+
+/// Base URL of the transaction-mode pooler every test pool connects through.
+pub fn pooler() -> String {
+    std::env::var("AROH_TEST_POOLER").expect("AROH_TEST_POOLER is set; run crates/aroh-server/tests/run.sh")
 }
 
 /// Inserts a new `auth.users` row that has allowed AI use, and returns its id.

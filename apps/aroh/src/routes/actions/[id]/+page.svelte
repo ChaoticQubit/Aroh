@@ -42,7 +42,7 @@
 	let draft = $state('');
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	let notesTimer: ReturnType<typeof setTimeout> | undefined;
-	const dictation = new Dictation(speech, (text) => (draft = text));
+	const dictation = new Dictation(speech, () => draft, (text) => (draft = text));
 	type LogPick = 'planned' | 'done' | 'skipped';
 	const LOG: { value: LogPick; label: string }[] = [
 		{ value: 'planned', label: 'Not done' },
