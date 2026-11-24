@@ -23,7 +23,7 @@ export type Call = (method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, bod
 export type KeyInfo = { setting_id: string; vendor: string; last4: string; updated_at: string };
 
 /** One run of `GET /v1/runs`; `personas` are the slugs of the coaches its snapshot holds. */
-export type RunSummary = { run_id: string; goal_id: string | null; workflow: string; state: string; created_at: string; updated_at: string; personas?: string[] };
+export type RunSummary = { run_id: string; goal_id: string | null; workflow: string; state: string; created_at: string; updated_at: string; personas?: string[]; plugin_id?: string | null; plugin_version?: number | null };
 
 /** One intake question of the new-goal run. Number questions may carry a unit and slider bounds; runs from before units have none. */
 export type Question = {
@@ -51,8 +51,8 @@ export type RunStatus = {
 	retryable?: boolean;
 };
 
-/** One run event; `body.type` is the event kind. */
-export type RunEvent = { seq: number; at_ms: number; body: { type: string; step?: string; error?: string; name?: string } };
+/** One run event; `body.type` is the event kind, `body.persona` the coach slug of an agent step's `step_started`. */
+export type RunEvent = { seq: number; at_ms: number; body: { type: string; step?: string; persona?: string; error?: string; name?: string } };
 
 /** A run as `GET /v1/runs/{id}` returns it; `summary` is the proposal and its outcome when there is one. */
 export type RunView = {
@@ -378,6 +378,33 @@ export class Engine {
 	/** Saves the owner's run time limit, 1 to 120 minutes, for runs started or retried after. */
 	setRunLimit(minutes: number): Promise<EngineResult<{ minutes: number }>> {
 		return this.request('PUT', '/v1/settings/run-limit', { minutes });
+	}
+
+	/** Whether the owner's AI consent is on file: `ai_consent_at` of `GET /v1/account` is set. */
+	async consent(): Promise<EngineResult<boolean>> {
+		const r = await this.request<{ ai_consent_at?: string | null }>('GET', '/v1/account');
+		return r.ok ? { ok: true, value: typeof r.value.ai_consent_at === 'string' && r.value.ai_consent_at !== '' } : r;
+	}
+
+	/**
+	 * Records the owner's consent to send goal text to their AI provider (`PUT /v1/account/consent`),
+	 * required before the first agent run. Resolves true when stored, false when this server has no
+	 * account endpoints (404), so older self-hosted servers keep working.
+	 */
+	async giveConsent(): Promise<EngineResult<boolean>> {
+		try {
+			const a = await this.call('PUT', '/v1/account/consent', { ai: true });
+			if (a.status === 404) return { ok: true, value: false };
+			if (a.status !== 200 && a.status !== 201 && a.status !== 204) return { ok: false, reason: 'error', message: failure(a) };
+			return { ok: true, value: true };
+		} catch (e) {
+			return offline(e);
+		}
+	}
+
+	/** Asks the server to delete the account (15-day grace, Q76): 202 with the purge date; the app signs out after. */
+	deleteAccount(): Promise<EngineResult<{ purge_after: string }>> {
+		return this.request('DELETE', '/v1/account', undefined, [202]);
 	}
 
 	/** Answers a run's human node. */

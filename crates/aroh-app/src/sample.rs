@@ -174,6 +174,7 @@ fn extras(conn: &Connection, clock: &mut Hlc, goal: &Goal, now: DateTime<Utc>) -
             goal_id: Some(goal.id.clone()),
             name: name.into(),
             toml: format!("name = \"{name}\"\n"),
+            created_run_id: None,
             updated_at: String::new(),
             deleted: false,
         };

@@ -8,6 +8,7 @@ const LATER: &[&str] = &[
     include_str!("../../../supabase/migrations/20261127000000_goal_redesign.sql"),
     include_str!("../../../supabase/migrations/20261127010000_goal_files_text.sql"),
     include_str!("../../../supabase/migrations/20261128000000_action_cards.sql"),
+    include_str!("../../../supabase/migrations/20261203000000_run_provenance.sql"),
 ];
 const CREATED: &[&str] = &[
     include_str!("../../../supabase/migrations/20261126010000_places.sql"),

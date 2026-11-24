@@ -207,6 +207,7 @@ impl Writer<'_> {
             goal_id: None,
             name: name.to_string(),
             toml: text.to_string(),
+            created_run_id: None,
             updated_at: String::new(),
             deleted: false,
         };

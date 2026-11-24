@@ -21,6 +21,7 @@
   window.prompt = (m) => (note(`dialog prompt ${m}`), null);
   let six, piano, save, reading, snap, hooked, work, list;
   let signedIn = true;
+  const SPOKEN = 'Move the long run to Saturday morning,  keep two easy runs on weekdays and swap the Thursday intervals for hills because my knee feels better on soft ground. '.repeat(3).trim();
   let transient = false;
   let decided = false;
   const setup = async () => {
@@ -117,6 +118,8 @@
       if (cmd === 'app_account' && signedIn) return ok({ signed_in: true, email: 'owner.with.a.long.address@example.com', user_id: snap.goals[0]?.user_id ?? null });
       if (cmd === 'app_sync') return ok({ pushed: 0, pulled: 0 });
       if (cmd === 'plugin:aroh-speech|open_settings') return ok(null);
+      if (cmd === 'plugin:aroh-speech|start') return ok(null);
+      if (cmd === 'plugin:aroh-speech|stop') return ok({ transcript: SPOKEN });
       if (cmd === 'app_engine') {
         const a = JSON.parse(init?.body ?? '{}');
         try {
@@ -187,6 +190,13 @@
     document.querySelector('button[aria-label="Color 3"]')?.click();
     await sleep(600);
   };
+  const openFolds = async () => {
+    for (const b of [...document.querySelectorAll('main button[aria-expanded="false"]')]) {
+      b.click();
+      await sleep(250);
+    }
+    await sleep(600);
+  };
   const runAgain = (edit) => async () => {
     [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Run again')?.click();
     await until('run again sheet', () => text().includes('again?'), 6000).catch(() => note('result run-again-sheet fail no sheet'));
@@ -206,6 +216,66 @@
     await sleep(1200);
     const left = !text().includes('Run again with these answers') && text().includes('Replan with these answers');
     await result('run-again-cancel', left && first()?.value === saved, `saved "${saved}" now "${first()?.value}" left ${left}`);
+  };
+  const composer = () => document.querySelector('main textarea[placeholder="Message your personas"]');
+  const openChat = async () => {
+    const head = [...document.querySelectorAll('main button[aria-expanded]')].find((b) => b.textContent.trim().startsWith('Chat'));
+    if (head?.getAttribute('aria-expanded') === 'false') head.click();
+    await sleep(800);
+  };
+  const leaveAndReturn = async (path) => {
+    await go('/today');
+    await sleep(800);
+    await go(path);
+    await sleep(2000);
+    await openChat();
+  };
+  const chatDraft = (path) => async () => {
+    await openChat();
+    L.type(composer(), 'Draft kept  across pages', false);
+    await sleep(600);
+    await leaveAndReturn(path);
+    const now = composer()?.value;
+    await result('chat-draft-kept', now === 'Draft kept  across pages', `value "${now}"`);
+    composer()?.scrollIntoView({ block: 'center' });
+  };
+  const chatVoice = async () => {
+    await openChat();
+    const mic = [...document.querySelectorAll('main button')].find((b) => b.getAttribute('aria-label') === 'Speak a message');
+    mic?.click();
+    await sleep(900);
+    [...document.querySelectorAll('main button')].find((b) => b.getAttribute('aria-label') === 'Stop speaking')?.click();
+    await sleep(1200);
+    const el = composer();
+    const cs = el && getComputedStyle(el);
+    const line = cs ? parseFloat(cs.lineHeight) : 0;
+    const grown = !!el && el.clientHeight > line * 4 && el.clientHeight <= line * 6 + 40;
+    const scrolls = !!el && el.scrollHeight > el.clientHeight + 4 && cs.overflowY === 'auto';
+    await result('chat-voice-composer', !!mic && el?.value === SPOKEN && grown && scrolls && parseFloat(cs.fontSize) >= 16, `mic ${!!mic} same ${el?.value === SPOKEN} h=${el?.clientHeight} line=${line} sh=${el?.scrollHeight} overflow=${cs?.overflowY} font=${cs?.fontSize}`);
+    el?.scrollIntoView({ block: 'center' });
+  };
+  const chatSent = (path) => async () => {
+    await openChat();
+    const msg = `Please keep Sundays free ${Date.now() % 1000}`;
+    L.type(composer(), msg, false);
+    await sleep(300);
+    [...document.querySelectorAll('main button')].find((b) => b.getAttribute('aria-label') === 'Send')?.click();
+    await sleep(700);
+    const shown = text().includes(msg);
+    await leaveAndReturn(path);
+    const kept = text().includes(msg);
+    await result('chat-sent-kept', shown && kept && composer()?.value === '', `shown ${shown} kept ${kept} composer "${composer()?.value}"`);
+    [...document.querySelectorAll('main li')].reverse().find((li) => li.textContent.includes(msg))?.scrollIntoView({ block: 'center' });
+  };
+  const cardDraft = (path) => async () => {
+    const box = () => document.querySelector('main textarea');
+    L.type(box(), 'Lighter  sets please', false);
+    await sleep(600);
+    await go('/today');
+    await sleep(800);
+    await go(path);
+    await sleep(2000);
+    await result('card-draft-kept', box()?.value === 'Lighter  sets please', `value "${box()?.value}"`);
   };
   const runAgainBlocked = async () => {
     const b = [...document.querySelectorAll('main button')].find((x) => x.textContent.trim() === 'Run again');
@@ -235,12 +305,16 @@
     { name: '07-goal-plan', path: `/goals/${save?.id}`, wait: 'Plan to approve', max: 5 },
     { name: '08-goal-stopped', path: `/goals/${piano?.id}`, wait: 'Stopped', max: 3 },
     { name: '09-goal-working', path: `/goals/${reading?.id}`, wait: 'Working', max: 3 },
+    { name: '09h-goal-chat-draft', path: `/goals/${piano?.id}`, wait: 'Stopped', one: true, prep: chatDraft(`/goals/${piano?.id}`) },
+    { name: '09i-goal-chat-voice', path: `/goals/${piano?.id}`, wait: 'Stopped', one: true, prep: chatVoice },
+    { name: '09j-goal-chat-sent', path: `/goals/${piano?.id}`, wait: 'Stopped', one: true, prep: chatSent(`/goals/${piano?.id}`) },
     { name: '08b-goal-failed-retry', path: `/goals/${piano?.id}`, wait: 'Failed', max: 3, before: () => (transient = true) },
     { name: '09b-run-again-sheet', path: `/goals/${save?.id}`, wait: 'Agents are idle', one: true, before: () => (decided = true), prep: runAgain(false) },
     { name: '09c-run-again-edit', path: `/goals/${save?.id}`, wait: 'Agents are idle', max: 5, before: () => (decided = true), prep: runAgain(true) },
     { name: '09e-run-again-cancel', path: `/goals/${save?.id}`, wait: 'Agents are idle', one: true, before: () => (decided = true), prep: runAgainCancel },
     { name: '09f-run-again-plan-waiting', path: `/goals/${save?.id}`, wait: 'Plan to approve', one: true, prep: runAgainBlocked },
     { name: '09d-run-again-no-answers', path: `/goals/${six?.id}`, wait: 'questions to answer', one: true, prep: runAgain(false) },
+    { name: '09b-goal-all-open', path: `/goals/${save?.id}`, wait: 'Plan to approve', max: 12, prep: openFolds },
     { name: '10-new-goal', path: '/goals/new', wait: 'Create goal' },
     { name: '11-new-goal-category', path: '/goals/new', prep: () => newGoal(true) },
     { name: '12-inbox', path: '/inbox', wait: 'questions to answer' },
@@ -248,7 +322,10 @@
     { name: '13-log', path: '/log' },
     { name: '14-settings', path: '/settings', max: 7 },
     { name: '15-settings-profile', path: '/settings/profile' },
-    { name: '16-settings-run-limit', path: '/settings', one: true, prep: async () => L.show('Time limit per run') },
+    { name: '16-settings-agents', path: '/settings/agents', max: 3 },
+    { name: '16b-settings-key', path: '/settings/key', max: 3 },
+    { name: '16c-settings-key-more', path: '/settings/key', max: 3, prep: async () => (text().includes('More providers') && tapText('More providers'), await sleep(600)) },
+    { name: '16d-settings-delete', path: '/settings/delete' },
     { name: '17-settings-location', path: '/settings/location' },
     { name: '17b-settings-location-on', path: '/settings/location', prep: async () => {
       [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Continue')?.click();
@@ -266,6 +343,7 @@
       await sleep(1200);
     } },
     { name: '26-action-chat', path: `/actions/${work?.id}/chat`, max: 3 },
+    { name: '26b-action-chat-draft', path: `/actions/${work?.id}/chat`, one: true, prep: cardDraft(`/actions/${work?.id}/chat`) },
     { name: '27-replan-updated', path: '/today', one: true, prep: replanPhase({ kind: 'updated', text: 'Updated: moved Read one chapter of The Joy of X to Tue 15:00, removed Walk.', tone: 'done', runId: 'gate-replan', undo: true }) },
     { name: '28-replan-failed', path: '/calendar', one: true, prep: replanPhase({ kind: 'failed', text: 'Could not replan. The run stopped: the model provider did not answer after 3 tries.', tone: 'missed', runId: 'gate-replan' }) }
   ];
@@ -281,6 +359,14 @@
     await go(s.path === '/inbox' ? '/today' : '/inbox');
     await go(s.path);
     await sleep(1200);
+    if (/Goals that plan themselves|Step \d of 4/.test(text())) {
+      const { data } = await import('/src/lib/app/data.svelte.ts');
+      await L.invoke('app_set_setting', { name: 'setup_done', value: 'true' });
+      await data.load();
+      await note(`reopen ${s.name} after onboarding came up`);
+      await go(s.path);
+      await sleep(1200);
+    }
     if (s.wait) await until(`${s.wait} on ${s.name}`, () => text().includes(s.wait), 20000).catch(() => note(`result wait-${s.name} fail no "${s.wait}"`));
     if (s.prep) await s.prep();
     await sleep(600);
@@ -354,6 +440,7 @@
     el.scrollIntoView({ block: 'center' });
     await sleep(500);
     el.focus();
+    const took = document.activeElement === el;
     await until('keyboard', () => window.visualViewport.height < innerHeight - 150, 5000).catch(() => {});
     await sleep(900);
     const vv = window.visualViewport;
@@ -373,7 +460,7 @@
     await shot(`keyboard/${String(n).padStart(2, '0')}-${name}`);
     const stayed = document.activeElement === el && window.visualViewport.height < innerHeight - 150;
     const ok = opened && stayed && clear && !tabOnKb && above && barOk && wideOk && font >= 16;
-    await result(`keyboard-${name}`, ok, `kb=${opened ? Math.round(innerHeight - vv.height) : 'none'} stayed=${stayed} clear=${clear ? 'yes' : hit?.tagName} tab=${tabOnKb ? 'on' : 'off'} f=${Math.round(r.top)}-${Math.round(r.bottom)}/${Math.round(kbTop)} ${font}px`);
+    await result(`keyboard-${name}`, ok, `${ok ? '' : `took=${took} now=${document.activeElement?.tagName}${document.activeElement?.id ? '#' + document.activeElement.id : ''} `}kb=${opened ? Math.round(innerHeight - vv.height) : 'none'} stayed=${stayed} clear=${clear ? 'yes' : hit?.tagName} tab=${tabOnKb ? 'on' : 'off'} f=${Math.round(r.top)}-${Math.round(r.bottom)}/${Math.round(kbTop)} ${font}px`);
     await spaces(name, el);
     el.blur();
     await sleep(900);
@@ -410,23 +497,23 @@
     const qs = answers().length;
     await note(`question inputs ${qs}`);
     for (let i = 0; i < qs; i++) await kbField(n++, `question-${i + 1}`, `/goals/${six?.id}`, () => answers()[i]);
-    for (const out of [false, true]) {
-      signedIn = !out;
+    for (const page of ['/settings/key', '/settings/agents']) {
       await go('/inbox');
-      await go('/settings');
+      await go(page);
       await sleep(2500);
       const names = textFields().map(nameOf);
-      await note(`settings ${out ? 'signed-out' : 'signed-in'} text fields ${names.length}`);
-      for (const [i, name] of names.entries()) await kbField(n++, `settings-${out ? 'out-' : ''}${name}`, '/settings', () => textFields()[i]);
+      await note(`settings ${page} text fields ${names.length}`);
+      for (const [i, name] of names.entries()) await kbField(n++, `settings-${page.split('/').pop()}-${name}`, page, () => textFields()[i]);
     }
     signedIn = true;
     await go('/inbox');
     await go(`/goals/${save?.id}`);
     await sleep(2500);
+    await openFolds();
     const given = () => [...document.querySelectorAll('main input[id*="-a-"]')].filter(visible);
     const gs = given().length;
     await note(`given answers ${gs}`);
-    for (let i = 0; i < gs; i++) await kbField(n++, `given-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i]);
+    for (let i = 0; i < gs; i++) await kbField(n++, `given-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i], openFolds);
     decided = true;
     for (let i = 0; i < gs; i++) await kbField(n++, `run-again-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i], runAgain(true));
     decided = false;
@@ -448,6 +535,31 @@
         await kbField(n++, `action-${tag}-${i + 1}-${name}`.slice(0, 50), path, () => textFields()[i], prep);
       }
     }
+    const { data } = await import('/src/lib/app/data.svelte.ts');
+    signedIn = false;
+    await L.invoke('app_set_setting', { name: 'setup_done', value: 'false' });
+    await data.load();
+    await until('onboarding', () => text().includes('Get started'), 15000);
+    tapText('Get started');
+    await sleep(700);
+    tapText('Continue with email');
+    await sleep(700);
+    for (const label of ['Email', 'Password']) await kbField(n++, `onboarding-${label.toLowerCase()}`, '/today', () => L.field(label));
+    tapText('Back');
+    await sleep(700);
+    tapText('Use my own server');
+    await sleep(700);
+    for (const label of ['Supabase project URL', 'Supabase anon key', 'Aroh server URL']) await kbField(n++, `onboarding-${label.toLowerCase().replace(/ /g, '-')}`, '/today', () => L.field(label));
+    tapText('Back');
+    await sleep(700);
+    tapText('Not now');
+    await sleep(700);
+    tapText('Continue');
+    await sleep(700);
+    await kbField(n++, 'onboarding-first-goal', '/today', () => L.field('What do you want to reach?'));
+    signedIn = true;
+    tapText('Skip, show me the app');
+    await until('app back', () => text().includes('Dashboard'), 15000);
   };
 
   const NATIVE = /^(Speak a message|Speak a log entry|Stop speaking|Photo|File|Log with a photo|Open Settings)$/;
@@ -520,7 +632,7 @@
   };
 
   try {
-    await until('app rendered', () => text().includes('Skip for now') || (text().includes('Calendar') && text().includes('Dashboard')), 120000);
+    await until('app rendered', () => text().includes('Get started') || (text().includes('Calendar') && text().includes('Dashboard')), 120000);
     await skipSetup();
     await setup();
     screenList();
@@ -532,6 +644,7 @@
     await result('overflow-all', lightBad === 0, `${lightBad} screens with overflow`);
     if (!smoke) await screens('dark');
     await theme('light');
+    await sleep(6000);
     if (only.length) {
       await go('/inbox');
       await sleep(2500);

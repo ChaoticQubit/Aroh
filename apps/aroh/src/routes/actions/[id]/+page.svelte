@@ -12,6 +12,8 @@
 	import { cardProblem, voiceLog } from '$lib/ui/action/edit';
 	import type { Card, CardLog } from '$lib/ui/action/card';
 	import { Dictation, speech } from '$lib/app/speech.svelte';
+	import { deviceKeep, readDraft, writeDraft } from '$lib/app/chatkeep';
+	import { untrack } from 'svelte';
 	import { formatDay, formatTime, formatYmd } from '$lib/ui/format';
 
 	const SAVE_MS = 400;
@@ -32,6 +34,12 @@
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	let notesTimer: ReturnType<typeof setTimeout> | undefined;
 	const dictation = new Dictation(speech, (text) => (draft = text));
+	const keep = deviceKeep();
+	$effect(() => {
+		const key = `cardpage:${id}`;
+		untrack(() => (draft = readDraft(keep, key)));
+	});
+	$effect(() => writeDraft(keep, `cardpage:${id}`, draft));
 
 	/** Reads the card page of the action in the URL; a gone action shows why. */
 	async function load(actionId: string) {

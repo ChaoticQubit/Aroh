@@ -144,7 +144,30 @@ pub async fn app_sign_in(app: AppHandle, state: State<'_, AppState>, email: Stri
     }
     let config = supabase(&state)?;
     let session = if create { auth::sign_up(&config, &email, &password).await } else { auth::sign_in_password(&config, &email, &password).await }.map_err(text)?;
-    let adopted = with_core(&state, |c| {
+    signed_in(&app, &state, config, session).await
+}
+
+/// Signs in with Apple (Q76): asks the iOS plugin for an Apple identity token bound to the
+/// SHA-256 of a fresh nonce, trades it with the raw nonce for a GoTrue session, then adopts
+/// the account and syncs like `app_sign_in`. Errors with the Apple or server reason.
+#[tauri::command]
+pub async fn app_sign_in_apple(app: AppHandle, state: State<'_, AppState>) -> Result<Account, String> {
+    use tauri_plugin_aroh_ios::IosExt;
+    #[derive(serde::Deserialize)]
+    struct Apple {
+        id_token: String,
+    }
+    let config = supabase(&state)?;
+    let nonce = format!("{}{}", uuid::Uuid::now_v7().simple(), uuid::Uuid::now_v7().simple());
+    let apple: Apple = app.ios().call("apple_sign_in", json!({ "nonce": nonce })).await?;
+    let session = auth::sign_in_id_token(&config, "apple", &apple.id_token, &nonce).await.map_err(text)?;
+    signed_in(&app, &state, config, session).await
+}
+
+/// Adopts the new session's account for every local row, restarts realtime and syncs;
+/// signs out again when the adoption fails. Returns the account state.
+async fn signed_in(app: &AppHandle, state: &State<'_, AppState>, config: Config, session: auth::Session) -> Result<Account, String> {
+    let adopted = with_core(state, |c| {
         local::adopt(&mut c.conn, &session.user_id)?;
         c.user_id = session.user_id.clone();
         aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone())?;
@@ -154,8 +177,8 @@ pub async fn app_sign_in(app: AppHandle, state: State<'_, AppState>, email: Stri
         let _ = auth::sign_out(Some(&config)).await;
         return Err(e);
     }
-    crate::realtime::restart(&app);
-    if let Err(e) = run_sync(&app, config).await {
+    crate::realtime::restart(app);
+    if let Err(e) = run_sync(app, config).await {
         eprintln!("aroh: first sync failed: {e}");
     }
     Ok(account_of(Some(&session)))

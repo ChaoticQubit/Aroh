@@ -134,6 +134,7 @@ pub fn run() {
             commands::app::app_dev_seed,
             commands::app::app_dev_mark,
             commands::engine::app_sign_in,
+            commands::engine::app_sign_in_apple,
             commands::engine::app_sign_out,
             commands::engine::app_account,
             commands::engine::app_sync,

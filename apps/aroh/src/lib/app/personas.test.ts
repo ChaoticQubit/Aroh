@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coachesOn, editError, groupByTeam, loadCoaches, type PersonaView } from './personas';
+import { coachesOn, editError, groupByTeam, loadCoaches, pluginsUsed, type PersonaView } from './personas';
 import type { Snapshot } from './client';
 
 const SAFETY = 'Safety: no individual investment, tax or legal advice; refer to a licensed financial professional for those.';
@@ -57,6 +57,29 @@ describe('persona library', () => {
 			['intake-interviewer', 'intake-interviewer']
 		]);
 		expect(coachesOn(views, rows, [], 'none')).toEqual([]);
+	});
+
+	it('counts runs per coach and marks coaches and plugins an agent made in this goal as new (Q72)', () => {
+		const rows = [
+			{ id: '1', goal_id: 'g1', name: 'practice-coach', created_run_id: 'r2' },
+			{ id: '2', goal_id: 'g1', name: 'old-coach', created_run_id: 'other-goal-run' }
+		];
+		const runs = [
+			{ run_id: 'r1', personas: ['goal-planner'], plugin_id: 'p1', plugin_version: 1 },
+			{ run_id: 'r2', personas: ['goal-planner', 'practice-coach'], plugin_id: 'p2', plugin_version: 2 }
+		];
+		const coaches = coachesOn(views, rows, runs, 'g1');
+		expect(coaches.map((c) => [c.name, c.runs, c.fresh])).toEqual([
+			['goal-planner', 2, false],
+			['practice-coach', 1, true],
+			['old-coach', 0, false]
+		]);
+		const plugins = [
+			{ id: 'p2', name: 'Reading dashboard', version: 2, created_run_id: 'r2' },
+			{ id: 'p1', name: 'Reading dashboard', version: 1, created_run_id: null }
+		];
+		expect(pluginsUsed(plugins, runs)).toEqual([{ name: 'Reading dashboard', version: 2, runs: 2, fresh: true }]);
+		expect(pluginsUsed([], [])).toEqual([]);
 	});
 
 	it('loads the library and the coaches of one goal, empty when offline', async () => {

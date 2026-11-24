@@ -161,7 +161,7 @@
 	}
 </script>
 
-<div bind:this={grid} class="flex flex-col overflow-hidden rounded-md border border-border bg-bg">
+<div bind:this={grid} class="flex flex-col overflow-hidden rounded-sm border border-border bg-bg">
 	<div class="grid border-b border-border" style="grid-template-columns: 52px repeat({days.length}, minmax(0, 1fr))">
 		<div></div>
 		{#each columns as c (c.date)}

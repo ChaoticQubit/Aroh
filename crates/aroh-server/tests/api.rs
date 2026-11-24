@@ -1018,6 +1018,12 @@ async fn a_music_goal_runs_with_the_music_team_category_and_template() {
     assert_eq!(view["status"]["status"], "done", "{view}");
     assert_eq!(api.count("select count(*) from public.plugins where goal_id::text = $1 and enabled and version = 1 and name = 'music'", &goal).await, 1);
     assert_eq!(api.count("select count(*) from public.trackers where goal_id::text = $1", &goal).await, 3);
+    assert_eq!(api.count("select count(*) from public.plugins where created_run_id::text = $1 and version = 1", &run).await, 1, "the plugin row names the run that made it");
+    assert_eq!(api.count("select count(*) from public.runs r join public.plugins p on p.id = r.plugin_id where r.id::text = $1 and r.plugin_version = p.version", &run).await, 1, "the run records the plugin version it stored");
+    let (_, runs) = api.call(Method::Get, &format!("/v1/runs?goal_id={goal}"), Some(&t), None).await;
+    assert_eq!(runs[0]["plugin_version"], 1, "{runs}");
+    let started_steps = api.count("select count(*) from public.run_events where run_id::text = $1 and kind = 'step_started' and payload->'body' ? 'persona'", &run).await;
+    assert!(started_steps >= 4, "every agent step names its persona: {started_steps}");
     let calls: Vec<String> = models.sent().iter().map(body_text).filter(|b| b.contains("\"stream\":true")).collect();
     assert_eq!(calls.len(), 5, "intake, research, plan, cards, plugin");
     assert!(calls.iter().all(|b| !b.contains("You are Goal planner") && !b.contains("You are Goal researcher")));

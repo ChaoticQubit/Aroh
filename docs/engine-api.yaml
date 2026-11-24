@@ -1550,8 +1550,8 @@ components:
       description: |-
         One row of the run list behind the Inbox: ids, workflow, lifecycle
         state, times, and the sorted slugs of the personas its snapshot holds
-        (the coaches that work on the run). `waiting_human` runs need the
-        owner. Newest first.
+        (the coaches that work on the run), and the plugin and version it used.
+        `waiting_human` runs need the owner. Newest first.
       required:
       - run_id
       - workflow
@@ -1572,6 +1572,16 @@ components:
           type: array
           items:
             type: string
+        plugin_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        plugin_version:
+          type:
+          - integer
+          - 'null'
+          format: int64
         run_id:
           type: string
           format: uuid

@@ -64,8 +64,14 @@ export type ActionEdit = { id: string; start: string; end: string };
 /** A goal row of the Goals list. */
 export type GoalRow = { id: string; title: string; category: string; slot: CategorySlot; deadline: string | null; autonomy: AutonomyLabel };
 
-/** One coach (persona) as the library screens show it; `locked` are the safety rules a copy keeps. */
-export type CoachView = { name: string; display_name: string; role: string; instructions: string; guardrails: string[]; locked: string[]; source: 'builtin' | 'library' };
+/**
+ * One coach (persona) as screens show it; `locked` are the safety rules a copy keeps. On a goal page `runs` counts the goal's runs it
+ * worked in and `fresh` is true when an agent created it during one of them (Q72).
+ */
+export type CoachView = { name: string; display_name: string; role: string; instructions: string; guardrails: string[]; locked: string[]; source: 'builtin' | 'library'; runs?: number; fresh?: boolean };
+
+/** A plugin a goal's runs used: name, the newest version used, runs that used it, and `fresh` when a run of this goal made it. */
+export type PluginUsed = { name: string; version: number; runs: number; fresh: boolean };
 
 /** One team's coaches under a header with the dot of its category slot, or none for Shared. */
 export type CoachGroup = { title: string; slot: CategorySlot | null; personas: CoachView[] };

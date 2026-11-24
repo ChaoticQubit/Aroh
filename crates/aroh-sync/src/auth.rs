@@ -92,6 +92,25 @@ pub async fn password_session(config: &Config, email: &str, password: &str) -> R
     token(config, "password", json!({"email": email.trim(), "password": password})).await
 }
 
+/// Trades a native identity token (Sign in with Apple) for a session without touching
+/// the keychain. `nonce` is the raw nonce whose SHA-256 the app handed to Apple; GoTrue
+/// hashes it again and compares. Errors on an empty token or a refusal.
+pub async fn id_token_session(config: &Config, provider: &str, id_token: &str, nonce: &str) -> Result<Session> {
+    if id_token.is_empty() || nonce.is_empty() {
+        return Err(Error::Auth("Apple returned no identity token".into()));
+    }
+    token(config, "id_token", json!({"provider": provider, "id_token": id_token, "nonce": nonce})).await
+}
+
+/// Signs in with a native identity token and stores the session in the keychain.
+/// Input: the project config, the provider ("apple"), the token and the raw nonce.
+/// Output: the new session.
+pub async fn sign_in_id_token(config: &Config, provider: &str, id_token: &str, nonce: &str) -> Result<Session> {
+    let session = id_token_session(config, provider, id_token, nonce).await?;
+    save(&session)?;
+    Ok(session)
+}
+
 /// Creates an account through GoTrue sign-up and returns its session
 /// without touching the keychain. Errors when the project requires email
 /// confirmation (no session comes back) or the email is taken.
@@ -200,6 +219,17 @@ mod tests {
             String::from_utf8_lossy(&seen).to_lowercase()
         });
         (url, served)
+    }
+
+    #[tokio::test]
+    async fn apple_sign_in_trades_the_id_token_and_raw_nonce_for_a_session() {
+        let (url, served) = gotrue_once().await;
+        let config = Config::new(&url, "sb_publishable_test_key_0001").unwrap();
+        let session = id_token_session(&config, "apple", "header.payload.sig", "raw-nonce").await.unwrap();
+        assert_eq!(session.user_id, "0190f2a0-0000-7000-8000-00000000000a");
+        let head = served.await.unwrap();
+        assert!(head.starts_with("post /auth/v1/token?grant_type=id_token "), "{head}");
+        assert!(id_token_session(&config, "apple", "", "raw-nonce").await.is_err(), "an empty token never reaches the server");
     }
 
     #[tokio::test]

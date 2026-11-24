@@ -96,42 +96,63 @@ window.AROH_LIB = (() => {
     const local = { supabase_url: cfg.supabaseUrl, supabase_anon_key: cfg.anonKey, server_url: cfg.engineUrl };
     for (const [name, value] of Object.entries(local)) if (value) await invoke('app_set_setting', { name, value });
   };
+  const ONBOARDING = ['Get started', 'Not now', 'Continue', 'Add later', 'Skip, show me the app'];
+  const onboarding = () => text().includes('Goals that plan themselves') || /Step \d of 4/.test(text());
   const skipSetup = async () => {
-    for (let step = 0; step < 4 && text().includes('Skip for now'); step++) {
-      button('Skip for now').click();
-      await sleep(500);
+    for (let step = 0; step < 8 && onboarding(); step++) {
+      const next = ONBOARDING.find((name) => [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === name && !b.disabled));
+      if (!next) break;
+      button(next).click();
+      await sleep(700);
     }
   };
   const started = async () => {
     await useLocalStack();
-    await until('app or setup rendered', () => text().includes('Skip for now') || (text().includes('Calendar') && text().includes('Dashboard')), 120000);
+    await until('app or onboarding rendered', () => onboarding() || (text().includes('Calendar') && text().includes('Dashboard')), 120000);
     await skipSetup();
     await until('app rendered', () => text().includes('Calendar') && text().includes('Dashboard'), 120000);
     await sleep(3000);
     await invoke('app_dev_mark', { mark: 'start' });
   };
   const signUp = async (shot) => {
+    await useLocalStack();
     await go('/settings');
-    type(field('Project URL'), cfg.supabaseUrl, true);
-    await sleep(800);
-    type(field('Anon key'), cfg.anonKey, true);
-    await sleep(800);
-    type(field('Server URL'), cfg.engineUrl, true);
-    await sleep(800);
+    await until('settings', () => text().includes('Sign in or create an account') || text().includes('Sign out'));
+    if (text().includes('Sign out')) return;
+    button('Sign in or create an accountAgents and sync need an account.').click();
+    await until('onboarding', onboarding);
+    button('Get started').click();
+    await sleep(700);
+    button('Continue with email').click();
+    await sleep(700);
     type(field('Email'), cfg.email, false);
     if (shot) await mark(shot);
-    for (let attempt = 0; attempt < 10 && !text().includes('Signed in.'); attempt++) {
+    for (let attempt = 0; attempt < 10 && !text().includes('Add your Claude key'); attempt++) {
       if (attempt > 0) await sleep(5000);
       type(field('Password'), cfg.password, false);
+      await sleep(300);
       button(text().includes('already') ? 'Sign in' : 'Create account').click();
-      await sleep(500);
-      await until('sign-in answer', () => text().includes('Signed in.') || text().includes('server answered') || text().includes('rror'), 120000);
+      await until('sign-in answer', () => text().includes('Add your Claude key') || text().includes('server answered') || text().includes('rror'), 120000);
     }
-    await until('signed in', () => text().includes('Signed in.'), 5000);
+    await until('signed in', () => text().includes('Add your Claude key'), 5000);
   };
   const saveKey = async () => {
+    if (text().includes('Add your Claude key')) {
+      type(field('Claude API key'), cfg.key, false);
+      await sleep(300);
+      button('Save key').click();
+      await until('key saved', () => text().includes('Your goals and the AI') || text().includes('refused'), 120000);
+      button('I agree').click();
+      await until('consent', () => text().includes('What Aroh may use'), 60000);
+      await skipSetup();
+      await until('app rendered', () => text().includes('Calendar') && text().includes('Dashboard'), 60000);
+      return;
+    }
+    await go('/settings/key');
+    await until('key page', () => text().includes('Monthly budget'));
     type(field('API key'), cfg.key, false);
-    button('Test connection').click();
+    await sleep(300);
+    button('Save and test').click();
     await until('key test', () => text().includes('Connected.') || text().includes('refused'));
     await until('key status', () => text().includes(`ends ${cfg.key.slice(-4)}`));
   };

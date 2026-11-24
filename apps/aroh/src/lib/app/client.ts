@@ -67,7 +67,7 @@ export type Preference = {
 };
 
 /** A persona row; only its name and goal are shown. */
-export type Persona = { id: string; goal_id: string | null; name: string };
+export type Persona = { id: string; goal_id: string | null; name: string; created_run_id?: string | null };
 
 /** The chosen model provider. Keys never come back from the store. */
 export type ProviderSetting = { id: string; vendor: string; model: string; is_default: boolean };
@@ -258,6 +258,9 @@ export const account = () => invoke<Account>('app_account');
 
 /** Signs in, or with `create` signs up; the device adopts the account and syncs. */
 export const signIn = (email: string, password: string, create: boolean) => ((storage = null), invoke<Account>('app_sign_in', { email, password, create }));
+
+/** Signs in with Apple's native sheet (iPhone only); the device adopts the account and syncs. */
+export const signInApple = () => ((storage = null), invoke<Account>('app_sign_in_apple'));
 
 /** Signs out; local rows stay. */
 export const signOut = () => ((storage = null), invoke<Account>('app_sign_out'));

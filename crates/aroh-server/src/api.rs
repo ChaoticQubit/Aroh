@@ -339,7 +339,7 @@ async fn save_plugin(
     json: Result<Json<SavePlugin>, JsonRejection>,
 ) -> Result<(StatusCode, Json<PluginView>), ServerError> {
     let req = body(json, true)?;
-    let row = writer(&s, user).store(goal_id, &req.bundle_toml, Uuid::now_v7().to_string(), req.enable.unwrap_or(true)).await?;
+    let row = writer(&s, user).store(goal_id, &req.bundle_toml, Uuid::now_v7().to_string(), req.enable.unwrap_or(true), None).await?;
     Ok((StatusCode::CREATED, Json(PluginView::from(&row))))
 }
 

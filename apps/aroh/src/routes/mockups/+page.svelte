@@ -22,6 +22,7 @@
 	import ClockFrame from './ClockFrame.svelte';
 	import GoalRedesign from './goal-redesign/GoalRedesign.svelte';
 	import PlanView from './plan-view/PlanView.svelte';
+	import Redesign from './redesign/Redesign.svelte';
 	import ActionCards from './action-cards/ActionCards.svelte';
 	import LocationExplainer from '$lib/ui/components/location/LocationExplainer.svelte';
 	import LockScreenNudge from '$lib/ui/components/location/LockScreenNudge.svelte';
@@ -53,7 +54,7 @@
 
 	setClock({ now: mockNow, zone: mockZone });
 
-	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location' | 'plan-view' | 'action-cards';
+	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location' | 'plan-view' | 'redesign' | 'action-cards';
 	const VIEWS: { value: View; label: string }[] = [
 		{ value: 'tokens', label: 'Tokens' },
 		{ value: 'inputs', label: 'Inputs' },
@@ -66,6 +67,7 @@
 		{ value: 'goal-redesign', label: 'Goals redesign' },
 		{ value: 'location', label: 'Location' },
 		{ value: 'plan-view', label: 'Plan, back, dashboard' },
+		{ value: 'redesign', label: 'Redesign' },
 		{ value: 'action-cards', label: 'Action cards' }
 	];
 	const keep = () => {};
@@ -153,7 +155,9 @@
 
 <svelte:head><title>Aroh Mockups</title></svelte:head>
 
-{#if solo !== null && view === 'action-cards'}
+{#if solo !== null && view === 'redesign'}
+	<Redesign {inboxCount} {solo} />
+{:else if solo !== null && view === 'action-cards'}
 	<ActionCards {inboxCount} {solo} />
 {:else if solo !== null}
 	<PlanView {inboxCount} {solo} />
@@ -257,6 +261,8 @@
 			<GoalRedesign {inboxCount} />
 		{:else if view === 'plan-view'}
 			<PlanView {inboxCount} />
+		{:else if view === 'redesign'}
+			<Redesign {inboxCount} />
 		{:else if view === 'action-cards'}
 			<ActionCards {inboxCount} />
 		{:else if view === 'location'}

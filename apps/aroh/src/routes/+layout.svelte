@@ -8,10 +8,13 @@
 	import type { Place } from '$lib/ui/shell/nav';
 	import { backTarget, nextStack, screenTitle } from '$lib/ui/shell/back';
 	import { data } from '$lib/app/data.svelte';
-	import SetupScreen from '$lib/ui/screens/SetupScreen.svelte';
-	import { healthConnect, notificationPermission, setSetting } from '$lib/app/client';
+	import OnboardingScreen, { type OnboardingActions } from '$lib/ui/screens/OnboardingScreen.svelte';
+	import * as client from '$lib/app/client';
 	import { syncCalendars } from '$lib/app/calendar';
-	import { needsSetup, setupSteps, type SetupStep } from '$lib/app/setup';
+	import { engine } from '$lib/app/engine';
+	import { saveAndTestKey } from '$lib/app/keys';
+	import * as location from '$lib/app/location';
+	import { needsServer, onboardingStart } from '$lib/app/setup';
 	import { fitKeyboard } from '$lib/app/keyboard';
 	import { categoryList, inboxCount } from '$lib/app/views';
 
@@ -49,7 +52,15 @@
 	}
 	const count = $derived(data.snapshot ? inboxCount(data.snapshot) : 0);
 	const categories = $derived(data.snapshot ? categoryList(data.snapshot) : []);
-	const setup = $derived(data.snapshot ? needsSetup(data.snapshot.settings) : false);
+	let account = $state<{ signedIn: boolean; consentMissing: boolean } | null>(null);
+	const onboarding = $derived(data.snapshot && account ? onboardingStart(data.snapshot.settings, account) : null);
+	const setupDone = $derived(data.snapshot ? data.snapshot.settings.setup_done === 'true' : null);
+	$effect(() => {
+		if (bare || setupDone === null) return;
+		if (!setupDone) account = null;
+		void readAccount();
+	});
+	const apple = typeof navigator !== 'undefined' && /iPhone|iPad/.test(navigator.userAgent);
 	let wide = $state(false);
 
 	onMount(() => {
@@ -68,19 +79,64 @@
 	});
 
 	/**
-	 * Asks the OS for one first-launch permission; Calendar access also imports the calendars.
-	 * The server step asks nothing here: setup ends on it and opens Settings for the server.
+	 * Reads the sign-in state and, when signed in, whether the server lacks the owner's AI consent
+	 * (Q75). A server without account endpoints or no connection counts as not missing.
 	 */
-	async function allow(id: SetupStep['id']) {
-		if (id === 'notifications') await notificationPermission();
-		else if (id === 'calendar') await data.run(async () => (await setSetting('calendars', 'true'), await syncCalendars()));
-		else if (id === 'health') await healthConnect();
+	async function readAccount() {
+		const a = await client.account().catch(() => null);
+		const signedIn = a?.signed_in === true;
+		const consent = signedIn ? await engine.consent() : null;
+		account = { signedIn, consentMissing: consent?.ok === true && !consent.value };
 	}
 
-	/** Saves that setup ran, so it never shows again, and opens Settings to sign in. */
-	async function finishSetup() {
-		await data.run(() => setSetting('setup_done', 'true'));
-		await goto('/settings');
+	/** Turns a rejected call into its message, or null when it resolved. */
+	async function attempt(call: () => Promise<unknown>): Promise<string | null> {
+		try {
+			await call();
+			return null;
+		} catch (e) {
+			return String(e);
+		}
+	}
+
+	const actions: OnboardingActions = {
+		onapple: () => attempt(client.signInApple),
+		onemail: (email, password, create) => attempt(() => client.signIn(email, password, create)),
+		onserver: (supabaseUrl, anonKey, serverUrl) =>
+			attempt(async () => {
+				await client.setSetting('supabase_url', supabaseUrl);
+				await client.setSetting('supabase_anon_key', anonKey);
+				await client.setSetting('server_url', serverUrl);
+			}),
+		onkey: async (key) => {
+			const r = await saveAndTestKey(data.snapshot?.providers ?? [], 'anthropic', key);
+			await data.load();
+			return r.ok ? null : r.text;
+		},
+		onconsent: async () => {
+			const r = await engine.giveConsent();
+			return r.ok ? null : r.message;
+		},
+		onallow: async (id) => {
+			try {
+				if (id === 'notifications') return await client.notificationPermission();
+				if (id === 'calendar') await data.run(async () => (await client.setSetting('calendars', 'true'), await syncCalendars()));
+				else if (id === 'location') await location.enable();
+				else await client.healthConnect();
+				return true;
+			} catch (e) {
+				data.error = String(e);
+				return false;
+			}
+		},
+		ondone: (goal) => void finishOnboarding(goal)
+	};
+
+	/** Saves that onboarding ran, so it never shows again, and opens the first goal's form or Today. */
+	async function finishOnboarding(goal: string | null) {
+		await data.run(() => client.setSetting('setup_done', 'true'));
+		await readAccount();
+		await goto(goal ? `/goals/new?title=${encodeURIComponent(goal)}` : '/today');
 	}
 
 	/** Opens a tab, the Inbox or Settings. */
@@ -98,8 +154,8 @@
 	{@render children()}
 {:else}
 	<div class="fixed inset-x-0 top-0" style="height: var(--app-h, 100%)">
-		{#if setup}
-			<SetupScreen steps={setupSteps(data.snapshot?.settings ?? {})} onallow={allow} ondone={finishSetup} />
+		{#if onboarding}
+			<OnboardingScreen start={onboarding} signedIn={account?.signedIn} {apple} noServer={needsServer(data.snapshot?.settings ?? {})} {actions} />
 		{:else if wide}
 			<DesktopShell {title} {tab} {back} onback={goBack} inboxCount={count} {categories} onnavigate={navigate}>{@render body()}</DesktopShell>
 		{:else}

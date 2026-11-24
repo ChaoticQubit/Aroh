@@ -35,7 +35,7 @@ fn vault(pool: &PgPool) -> Vault {
 
 async fn run_row(pool: &PgPool, user: Uuid) -> RunId {
     let id = RunId::new();
-    let row = RunRow { id, user_id: user, goal_id: None, workflow: "test".into(), personas: BTreeMap::new() };
+    let row = RunRow { id, user_id: user, goal_id: None, workflow: "test".into(), personas: BTreeMap::new(), plugin_id: None, plugin_version: None };
     insert_run(pool, &row).await.unwrap();
     id
 }
@@ -45,7 +45,7 @@ fn state(seq: u64, status: &str) -> Value {
 }
 
 fn event(run_id: RunId, seq: u64, step: &str) -> Event {
-    Event { run_id, seq, at_ms: T0, body: EventBody::StepStarted { step: step.into() } }
+    Event { run_id, seq, at_ms: T0, body: EventBody::StepStarted { step: step.into(), persona: None } }
 }
 
 #[tokio::test]
@@ -181,7 +181,7 @@ async fn checkpoint_save_needs_the_next_step_and_writes_events() {
     store.save(Checkpoint { run_id: id, step: 2, state: state(2, "waiting_human") }).await.unwrap();
     let events = events_after(&pool, id, None).await.unwrap();
     assert_eq!(events.len(), 2, "the stale tail at seq 2 is gone");
-    assert_eq!(events[1].body, EventBody::StepStarted { step: "replayed".into() });
+    assert_eq!(events[1].body, EventBody::StepStarted { step: "replayed".into(), persona: None });
     let latest = store.latest(id).await.unwrap().unwrap();
     assert_eq!(latest.step, 2);
     let mirrored: String = db::query_scalar("select state from public.runs where id = $1").bind(id.0).fetch_one(&pool).await.unwrap();
@@ -437,7 +437,7 @@ async fn two_runners_on_postgres_never_advance_a_run_twice() {
         let mut input = serde_json::Map::new();
         input.insert("topic".into(), json!(format!("goal {i}")));
         let run = GraphRun::new(wf, input, Default::default(), io.as_ref()).await.unwrap();
-        let row = RunRow { id: run.run_id(), user_id: u, goal_id: None, workflow: "linear".into(), personas: BTreeMap::new() };
+        let row = RunRow { id: run.run_id(), user_id: u, goal_id: None, workflow: "linear".into(), personas: BTreeMap::new(), plugin_id: None, plugin_version: None };
         insert_run(&pool, &row).await.unwrap();
         runner().enqueue(&run).await.unwrap();
         ids.push(run.run_id());

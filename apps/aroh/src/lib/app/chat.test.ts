@@ -246,3 +246,17 @@ describe('run limits (Q60): the owner can stop a run and retry a stopped one', (
 		expect(fake.posts.map((p) => p.path)).toEqual(['/v1/runs/r1/cancel', '/v1/runs/r1/retry']);
 	});
 });
+
+describe('sent goal chat messages (B62)', () => {
+	it('shows a sent message at once and keeps it in the thread after the page opens again', async () => {
+		const data = new Map<string, string>();
+		const store = { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => void data.set(k, v), removeItem: (k: string) => void data.delete(k) };
+		const chat = new GoalChat('g2', 'Tell the agents anything.', store);
+		chat.handle({ type: 'send', text: 'Move my runs to the mornings' });
+		expect(texts(chat.messages)).toContain('Move my runs to the mornings');
+		await settle();
+		const again = new GoalChat('g2', 'Tell the agents anything.', store);
+		expect(texts(again.messages)).toEqual(['Tell the agents anything.', 'Move my runs to the mornings']);
+		expect(texts(new GoalChat('g3', 'Hi', store).messages)).toEqual(['Hi']);
+	});
+});

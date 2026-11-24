@@ -3,7 +3,7 @@ use crate::error::ServerError;
 use crate::io::{connect, Deps, RunIo};
 use crate::ledger::{goal_key, user_key, UsageWriter};
 use crate::queue::PgQueue;
-use crate::rows::{get_row, goal_deleted, insert_run, list_rows, prepare_reads, put_row, run_row, run_row_for, utc, RunRow};
+use crate::rows::{active_plugin, get_row, goal_deleted, insert_run, list_rows, prepare_reads, put_row, run_row, run_row_for, utc, RunRow};
 use crate::tools::local_text;
 use crate::vault::{check_vendor, KeyInfo};
 use crate::teams;
@@ -203,8 +203,8 @@ pub struct RunView {
 
 /// One row of the run list behind the Inbox: ids, workflow, lifecycle
 /// state, times, and the sorted slugs of the personas its snapshot holds
-/// (the coaches that work on the run). `waiting_human` runs need the
-/// owner. Newest first.
+/// (the coaches that work on the run), and the plugin and version it used.
+/// `waiting_human` runs need the owner. Newest first.
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct RunSummary {
     pub run_id: Uuid,
@@ -214,6 +214,8 @@ pub struct RunSummary {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub personas: Vec<String>,
+    pub plugin_id: Option<Uuid>,
+    pub plugin_version: Option<i64>,
 }
 
 /// Result of a key test: whether one 1-token call with the stored key
@@ -490,7 +492,9 @@ impl Engine {
         let io = RunIo::build(self.deps.clone(), user, goal, None, &personas, events.clone()).await?;
         let limits = self.limits(user, goal).await?;
         let run = GraphRun::new(wf, input, limits, &io).await?.with_time_limit(self.limit_for(user, goal).await?.ms());
-        let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name, personas };
+        let plugin = active_plugin(&self.deps.pool, user, goal).await?;
+        let (plugin_id, plugin_version) = (plugin.map(|p| p.0), plugin.map(|p| p.1));
+        let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name, personas, plugin_id, plugin_version };
         insert_run(&self.deps.pool, &row).await?;
         let runner = self.runner(events, io);
         runner.enqueue(&run).await?;
@@ -929,9 +933,9 @@ impl Engine {
     /// those in `state` (such as `waiting_human`) and of `goal`. Never
     /// another user's runs. Returns the summaries, newest first.
     pub async fn list_runs(&self, user: Uuid, state: Option<&str>, goal: Option<Uuid>) -> Result<Vec<RunSummary>, ServerError> {
-        let rows: Vec<(Uuid, Option<Uuid>, String, String, DateTime<Utc>, DateTime<Utc>, Vec<String>)> = db::query_as(
+        let rows: Vec<(Uuid, Option<Uuid>, String, String, DateTime<Utc>, DateTime<Utc>, Vec<String>, Option<Uuid>, Option<i64>)> = db::query_as(
             "select id, goal_id, workflow, state, created_at, updated_at,
-                    array(select k from jsonb_object_keys(personas) k order by k) from public.runs
+                    array(select k from jsonb_object_keys(personas) k order by k), plugin_id, plugin_version from public.runs
              where user_id = $1 and ($2::text is null or state = $2) and ($3::uuid is null or goal_id = $3)
              order by created_at desc, id desc limit $4",
         )
@@ -943,7 +947,7 @@ impl Engine {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(run_id, goal_id, workflow, state, created_at, updated_at, personas)| RunSummary {
+            .map(|(run_id, goal_id, workflow, state, created_at, updated_at, personas, plugin_id, plugin_version)| RunSummary {
                 run_id,
                 goal_id,
                 workflow,
@@ -951,6 +955,8 @@ impl Engine {
                 created_at,
                 updated_at,
                 personas,
+                plugin_id,
+                plugin_version,
             })
             .collect())
     }

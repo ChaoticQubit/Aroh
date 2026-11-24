@@ -1,11 +1,11 @@
 <script lang="ts">
 	import Check from '@lucide/svelte/icons/check';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import type { Snippet } from 'svelte';
 	import { Button } from '$lib/ui/primitives/button';
 	import * as Card from '$lib/ui/primitives/card';
 	import { Input } from '$lib/ui/primitives/input';
+	import Fold from '../Fold.svelte';
 	import Render from '../Render.svelte';
 	import Segmented from '../Segmented.svelte';
 	import StatusChip from '../StatusChip.svelte';
@@ -17,19 +17,18 @@
 	import { getClock } from '$lib/ui/clock';
 	import { formatDay } from '$lib/ui/format';
 	import type { ChatMessage, OnChange, ViewSpec } from '$lib/ui/contract';
-	import type { CoachView, GoalHeader } from '$lib/ui/screens/types';
+	import type { CoachView, GoalHeader, PluginUsed } from '$lib/ui/screens/types';
 	import type { AgentSettings } from '$lib/app/newgoal';
 	import type { GoalStatus } from '$lib/app/goalcard';
 	import type { RunAnswer, RunView } from '$lib/app/engine';
 	import type { Speech } from '$lib/app/speech.svelte';
 
 	/**
-	 * The one goal card: header, a status card saying what agents do or wait for (Stop, Retry,
-	 * Change time limit), research steps or what research found, the goal's view sections
-	 * (progress, Upcoming, plugin dashboards), the answers given (editable, `onanswers` gets the
-	 * changed ones; with `rerun`, `onrerun` gets all of them for Run again and `oncancelrerun` drops the edits), the attachments (`files`; Photo and File with `upload`, `onfiles`, `onlink`,
-	 * `onretryfile` for a failed upload, `onremove`), the goal chat with its questions and plan, and an agents row opening a sheet
-	 * with per-goal controls (`oncontrols`) and coaches.
+	 * The goal page (Q72, Q76): header and status card (Stop, Retry, Change time limit), then
+	 * cards: Overview, Plan (open while agents wait, closed after approval), Questions and answers
+	 * (`onanswers`; open for Run again with `rerun`, `onrerun`, `oncancelrerun`), Research with
+	 * files, Agent activity (`steps`), Coaches and plugins (`coaches`, `plugins`, `oncontrols`)
+	 * and Chat, where questions and the plan to approve appear.
 	 */
 	let {
 		goal,
@@ -45,6 +44,7 @@
 		defaultLimit = 5,
 		oncontrols,
 		coaches = [],
+		plugins = [],
 		oncoaches,
 		versions = [],
 		version = '',
@@ -77,6 +77,7 @@
 		defaultLimit?: number;
 		oncontrols?: (value: AgentSettings) => void;
 		coaches?: CoachView[];
+		plugins?: PluginUsed[];
 		oncoaches?: () => void;
 		versions?: { value: string; label: string }[];
 		version?: string;
@@ -99,18 +100,33 @@
 
 	const id = $props.id();
 	const { zone } = getClock();
-	let open = $state(false);
 	let edits = $state<Record<string, string>>({});
 	const changed = $derived(answers.filter((a) => edits[a.id] !== undefined && edits[a.id].trim() !== (a.answer ?? '')).map((a) => ({ ...a, answer: edits[a.id].trim() || null })));
 	const limit = $derived(controls.runLimit ?? defaultLimit);
-	const summary = $derived(
-		[
-			controls.autonomy[0].toUpperCase() + controls.autonomy.slice(1),
-			controls.reminders ? 'Reminders on' : 'Reminders off',
-			controls.useCalendars ? 'Calendars on' : 'Calendars off',
-			`${limit} min limit`
-		].join(' · ')
+	const waiting = $derived(status.chip === 'Waiting for you');
+	const planSections = $derived(view.sections.filter((x) => x.items.some((i) => i.kind === 'action_list')));
+	const overviewSections = $derived(view.sections.filter((x) => !planSections.includes(x)));
+	const sessions = $derived(planSections.flatMap((x) => x.items).reduce((n, i) => n + (i.kind === 'action_list' ? i.actions.length : 0), 0));
+	const fresh = $derived(coaches.some((c) => c.fresh) || plugins.some((p) => p.fresh));
+	const overviewSummary = $derived(goal.deadline ? `By ${formatDay(goal.deadline, zone)}` : `${view.sections.length} sections`);
+	const planSummary = $derived(waiting ? 'Waiting for you' : sessions === 1 ? '1 upcoming session' : `${sessions} upcoming sessions`);
+	const researchSummary = $derived([research ? `${research.sources.length} sources` : 'No research yet', files.length ? `${files.length} ${files.length === 1 ? 'file' : 'files'}` : ''].filter(Boolean).join(' · '));
+	const activitySummary = $derived(steps.length ? (steps.find((x) => !x.done)?.text ?? `${steps.length} steps done`) : 'No run yet');
+	const helperSummary = $derived(
+		[coaches.length === 1 ? '1 coach' : `${coaches.length} coaches`, plugins.length ? (plugins.length === 1 ? '1 plugin' : `${plugins.length} plugins`) : '', `${controls.autonomy[0].toUpperCase()}${controls.autonomy.slice(1)}`, `${limit} min limit`].filter(Boolean).join(' · ')
 	);
+	let folds = $state({ overview: true, plan: false, answers: false, research: false, activity: false, helpers: false, chat: false });
+	let open = $state(false);
+	$effect(() => {
+		folds.plan = waiting;
+		if (waiting) folds.chat = true;
+	});
+	$effect(() => {
+		if (open) {
+			folds.helpers = true;
+			open = false;
+		}
+	});
 
 	/** Sends the changed answers and clears the edits. */
 	function send() {
@@ -129,6 +145,10 @@
 		edits = {};
 		oncancelrerun?.();
 	}
+
+	$effect(() => {
+		if (rerun) folds.answers = true;
+	});
 
 	$effect(() => {
 		if (rerun) document.getElementById(`${id}-answers`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -156,54 +176,43 @@
 		{/if}
 	</Card.Root>
 
-	{#if status.stop && steps.length}
-		<section class="flex flex-col gap-2" aria-labelledby="{id}-steps">
-			<h3 id="{id}-steps" class="text-sm font-semibold">What the agents are doing</h3>
-			<ol class="flex flex-col divide-y divide-border rounded-sm border border-border bg-bg">
-				{#each steps as s (s.text)}
-					<li class="flex min-h-11 items-center gap-3 px-3 py-2 text-sm text-fg">
-						{#if s.done}<Check class="size-4 shrink-0 text-status-done" aria-label="Done" />{:else}<LoaderCircle class="size-4 shrink-0 animate-spin text-status-planned" aria-label="Running" />{/if}
-						{s.text}
-					</li>
-				{/each}
-			</ol>
-		</section>
-	{/if}
-	{#if research}
-		<section class="flex flex-col gap-2" aria-labelledby="{id}-found">
-			<h3 id="{id}-found" class="text-sm font-semibold">{status.retry ? 'Found before it stopped' : 'Research found'}</h3>
-			<p class="text-sm">{research.summary}</p>
-			{#if research.sources.length}
-				<ul class="flex flex-col gap-1 text-xs text-muted">
-					{#each research.sources as s (s.url)}<li><a class="underline" href={s.url} target="_blank" rel="noreferrer">{s.title}</a></li>{/each}
-				</ul>
-			{/if}
-		</section>
-	{/if}
+	<Fold title="Overview" summary={overviewSummary} bind:open={folds.overview}>
+		{#each overviewSections as section (section.title)}
+			<section class="flex flex-col gap-3" aria-label={section.title}>
+				<h4 class="text-sm font-semibold text-fg">{section.title}</h4>
+				<div class="grid gap-4 @3xl:grid-cols-2">
+					{#each section.items as item, i (i)}
+						<div class="min-w-0 {item.kind === 'line_chart' ? '@3xl:col-span-2' : ''}"><Render spec={item} /></div>
+					{/each}
+				</div>
+			</section>
+		{:else}
+			<p class="text-sm text-muted">Progress shows here once sessions are logged.</p>
+		{/each}
+		{@render children?.()}
+	</Fold>
 
-	{#if versions.length > 1}
-		<Card.Root size="sm" class="gap-3 px-4">
-			<p class="text-sm font-medium">Dashboard</p>
-			<Segmented label="Dashboard version" bind:value={() => version, (v) => onversion?.(v)} options={versions} />
-		</Card.Root>
-	{/if}
-
-	{@render children?.()}
-
-	{#each view.sections as section (section.title)}
-		<section class="flex flex-col gap-3" aria-label={section.title}>
-			<h3 class="text-sm font-semibold text-fg">{section.title}</h3>
-			<div class="grid gap-4 @3xl:grid-cols-2">
-				{#each section.items as item, i (i)}
-					<div class="min-w-0 {item.kind === 'line_chart' || item.kind === 'action_list' ? '@3xl:col-span-2' : ''}"><Render spec={item} /></div>
-				{/each}
+	<Fold title="Plan" summary={planSummary} bind:open={folds.plan}>
+		{#if waiting}<p class="text-sm">The agents wait for you in Chat below: answer their questions or approve the plan.</p>{/if}
+		{#each planSections as section (section.title)}
+			<section class="flex flex-col gap-3" aria-label={section.title}>
+				<h4 class="text-sm font-semibold text-fg">{section.title}</h4>
+				{#each section.items as item, i (i)}<div class="min-w-0"><Render spec={item} /></div>{/each}
+			</section>
+		{:else}
+			{#if !waiting}<p class="text-sm text-muted">No sessions planned yet.</p>{/if}
+		{/each}
+		{#if versions.length > 1}
+			<div class="flex flex-col gap-2">
+				<p class="text-sm font-medium">Dashboard version</p>
+				<Segmented label="Dashboard version" bind:value={() => version, (v) => onversion?.(v)} options={versions} />
 			</div>
-		</section>
-	{/each}
+		{/if}
+	</Fold>
 
 	{#if answers.length}
-		<section class="flex flex-col gap-2" aria-labelledby="{id}-answers">
-			<h3 id="{id}-answers" class="text-sm font-semibold">Your answers</h3>
+		<div id="{id}-answers" class="scroll-mt-4"></div>
+		<Fold title="Questions and answers" summary={answers.length === 1 ? '1 answer' : `${answers.length} answers`} bind:open={folds.answers}>
 			<ul class="flex flex-col gap-3">
 				{#each answers as a (a.id)}
 					<li class="flex flex-col gap-1">
@@ -217,47 +226,72 @@
 			{:else}
 				<div class="flex"><Button variant="outline" size="touch" disabled={!changed.length} onclick={send}>Replan with these answers</Button></div>
 			{/if}
-		</section>
+		</Fold>
 	{/if}
 
-	{#if onlink}<Attachments {files} {upload} {onfiles} {onlink} onretry={onretryfile} {onremove} />{/if}
-
-	<button type="button" class="flex min-h-14 items-center gap-3 rounded-sm border border-border bg-bg px-3 py-2 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => (open = true)}>
-		<span class="flex flex-1 flex-col">
-			<span class="text-sm font-medium">Agents and coaches</span>
-			<span class="text-xs text-muted">{summary}</span>
-		</span>
-		<ChevronRight class="size-4 text-muted" aria-hidden="true" />
-	</button>
-
-	<section class="flex flex-col gap-2" aria-labelledby="{id}-chat">
-		<h3 id="{id}-chat" class="text-sm font-semibold">Chat about this goal</h3>
-		<PersonaChat {messages} onchange={onchat} echo={false} {voice} inline {planContext} slot={goal.slot} />
-	</section>
-</div>
-
-{#if open}
-	<div class="fixed inset-0 z-40 flex flex-col justify-end">
-		<button type="button" class="flex-1 bg-scrim outline-none" aria-label="Close" tabindex="-1" onclick={() => (open = false)}></button>
-		<div role="dialog" aria-labelledby="{id}-sheet" class="flex max-h-[85%] flex-col gap-4 overflow-y-auto rounded-t-[var(--radius-dialog)] border-t border-border bg-bg px-4 pt-2 pb-4">
-			<span class="mx-auto h-1 w-9 shrink-0 rounded-full bg-border-strong" aria-hidden="true"></span>
-			<div class="flex items-center justify-between">
-				<h2 id="{id}-sheet" class="text-lg font-semibold">Agents on this goal</h2>
-				<Button variant="ghost" size="touch" onclick={() => (open = false)}>Done</Button>
-			</div>
-			<AgentControls value={controls} limit="goal" {defaultLimit} onchange={(v) => oncontrols?.(v)} />
-			<section class="flex flex-col gap-2" aria-labelledby="{id}-coaches">
-				<h3 id="{id}-coaches" class="text-sm font-semibold">Coaches</h3>
-				{#if coaches.length}
-					<ul class="flex flex-col divide-y divide-border rounded-sm border border-border">
-						{#each coaches as c (c.name)}<li class="flex min-h-14 items-center px-3 py-2"><Persona name={c.display_name} note={c.role} /></li>{/each}
+	<Fold title="Research" summary={researchSummary} bind:open={folds.research}>
+		{#if research}
+			<div class="flex flex-col gap-2">
+				<p class="text-sm font-medium">{status.retry ? 'Found before it stopped' : 'What the agents found'}</p>
+				<p class="text-sm">{research.summary}</p>
+				{#if research.sources.length}
+					<ul class="flex flex-col gap-1 text-sm text-muted">
+						{#each research.sources as s (s.url)}<li class="break-words"><a class="underline" href={s.url} target="_blank" rel="noreferrer">{s.title}</a></li>{/each}
 					</ul>
-				{:else}
-					<p class="text-sm text-muted">No coach has worked on this goal yet.</p>
 				{/if}
-				{#if oncoaches}<div class="flex"><Button variant="outline" size="touch" onclick={() => oncoaches?.()}>All coaches</Button></div>{/if}
-			</section>
+			</div>
+		{:else}
+			<p class="text-sm text-muted">No research yet.</p>
+		{/if}
+		{#if onlink}<Attachments {files} {upload} {onfiles} {onlink} onretry={onretryfile} {onremove} />{/if}
+	</Fold>
+
+	<Fold title="Agent activity" summary={activitySummary} bind:open={folds.activity}>
+		{#if steps.length}
+			<ol class="flex flex-col divide-y divide-border rounded-sm border border-border">
+				{#each steps as s (s.text)}
+					<li class="flex min-h-11 items-center gap-3 px-3 py-2 text-sm text-fg">
+						{#if s.done}<Check class="size-4 shrink-0 text-status-done" aria-label="Done" />{:else}<LoaderCircle class="size-4 shrink-0 animate-spin text-status-planned" aria-label="Running" />{/if}
+						<span class="min-w-0 break-words">{s.text}</span>
+					</li>
+				{/each}
+			</ol>
+		{:else}
+			<p class="text-sm text-muted">No agent run on this goal yet.</p>
+		{/if}
+	</Fold>
+
+	<Fold title="Coaches and plugins" summary={helperSummary} bind:open={folds.helpers}>
+		{#snippet badge()}{#if fresh}<span class="rounded-sm bg-fg px-1.5 text-xs leading-5 font-medium text-bg">New</span>{/if}{/snippet}
+		{#if coaches.length || plugins.length}
+			<ul class="flex flex-col divide-y divide-border rounded-sm border border-border">
+				{#each coaches as c (c.name)}
+					<li class="flex min-h-14 items-center gap-3 px-3 py-2">
+						<span class="min-w-0 flex-1"><Persona name={c.display_name} note={c.role} /></span>
+						{#if c.fresh}<span class="shrink-0 rounded-sm border border-border px-1.5 text-xs leading-5 font-medium">New</span>{/if}
+						{#if c.runs}<span class="shrink-0 text-sm text-muted tabular-nums">{c.runs === 1 ? '1 run' : `${c.runs} runs`}</span>{/if}
+					</li>
+				{/each}
+				{#each plugins as p (p.name)}
+					<li class="flex min-h-14 items-center gap-3 px-3 py-2">
+						<span class="flex min-w-0 flex-1 flex-col"><span class="text-sm font-medium break-words">{p.name}</span><span class="text-xs text-muted">Plugin, v{p.version}</span></span>
+						{#if p.fresh}<span class="shrink-0 rounded-sm border border-border px-1.5 text-xs leading-5 font-medium">New</span>{/if}
+						{#if p.runs}<span class="shrink-0 text-sm text-muted tabular-nums">{p.runs === 1 ? '1 run' : `${p.runs} runs`}</span>{/if}
+					</li>
+				{/each}
+			</ul>
+		{:else}
+			<p class="text-sm text-muted">No coach has worked on this goal yet.</p>
+		{/if}
+		{#if oncoaches}<div class="flex"><Button variant="outline" size="touch" onclick={() => oncoaches?.()}>All coaches</Button></div>{/if}
+		<div class="flex flex-col gap-2 border-t border-border pt-3">
+			<p class="text-sm font-medium">Agent controls</p>
+			<AgentControls value={controls} limit="goal" {defaultLimit} onchange={(v) => oncontrols?.(v)} />
 			<p class="text-xs text-muted">Each run stops after {limit} min of active work. Locked and hand-edited actions are never moved without asking.</p>
 		</div>
-	</div>
-{/if}
+	</Fold>
+
+	<Fold title="Chat" summary="Tell the agents anything about this goal." bind:open={folds.chat}>
+		<div class="min-w-0"><PersonaChat {messages} onchange={onchat} echo={false} {voice} inline {planContext} slot={goal.slot} keep="goal:{goal.id}" /></div>
+	</Fold>
+</div>

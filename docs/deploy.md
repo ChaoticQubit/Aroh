@@ -83,6 +83,15 @@ Later, if you install the Supabase CLI, these files were applied by hand. Mark t
 
 The topic is the bundle id, `io.aroh.app`. Debug builds register as `sandbox` and release builds as `production`. Every device reports its own environment, so one engine serves both.
 
+### Sign in with Apple
+
+The app signs in natively (Authentication Services) and hands Apple's identity token to Supabase, so no Services ID, OAuth key or 6-monthly secret rotation is needed. A Services ID and key are only for a web sign-in, which Aroh does not have.
+
+- On the App ID `io.aroh.app` (step 22), under **Capabilities**, tick **Sign In with Apple** (leave the server-to-server notification endpoint empty) and click **Save**. Xcode signing then picks up the `com.apple.developer.applesignin` entitlement the app already declares.
+- In Supabase, open **Authentication** > **Sign In / Providers** > **Apple**, turn it on, and add `io.aroh.app` under **Client IDs**. Leave the OAuth secret fields empty. Click **Save**.
+- Sign in with Apple creates an account on first use, so it follows the sign-up setting of step 17.
+- Check on a real iPhone: onboarding, **Continue with Apple**. The simulator needs an Apple ID signed in under its Settings.
+
 ## F. Vercel: project and environment
 
 27. Push the code to a GitHub repository you own (a fork of Aroh works). Pick the branch Vercel deploys from; this runbook calls it `prod`.

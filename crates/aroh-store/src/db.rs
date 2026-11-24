@@ -438,6 +438,35 @@ CREATE TABLE action_logs (
     deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
 ) STRICT;
 CREATE INDEX action_logs_goal ON action_logs (goal_id, logged_at);
+"#, r#"
+CREATE TABLE personas_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    goal_id TEXT,
+    name TEXT NOT NULL,
+    toml TEXT NOT NULL,
+    created_run_id TEXT,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO personas_next SELECT id, user_id, goal_id, name, toml, NULL, updated_at, deleted FROM personas;
+DROP TABLE personas;
+ALTER TABLE personas_next RENAME TO personas;
+CREATE TABLE plugins_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    goal_id TEXT,
+    name TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    bundle_toml TEXT NOT NULL,
+    enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+    created_run_id TEXT,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO plugins_next SELECT id, user_id, goal_id, name, version, bundle_toml, enabled, NULL, updated_at, deleted FROM plugins;
+DROP TABLE plugins;
+ALTER TABLE plugins_next RENAME TO plugins;
 "#];
 
 /// Schema version after every migration ran.

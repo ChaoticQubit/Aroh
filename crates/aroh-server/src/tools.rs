@@ -719,7 +719,7 @@ struct StorePluginArgs {
 async fn store_plugin(env: &ToolEnv, draft: &PluginDraft, ctx: &ToolContext) -> Result<Value, ToolError> {
     let goal = env.live_goal().await?;
     let writer = crate::plugins::Writer { pool: &env.pool, hlc: &env.hlc, user: env.user };
-    let row = writer.store(goal, &draft.bundle_toml, row_id(ctx, "plugin")?, true).await.map_err(|e| match e {
+    let row = writer.store(goal, &draft.bundle_toml, row_id(ctx, "plugin")?, true, ctx.run_id).await.map_err(|e| match e {
         crate::error::ServerError::Setup(m) => ToolError::InvalidArgs(m),
         other => failed(other),
     })?;

@@ -2,7 +2,7 @@ use crate::db;
 use crate::error::ServerError;
 use aroh_domain::hlc::Hlc;
 use aroh_domain::recur;
-use aroh_domain::rows::{Action, ActionSeries, Record};
+use aroh_domain::rows::{Action, ActionSeries, Plugin, Record};
 use aroh_domain::schema::TableDef;
 use aroh_domain::seed;
 use chrono::{DateTime, TimeZone, Utc};
@@ -180,9 +180,9 @@ pub async fn materialize(
     Ok(added)
 }
 
-/// One `runs` row as the engine reads it: owner, goal, workflow name and
-/// the persona snapshot (name to TOML text) taken at start.
-/// Every store derives a run's `user_id` from this row.
+/// One `runs` row as the engine reads it: owner, goal, workflow name, the
+/// persona snapshot (name to TOML text) taken at start, and the goal plugin
+/// version the run used. Every store derives a run's `user_id` from this row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunRow {
     pub id: RunId,
@@ -190,6 +190,8 @@ pub struct RunRow {
     pub goal_id: Option<Uuid>,
     pub workflow: String,
     pub personas: BTreeMap<String, String>,
+    pub plugin_id: Option<Uuid>,
+    pub plugin_version: Option<i64>,
 }
 
 /// Inserts the `runs` row of a new run in state `queued`.
@@ -197,14 +199,18 @@ pub struct RunRow {
 /// Returns the database error, if any.
 pub async fn insert_run(pool: &PgPool, run: &RunRow) -> Result<(), ServerError> {
     let personas = serde_json::to_value(&run.personas).expect("persona map serializes");
+    assert_eq!(run.plugin_id.is_some(), run.plugin_version.is_some(), "a run records a plugin id with its version");
     db::query(
-        "insert into public.runs (id, user_id, goal_id, workflow, state, personas) values ($1, $2, $3, $4, 'queued', $5)",
+        "insert into public.runs (id, user_id, goal_id, workflow, state, personas, plugin_id, plugin_version)
+         values ($1, $2, $3, $4, 'queued', $5, $6, $7)",
     )
     .bind(run.id.0)
     .bind(run.user_id)
     .bind(run.goal_id)
     .bind(&run.workflow)
     .bind(personas)
+    .bind(run.plugin_id)
+    .bind(run.plugin_version)
     .execute(pool)
     .await?;
     Ok(())
@@ -214,16 +220,47 @@ pub async fn insert_run(pool: &PgPool, run: &RunRow) -> Result<(), ServerError> 
 /// Requests from users go through `run_row_for` instead.
 /// `None` when there is no such run.
 pub async fn run_row(pool: &PgPool, id: RunId) -> Result<Option<RunRow>, ServerError> {
-    let row: Option<(Uuid, Uuid, Option<Uuid>, String, Value)> =
-        db::query_as("select id, user_id, goal_id, workflow, personas from public.runs where id = $1")
+    type Columns = (Uuid, Uuid, Option<Uuid>, String, Value, Option<Uuid>, Option<i64>);
+    let row: Option<Columns> =
+        db::query_as("select id, user_id, goal_id, workflow, personas, plugin_id, plugin_version from public.runs where id = $1")
             .bind(id.0)
             .fetch_optional(pool)
             .await?;
-    row.map(|(id, user_id, goal_id, workflow, personas)| {
+    row.map(|(id, user_id, goal_id, workflow, personas, plugin_id, plugin_version)| {
         let personas = serde_json::from_value(personas).map_err(|e| ServerError::Db(format!("runs.personas: {e}")))?;
-        Ok(RunRow { id: RunId(id), user_id, goal_id, workflow, personas })
+        Ok(RunRow { id: RunId(id), user_id, goal_id, workflow, personas, plugin_id, plugin_version })
     })
     .transpose()
+}
+
+/// The id and version of `goal`'s active plugin (its enabled, live row with
+/// the highest version), read when a run starts. `None` without a goal or
+/// without an enabled plugin. Returns the database error, if any.
+pub async fn active_plugin(pool: &PgPool, user: Uuid, goal: Option<Uuid>) -> Result<Option<(Uuid, i64)>, ServerError> {
+    let Some(goal) = goal else {
+        return Ok(None);
+    };
+    let goal = goal.to_string();
+    let rows = list_rows::<Plugin>(pool, user, &[("goal_id", goal.clone())], false).await?;
+    aroh_plugins::versions::active(&rows, &goal)
+        .map(|p| Uuid::parse_str(&p.id).map(|id| (id, p.version)).map_err(|e| ServerError::Db(format!("plugins.id: {e}"))))
+        .transpose()
+}
+
+/// Records plugin row `plugin` as the version run `run` used, replacing the
+/// one read at start: a run that stores a plugin uses the version it stored.
+/// Only `user`'s run changes. Returns the database error, if any.
+pub async fn set_run_plugin(pool: &PgPool, user: Uuid, run: RunId, plugin: &Plugin) -> Result<(), ServerError> {
+    let id = Uuid::parse_str(&plugin.id).map_err(|e| ServerError::Db(format!("plugins.id: {e}")))?;
+    assert!(plugin.version >= 1, "plugin versions start at 1");
+    db::query("update public.runs set plugin_id = $1, plugin_version = $2 where id = $3 and user_id = $4")
+        .bind(id)
+        .bind(plugin.version)
+        .bind(run.0)
+        .bind(user)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Reads the `runs` row `id` only when `user` owns it.
