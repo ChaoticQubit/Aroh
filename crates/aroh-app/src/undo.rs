@@ -65,6 +65,48 @@ fn undo_one(conn: &Connection, clock: &mut Hlc, undo: &Value) -> Result<usize> {
     Ok(done)
 }
 
+/// What turning back run `run_id` would change (Q78): the live actions its applied
+/// proposals added (a catch-up) and how many existing actions they moved.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CatchUp {
+    pub added: Vec<Action>,
+    pub moved: usize,
+}
+
+/// The [`CatchUp`] of run `run_id`, read from the undo of each applied proposal in both
+/// shapes. Added actions deleted since are left out. Errors only on a store failure.
+pub fn catch_up(conn: &Connection, run_id: &str) -> Result<CatchUp> {
+    let mut added_ids = Vec::new();
+    let mut moved = 0;
+    for p in run_proposals(conn, run_id)?.into_iter().filter(|p| p.status == ProposalStatus::Applied) {
+        let undo = p.undo.unwrap_or(Value::Null);
+        for c in undo.get("changes").and_then(Value::as_array).into_iter().flatten() {
+            match (c.get("op").and_then(Value::as_str), c.get("action_id").and_then(Value::as_str)) {
+                (Some("delete"), Some(id)) => added_ids.push(id.to_string()),
+                (Some("restore"), Some(_)) => moved += 1,
+                _ => {}
+            }
+        }
+        for a in undo.get("actions").and_then(Value::as_array).into_iter().flatten() {
+            match (a.get("id").and_then(Value::as_str), a.get("before").filter(|b| !b.is_null())) {
+                (Some(id), None) => added_ids.push(id.to_string()),
+                (Some(_), Some(_)) => moved += 1,
+                _ => {}
+            }
+        }
+    }
+    let mut added = Vec::with_capacity(added_ids.len());
+    for id in added_ids {
+        match repo::get::<Action>(conn, &id) {
+            Ok(a) if !a.deleted => added.push(a),
+            Ok(_) | Err(aroh_store::Error::NotFound(_)) => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
+    added.sort_by_key(|a| a.start_at);
+    Ok(CatchUp { added, moved })
+}
+
 /// Turns back every applied proposal of run `run_id` in one transaction:
 /// moved actions return to their span, created ones are tombstoned, and
 /// each proposal becomes `Undone`. Errors with `Invalid` when the run has

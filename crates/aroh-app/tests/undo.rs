@@ -77,3 +77,43 @@ fn undo_run_reads_the_device_shape_and_skips_open_proposals() {
     assert_eq!((back.start_at, back.deleted), (original.start_at, false));
     assert_eq!(repo::get::<Proposal>(&conn, &open.id).unwrap().status, ProposalStatus::Proposed);
 }
+
+#[test]
+fn catch_up_lists_what_the_run_added_and_undo_keeps_the_late_done() {
+    let conn = db::open_in_memory().unwrap();
+    let mut clock = Hlc::new("00000000000000d1");
+    let mut late = samples::action();
+    late.updated_at = String::new();
+    let before = (late.start_at, late.end_at);
+    late.start_at += Duration::hours(2);
+    late.end_at += Duration::hours(2);
+    repo::put(&conn, &mut clock, &mut late).unwrap();
+    let mut added = samples::action();
+    added.id = "0195a1b2-0000-7000-8000-0000000000c2".into();
+    added.title = "Buy a scale (catch-up)".into();
+    added.updated_at = String::new();
+    repo::put(&conn, &mut clock, &mut added).unwrap();
+    let mut p = proposal(
+        "0195a1b2-0000-7000-8000-0000000000a4",
+        ProposalStatus::Applied,
+        json!({"changes": [
+            {"op": "restore", "action_id": late.id, "before": {"start_at": before.0, "end_at": before.1}, "deleted": false},
+            {"op": "delete", "action_id": added.id}
+        ]}),
+    );
+    repo::put(&conn, &mut clock, &mut p).unwrap();
+    let mut open = proposal("0195a1b2-0000-7000-8000-0000000000a5", ProposalStatus::Proposed, json!({"actions": [{"id": "0195a1b2-0000-7000-8000-0000000000c3", "before": null}]}));
+    repo::put(&conn, &mut clock, &mut open).unwrap();
+
+    let offer = undo::catch_up(&conn, RUN).unwrap();
+    assert_eq!(offer.added.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), vec![added.id.as_str()]);
+    assert_eq!(offer.moved, 1);
+
+    late.status = ActionStatus::Done;
+    late.done_at = Some(Utc.with_ymd_and_hms(2026, 11, 25, 9, 0, 0).unwrap());
+    repo::put(&conn, &mut clock, &mut late).unwrap();
+    undo::undo_run(&conn, &mut clock, RUN).unwrap();
+    let kept: Action = repo::get(&conn, &late.id).unwrap();
+    assert_eq!((kept.status, kept.done_at, kept.start_at), (ActionStatus::Done, late.done_at, before.0));
+    assert!(undo::catch_up(&conn, RUN).unwrap().added.is_empty(), "nothing is offered once undone");
+}

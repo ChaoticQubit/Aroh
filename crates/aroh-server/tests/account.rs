@@ -113,6 +113,7 @@ fn goal(u: Uuid, status: GoalStatus) -> Goal {
         reminders: true,
         use_calendars: true,
         run_limit_minutes: None,
+        ordered: false,
         updated_at: String::new(),
         deleted: false,
     }

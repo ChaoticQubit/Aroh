@@ -8,20 +8,24 @@
 	import { Button } from '$lib/ui/primitives/button';
 	import { Switch } from '$lib/ui/primitives/switch';
 	import StatusChip from '../StatusChip.svelte';
+	import Segmented from '../Segmented.svelte';
+	import { logState } from '$lib/ui/status';
 	import { getClock } from '$lib/ui/clock';
 	import { formatDay, formatDuration, formatTime } from '$lib/ui/format';
 	import type { ActionView } from '$lib/ui/contract';
 	import type { ActionEdit } from '$lib/ui/screens/types';
 
 	/**
-	 * Body of the action edit sheet: move the day and start time, change the duration in 15 minute
-	 * steps, toggle Fixed time, save, or delete after a confirm step. Emits `onsave` with
-	 * `{ id, start, end }`, `onlock` with the id and the new Fixed time, `ondelete` with the id and
-	 * `onclose` on cancel. `confirming` opens on the delete confirm.
+	 * Body of the action edit sheet: log the status (Not done, Done, Skipped) in any status, move the
+	 * day and start time, change the duration in 15 minute steps, toggle Fixed time, save, or delete
+	 * after a confirm step (Q78: a status is shown, never a lock). Emits `onstatus` with the id and
+	 * the picked status, `onsave` with `{ id, start, end }`, `onlock` with the id and the new Fixed
+	 * time, `ondelete` with the id and `onclose` on cancel. `confirming` opens on the delete confirm.
 	 */
 	let {
 		action,
 		confirming = false,
+		onstatus,
 		onsave,
 		onlock,
 		ondelete,
@@ -29,13 +33,22 @@
 	}: {
 		action: ActionView;
 		confirming?: boolean;
+		onstatus?: (id: string, status: LogPick) => void;
 		onsave?: (edit: ActionEdit) => void;
 		onlock?: (id: string, locked: boolean) => void;
 		ondelete?: (id: string) => void;
 		onclose?: () => void;
 	} = $props();
 
-	const { zone } = getClock();
+	type LogPick = 'planned' | 'done' | 'skipped';
+	const { now, zone } = getClock();
+	const LOG: { value: LogPick; label: string }[] = [
+		{ value: 'planned', label: 'Not done' },
+		{ value: 'done', label: 'Done' },
+		{ value: 'skipped', label: 'Skipped' }
+	];
+	let status = $derived<ActionView['status']>(action.status);
+	const chip = $derived(logState({ ...action, status }, now, zone));
 	const STEP = 15;
 	const MINUTE_MS = 60_000;
 	const titleId = $props.id();
@@ -64,11 +77,27 @@
 			<span class="size-2.5 shrink-0 rounded-full" style="background: var(--cat-{action.category})" aria-hidden="true"></span>
 			<h2 id={titleId} class="truncate text-lg font-semibold">{action.title}</h2>
 			{#if fixed}<Lock class="size-4 shrink-0 text-muted" aria-label="Fixed time" />{/if}
-			{#if action.status === 'missed'}<StatusChip tone="missed" label="Missed" />{/if}
+			{#if chip && status !== 'done'}<StatusChip tone={chip.tone} label={chip.label} />{/if}
 		</div>
 		<p class="truncate text-sm text-muted">{action.goalTitle}</p>
 	</div>
 	<Button variant="outline" size="touch" href="/actions/{action.id}"><NotebookText />Open session card</Button>
+	{#if onstatus}
+		<div class="flex items-center justify-between gap-3">
+			<span class="text-sm text-muted">Logged</span>
+			<Segmented
+				label="Log {action.title}"
+				options={LOG}
+				bind:value={
+					() => (status === 'missed' ? ('' as LogPick) : (status as LogPick)),
+					(v: LogPick) => {
+						status = v;
+						onstatus(action.id, v);
+					}
+				}
+			/>
+		</div>
+	{/if}
 
 	<dl class="flex flex-col divide-y divide-border rounded-sm border border-border">
 		{#each [{ name: 'Day', value: formatDay(startIso, zone), less: () => move(-1440), more: () => move(1440), step: 'one day' }, { name: 'Start', value: formatTime(startIso, zone), less: () => move(-STEP), more: () => move(STEP), step: `${STEP} min` }, { name: 'Duration', value: formatDuration(minutes), less: () => resize(-STEP), more: () => resize(STEP), step: `${STEP} min` }] as row (row.name)}

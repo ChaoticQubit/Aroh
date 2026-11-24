@@ -422,6 +422,11 @@ export class Engine {
 		return this.request('GET', `/v1/actions/${actionId}/replan`);
 	}
 
+	/** Reads the replan a miss of action `actionId` started, if any (Q78). */
+	missReplan(actionId: string): Promise<EngineResult<{ run_id: string | null }>> {
+		return this.request('GET', `/v1/actions/${actionId}/miss-replan`);
+	}
+
 	/** Starts the card coach on action `actionId` for `scope` with the owner's `text` (Q71). */
 	cardChat(actionId: string, scope: 'this' | 'future', text: string): Promise<EngineResult<{ goal_id: string; run_id: string }>> {
 		return this.request('POST', `/v1/actions/${actionId}/chat`, { scope, text });

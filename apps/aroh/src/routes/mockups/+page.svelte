@@ -24,6 +24,7 @@
 	import PlanView from './plan-view/PlanView.svelte';
 	import Redesign from './redesign/Redesign.svelte';
 	import ActionCards from './action-cards/ActionCards.svelte';
+	import WeekView from './week-view/WeekView.svelte';
 	import LocationExplainer from '$lib/ui/components/location/LocationExplainer.svelte';
 	import LockScreenNudge from '$lib/ui/components/location/LockScreenNudge.svelte';
 	import PlacesScreen from '$lib/ui/screens/PlacesScreen.svelte';
@@ -54,7 +55,7 @@
 
 	setClock({ now: mockNow, zone: mockZone });
 
-	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location' | 'plan-view' | 'redesign' | 'action-cards';
+	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location' | 'plan-view' | 'redesign' | 'action-cards' | 'week-view';
 	const VIEWS: { value: View; label: string }[] = [
 		{ value: 'tokens', label: 'Tokens' },
 		{ value: 'inputs', label: 'Inputs' },
@@ -68,7 +69,8 @@
 		{ value: 'location', label: 'Location' },
 		{ value: 'plan-view', label: 'Plan, back, dashboard' },
 		{ value: 'redesign', label: 'Redesign' },
-		{ value: 'action-cards', label: 'Action cards' }
+		{ value: 'action-cards', label: 'Action cards' },
+		{ value: 'week-view', label: 'Week view' }
 	];
 	const keep = () => {};
 	const EDIT = { onedit: keep, onlock: keep, ondelete: keep, onchoose: keep, inline: true };
@@ -159,6 +161,8 @@
 	<Redesign {inboxCount} {solo} />
 {:else if solo !== null && view === 'action-cards'}
 	<ActionCards {inboxCount} {solo} />
+{:else if solo !== null && view === 'week-view'}
+	<WeekView {inboxCount} {solo} />
 {:else if solo !== null}
 	<PlanView {inboxCount} {solo} />
 {:else}
@@ -265,6 +269,8 @@
 			<Redesign {inboxCount} />
 		{:else if view === 'action-cards'}
 			<ActionCards {inboxCount} />
+		{:else if view === 'week-view'}
+			<WeekView {inboxCount} />
 		{:else if view === 'location'}
 			<ul class="flex gap-6 overflow-x-auto pb-4">
 				{#each LOCATION as s (s.name)}

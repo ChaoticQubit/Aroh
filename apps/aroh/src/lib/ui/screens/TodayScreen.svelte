@@ -12,17 +12,18 @@
 	import { allDayOn, applyEdits } from './edits';
 	import { getClock } from '$lib/ui/clock';
 	import { formatDate, formatDuration, formatTime, formatYmd } from '$lib/ui/format';
-	import { actionStyle } from '$lib/ui/status';
+	import { actionStyle, logState } from '$lib/ui/status';
 	import type { ActionView, ComponentSpec, OnChange } from '$lib/ui/contract';
 	import type { ActionEdit, AllDayView, DayKind, DayPick } from './types';
 
 	/**
 	 * Today: date title with done count and next action, today's all-day events (a chip tap reopens
 	 * its kind), the kind question for the next unanswered all-day event, a Next up card (Mark done,
-	 * Move), today's actions with tinted edge and checkbox, check-in, one insight and the quick-log bar.
+	 * Move), today's actions with tinted edge, status chip ("Not logged yet" once ended, Q78) and a
+	 * checkbox in every status so a missed one can be done later, check-in, one insight and the quick-log bar.
 	 * Tapping an action opens the edit sheet (`inline` draws it in place for mockups). `onaction` gets
 	 * `{ id, status }`, `oncheckin` the answer, `onlog` the quick-log text (`voice` adds its mic),
-	 * `onedit`, `onlock`, `ondelete` and `onchoose` the calendar changes.
+	 * `onstatus` the sheet's status pick, `onedit`, `onlock`, `ondelete` and `onchoose` the calendar changes.
 	 */
 	let {
 		actions,
@@ -32,6 +33,7 @@
 		editing: openId = null,
 		confirming = false,
 		inline = false,
+		onstatus,
 		onaction,
 		oncheckin,
 		onlog,
@@ -48,6 +50,7 @@
 		editing?: string | null;
 		confirming?: boolean;
 		inline?: boolean;
+		onstatus?: (id: string, status: 'planned' | 'done' | 'skipped') => void;
 		onaction?: OnChange;
 		oncheckin?: OnChange;
 		onlog?: (text: string) => void;
@@ -159,6 +162,7 @@
 						<ul class="flex flex-col divide-y divide-border rounded-sm border border-border bg-bg">
 							{#each today as a (a.id)}
 								{@const look = actionStyle(a.status)}
+								{@const chip = logState(a, now, zone)}
 								<li class="flex min-h-15 items-center gap-3 py-1 pr-1 pl-4 {a.id === next?.id ? 'bg-surface' : ''}">
 									<svelte:element
 										this={onedit ? 'button' : 'div'}
@@ -175,21 +179,18 @@
 										</span>
 									</svelte:element>
 									{#if a.locked}<Lock class="size-4 shrink-0 text-muted" aria-label="Locked" />{/if}
-									{#if a.status === 'missed' || a.status === 'skipped'}
-										<span class="mr-3"><StatusChip tone={a.status} label={look.label ?? ''} /></span>
-									{:else}
-										<button
-											type="button"
-											aria-pressed={a.status === 'done'}
-											aria-label="{a.status === 'done' ? 'Mark not done' : 'Mark done'}: {a.title}"
-											class="flex size-11 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-											onclick={() => toggle(a)}
-										>
-											<span class="flex size-6 items-center justify-center rounded-sm border {a.status === 'done' ? 'border-fg bg-fg text-bg' : 'border-border-strong text-transparent hover:border-fg'}">
-												<Check class="size-4" strokeWidth={3} />
-											</span>
-										</button>
-									{/if}
+									{#if chip && a.status !== 'done'}<StatusChip tone={chip.tone} label={chip.label} />{/if}
+									<button
+										type="button"
+										aria-pressed={a.status === 'done'}
+										aria-label="{a.status === 'done' ? 'Mark not done' : 'Mark done'}: {a.title}"
+										class="flex size-11 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+										onclick={() => toggle(a)}
+									>
+										<span class="flex size-6 items-center justify-center rounded-sm border {a.status === 'done' ? 'border-fg bg-fg text-bg' : 'border-border-strong text-transparent hover:border-fg'}">
+											<Check class="size-4" strokeWidth={3} />
+										</span>
+									</button>
 								</li>
 							{/each}
 						</ul>
@@ -207,5 +208,5 @@
 	<QuickLog {onlog} {voice} />
 </div>
 {#if open}
-	<ActionSheet action={open} {confirming} {inline} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />
+	<ActionSheet action={open} {confirming} {inline} {onstatus} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />
 {/if}

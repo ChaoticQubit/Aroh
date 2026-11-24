@@ -2,6 +2,15 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import Undo2 from '@lucide/svelte/icons/undo-2';
+	import Clock from '@lucide/svelte/icons/clock';
+	import Segmented from '$lib/ui/components/Segmented.svelte';
+	import StatusChip from '$lib/ui/components/StatusChip.svelte';
+	import CatchUpBanner from '$lib/ui/components/CatchUpBanner.svelte';
+	import ActionSheet from '$lib/ui/screens/ActionSheet.svelte';
+	import { catchUp } from '$lib/app/catchup.svelte';
+	import { actionViews } from '$lib/app/views';
+	import { logState } from '$lib/ui/status';
+	import type { ActionView } from '$lib/ui/contract';
 	import { Button } from '$lib/ui/primitives/button';
 	import ActionCard from '$lib/ui/components/action/ActionCard.svelte';
 	import ScopeSheet from '$lib/ui/components/action/ScopeSheet.svelte';
@@ -34,6 +43,13 @@
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	let notesTimer: ReturnType<typeof setTimeout> | undefined;
 	const dictation = new Dictation(speech, (text) => (draft = text));
+	type LogPick = 'planned' | 'done' | 'skipped';
+	const LOG: { value: LogPick; label: string }[] = [
+		{ value: 'planned', label: 'Not done' },
+		{ value: 'done', label: 'Done' },
+		{ value: 'skipped', label: 'Skipped' }
+	];
+	let timing = $state(false);
 	const keep = deviceKeep();
 	$effect(() => {
 		const key = `cardpage:${id}`;
@@ -131,9 +147,25 @@
 
 	async function finish() {
 		await saveLog(log);
-		await data.run(() => client.setActionStatus(id, 'done'));
+		if (loaded) await catchUp.setStatus(loaded.action, 'done');
 		history.back();
 	}
+
+	/** Logs this session in any status (Q78), then reloads it; a late done may offer the catch-up. */
+	async function setStatus(next: LogPick) {
+		if (!loaded) return;
+		await catchUp.setStatus(loaded.action, next);
+		await load(id);
+	}
+
+	/** The action as the edit sheet draws it, from the snapshot when it holds the row. */
+	const sheetAction = $derived.by((): ActionView | null => {
+		if (!loaded) return null;
+		const a = loaded.action;
+		const view = data.snapshot ? actionViews({ ...data.snapshot, actions: [a] })[0] : undefined;
+		return view ?? { id: a.id, title: a.title, start: a.start_at, end: a.end_at, status: a.status, locked: a.locked, category: 1, goalTitle: meta?.goal ?? '' };
+	});
+	const chip = $derived(loaded ? logState({ status: loaded.action.status, start: loaded.action.start_at, end: loaded.action.end_at }, clock.now, clock.zone) : null);
 
 	/** Composer text: in a session a spoken or typed set ("last set 7 reps"); else a card chat request. */
 	function send(text: string) {
@@ -184,12 +216,43 @@
 		onfinish={finish}
 		onchat={send}
 		onmic={mic}
-	/>
+	>
+		{#snippet status()}
+			<section class="flex flex-col gap-2" aria-label="Session status">
+				<div class="flex flex-wrap items-center gap-2">
+					{#if chip && loaded?.action.status !== 'done'}<StatusChip tone={chip.tone} label={chip.label} />{/if}
+					<Segmented
+						label="Log this session"
+						options={LOG}
+						bind:value={() => (loaded?.action.status === 'missed' ? ('' as LogPick) : (loaded?.action.status as LogPick)), (v: LogPick) => void setStatus(v)}
+					/>
+					<Button variant="outline" size="touch" onclick={() => (timing = true)}><Clock />Change time</Button>
+				</div>
+				<CatchUpBanner offer={catchUp.offer} note={catchUp.note} onremove={() => catchUp.remove()} onkeep={() => catchUp.keep()} />
+			</section>
+		{/snippet}
+	</ActionCard>
 	{#if undo && scope}
 		<div data-hide-typing class="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 mx-auto flex w-[calc(100%-2rem)] max-w-md items-center justify-between gap-2 rounded-md border border-border bg-surface px-3 py-1 shadow-sm" role="status">
 			<p class="text-sm">Saved for {scopeText(scope).toLowerCase()}.</p>
 			<Button variant="ghost" size="touch" onclick={revert}><Undo2 />Undo</Button>
 		</div>
+	{/if}
+	{#if timing && sheetAction}
+		<ActionSheet
+			action={sheetAction}
+			onstatus={(_, next) => void setStatus(next)}
+			onsave={(e) => {
+				timing = false;
+				void data.run(() => client.editAction(e.id, e.start, e.end)).then(() => load(id));
+			}}
+			onlock={(actionId, locked) => void data.run(() => client.setLocked(actionId, locked))}
+			ondelete={(actionId) => {
+				timing = false;
+				void data.run(() => client.deleteAction(actionId)).then(() => history.back());
+			}}
+			onclose={() => (timing = false)}
+		/>
 	{/if}
 	{#if asking}
 		<div class="fixed inset-0 z-40">

@@ -162,9 +162,10 @@ fn move_reply(action_id: &str) -> Value {
 async fn missed_action_produces_a_proposal_without_an_owner_message() {
     let w = world(json!(null)).await;
     let goal = w.goal(Autonomy::Balanced).await;
-    let missed = w.action(goal, "2026-11-22T09:00:00Z").await;
+    let missed = w.action(goal, "2026-11-21T09:00:00Z").await;
     *w.analyst.lock().unwrap() = move_reply(&missed.id);
     let _old = w.action(goal, "2026-11-18T09:00:00Z").await;
+    let _today = w.action(goal, "2026-11-22T09:00:00Z").await;
     let engine = &w.engine;
 
     let report = engine.tick(TickOptions::default()).await.unwrap();
@@ -182,7 +183,7 @@ async fn missed_action_produces_a_proposal_without_an_owner_message() {
     let (source, reason, run): (String, String, Option<Uuid>) =
         db::query_as("select source, reason, run_id from public.adaptations where user_id = $1").bind(w.user).fetch_one(&w.pool).await.unwrap();
     assert_eq!(source, "actions");
-    assert_eq!(reason, "Missed: Core workout (Sun 10:00).");
+    assert_eq!(reason, "Missed: Core workout (Sat 10:00).");
     assert_eq!(w.count("select count(*) from public.action_events where user_id = $1 and not handled").await, 0);
     let claimed: Option<Uuid> = db::query_scalar("select handled_by from public.action_events where user_id = $1")
         .bind(w.user)
@@ -195,7 +196,7 @@ async fn missed_action_produces_a_proposal_without_an_owner_message() {
     assert_eq!(report.processed, 0, "the scan slot of this process is taken for 30 s");
     let insights = insights::list(&w.pool, w.user, Some(goal)).await.unwrap();
     assert_eq!(insights.len(), 1);
-    assert_eq!(insights[0].body, "Missed: Core workout (Sun 10:00). Move the missed workout to Monday evening. Applied 1 of 1 changes.");
+    assert_eq!(insights[0].body, "Missed: Core workout (Sat 10:00). Move the missed workout to Monday evening. Applied 1 of 1 changes.");
     assert_eq!(insights[0].state.as_deref(), Some("done"));
     assert!(insights::list(&w.pool, user(&w.pool).await, None).await.unwrap().is_empty());
 }
@@ -251,7 +252,7 @@ async fn away_days_start_one_adaptation_per_goal_that_always_asks() {
 async fn dedupe_starts_one_replan_per_goal_and_window() {
     let w = world(json!({"summary": "On track.", "size": "small", "changes": []})).await;
     let goal = w.goal(Autonomy::Ask).await;
-    let first = w.action(goal, "2026-11-22T08:00:00Z").await;
+    let first = w.action(goal, "2026-11-21T08:00:00Z").await;
     w.tick().await;
     assert_eq!(w.count("select count(*) from public.runs where user_id = $1 and workflow = 'replan'").await, 1);
     let mut skipped = w.action(goal, "2026-11-22T10:00:00Z").await;
@@ -649,8 +650,69 @@ async fn a_replan_that_writes_new_actions_fills_their_cards_once_right_away() {
     assert_eq!(w.count("select count(*) from public.adaptations where user_id = $1 and window_key like 'fill:plan:%'").await, 1, "one fill per plan version");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_miss_waits_for_the_end_of_the_local_day_and_a_late_done_starts_no_second_replan() {
+    let w = world(json!({"summary": "Add a catch-up on Tuesday evening.", "size": "small",
+        "changes": [{"op": "create", "action_id": null, "title": "Easy run", "start": "2026-11-24T18:00:00", "minutes": 30}]})).await;
+    let goal = w.goal(Autonomy::Balanced).await;
+    let morning = w.action(goal, "2026-11-22T09:00:00Z").await;
+    let missed_events = "select count(*) from public.action_events where user_id = $1 and kind = 'missed'";
+    let replans = "select count(*) from public.runs where user_id = $1 and workflow = 'replan'";
+
+    w.tick().await;
+    assert_eq!(w.count(missed_events).await, 0, "Sun 10:00 in Berlin is not logged yet at 13:00");
+    w.later(11 * 3_600_000 - 60_000);
+    w.tick().await;
+    assert_eq!(w.count(missed_events).await, 0, "still not logged yet at 23:59 Berlin");
+    let action_id = Uuid::parse_str(&morning.id).unwrap();
+    assert_eq!(w.engine.miss_replan(w.user, action_id).await.unwrap().run_id, None);
+
+    w.later(60_000);
+    w.tick().await;
+    assert_eq!(w.count(missed_events).await, 1, "missed at midnight Berlin");
+    assert_eq!(w.count(replans).await, 1);
+    let run: Uuid = db::query_scalar("select run_id from public.adaptations where user_id = $1 and source = 'actions'")
+        .bind(w.user)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(w.engine.miss_replan(w.user, action_id).await.unwrap().run_id, Some(run));
+    assert_eq!(
+        w.count("select count(*) from public.actions where user_id = $1 and title = 'Easy run' and not deleted").await,
+        1,
+        "the miss replan added a catch-up"
+    );
+
+    let current: String = db::query_scalar("select updated_at from public.actions where id::text = $1").bind(&morning.id).fetch_one(&w.pool).await.unwrap();
+    let stamp = Hlc::new(DEVICE).stamp_after(&current).unwrap();
+    db::query("update public.actions set status = 'done', done_at = '2026-11-23T08:00:00Z', updated_at = $2 where id::text = $1")
+        .bind(&morning.id)
+        .bind(stamp)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let (before, after): (String, String) = db::query_as(
+        "select before->>'status', after->>'status' from public.action_events where user_id = $1 and kind = 'done'",
+    )
+    .bind(w.user)
+    .fetch_one(&w.pool)
+    .await
+    .unwrap();
+    assert_eq!((before.as_str(), after.as_str()), ("planned", "done"), "the late done is recorded");
+    w.later(31_000);
+    w.tick().await;
+    assert_eq!(w.count(replans).await, 1, "a late done after a miss starts no replan; the catch-up is the owner's call");
+    assert_eq!(w.count("select count(*) from public.action_events where user_id = $1 and not handled").await, 0);
+    assert_eq!(
+        w.count("select count(*) from public.actions where user_id = $1 and title = 'Easy run' and not deleted").await,
+        1,
+        "no tap, no change"
+    );
+}
+
 /// Seeds the owner's B63 reading goal on `w`: an ordered Auto goal with three
-/// sessions ended unlogged this morning (the scan derives them missed) and two
+/// sessions ended unlogged yesterday (the scan derives them missed) and two
 /// planned later, in chapter order. Output: the goal and the action ids in that order.
 async fn b63_reading(w: &World) -> (Uuid, Vec<String>) {
     let goal = w.goal(Autonomy::Auto).await;
@@ -658,9 +720,9 @@ async fn b63_reading(w: &World) -> (Uuid, Vec<String>) {
     g.ordered = true;
     put_row(&w.pool, &w.hlc, w.user, &mut g).await.unwrap();
     let sessions = [
-        ("Chapters 3-6", "2026-11-22T07:00:00Z"),
-        ("Chapters 7-9", "2026-11-22T08:00:00Z"),
-        ("Chapters 10-12", "2026-11-22T09:00:00Z"),
+        ("Chapters 3-6", "2026-11-21T07:00:00Z"),
+        ("Chapters 7-9", "2026-11-21T08:00:00Z"),
+        ("Chapters 10-12", "2026-11-21T09:00:00Z"),
         ("Chapters 12-14", "2026-11-23T19:00:00Z"),
         ("Chapters 15-17", "2026-11-24T19:00:00Z"),
     ];

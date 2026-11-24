@@ -16,7 +16,7 @@ use aroh_domain::rows::{
     Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, DayKind, Goal, GoalStatus, Place, PlaceLink,
     ProviderSetting, SearchSetting, Tracker,
 };
-use aroh_domain::time::MISSED_GRACE_MIN;
+use aroh_domain::time::missed_at;
 use crate::triggers;
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
@@ -533,8 +533,8 @@ impl Engine {
             .filter(|a| a.end_at > from && a.start_at < until)
             .collect();
         actions.sort_by_key(|a| a.start_at);
-        let missed_before = self.now() - Duration::minutes(MISSED_GRACE_MIN);
-        for a in actions.iter_mut().filter(|a| a.status == ActionStatus::Planned && a.end_at < missed_before) {
+        let now = self.now();
+        for a in actions.iter_mut().filter(|a| a.status == ActionStatus::Planned && now >= missed_at(a.start_at, a.end_at, tz)) {
             a.status = ActionStatus::Missed;
         }
         Ok(actions

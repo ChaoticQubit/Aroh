@@ -3,6 +3,7 @@ use aroh_domain::hlc::Hlc;
 use aroh_domain::rows::{Action, ActionSeries, ActionStatus, Category, EntrySource, FileKind, Goal, GoalFile, IngestStatus, Preference, PreferenceOrigin, Proposal, ProposalStatus, ProviderSetting, Record, Tracker, TrackerEntry};
 use aroh_domain::remind::PlannedKind;
 use aroh_domain::schema::SYNCED;
+use aroh_domain::time::missed_at;
 use aroh_store::sync::pending;
 use aroh_store::{db, repo};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -107,9 +108,48 @@ fn tick_marks_overdue_planned_actions_missed() {
     let report = tick::tick(&conn, &mut clock, &user, later, ZONE).unwrap();
     assert!(report.missed > 0);
     let actions: Vec<Action> = repo::list(&conn, &[]).unwrap();
-    let grace = Duration::minutes(tick::MISSED_GRACE_MIN);
-    assert!(actions.iter().all(|a| !(a.status == ActionStatus::Planned && a.end_at + grace < later)));
+    assert!(actions.iter().all(|a| !(a.status == ActionStatus::Planned && missed_at(a.start_at, a.end_at, ZONE) <= later)));
     assert!(actions.iter().any(|a| a.status == ActionStatus::Done));
+}
+
+#[test]
+fn an_unlogged_action_stays_planned_until_the_end_of_its_local_day() {
+    let (conn, mut clock, user) = setup();
+    let morning = ZONE.with_ymd_and_hms(2026, 11, 24, 7, 0, 0).unwrap().with_timezone(&Utc);
+    let mut action = Action { start_at: morning, end_at: morning + Duration::minutes(30), ..aroh_domain::rows::samples::action() };
+    action.user_id = user.clone();
+    action.updated_at = String::new();
+    repo::put(&conn, &mut clock, &mut action).unwrap();
+    let evening = ZONE.with_ymd_and_hms(2026, 11, 24, 23, 59, 0).unwrap().with_timezone(&Utc);
+    assert_eq!(tick::tick(&conn, &mut clock, &user, evening, ZONE).unwrap().missed, 0);
+    assert_eq!(repo::get::<Action>(&conn, &action.id).unwrap().status, ActionStatus::Planned);
+    let midnight = ZONE.with_ymd_and_hms(2026, 11, 25, 0, 0, 0).unwrap().with_timezone(&Utc);
+    assert_eq!(tick::tick(&conn, &mut clock, &user, midnight, ZONE).unwrap().missed, 1);
+    assert_eq!(repo::get::<Action>(&conn, &action.id).unwrap().status, ActionStatus::Missed);
+}
+
+#[test]
+fn every_status_stays_editable_and_a_missed_action_can_be_done_later() {
+    let (conn, mut clock, user) = seeded();
+    tick::tick(&conn, &mut clock, &user, now() + Duration::days(2), ZONE).unwrap();
+    let missed = repo::list::<Action>(&conn, &[("status", "missed")]).unwrap().remove(0);
+    let later = now() + Duration::days(2);
+    let done = write::set_action_status(&conn, &mut clock, &missed.id, ActionStatus::Done, later).unwrap();
+    assert_eq!((done.status, done.done_at), (ActionStatus::Done, Some(later)));
+    for status in [ActionStatus::Skipped, ActionStatus::Planned, ActionStatus::Done] {
+        assert_eq!(write::set_action_status(&conn, &mut clock, &missed.id, status, later).unwrap().status, status);
+    }
+    let start = missed.start_at + Duration::hours(1);
+    let moved = write::edit_action(&conn, &mut clock, &missed.id, Some((start, start + Duration::minutes(40)))).unwrap();
+    assert_eq!((moved.status, moved.end_at - moved.start_at), (ActionStatus::Done, Duration::minutes(40)));
+    assert!(aroh_app::card::set_notes(&conn, &mut clock, &missed.id, "Did it after work").is_ok());
+
+    let mut other = repo::list::<Action>(&conn, &[("status", "planned")]).unwrap().remove(0);
+    other.status = ActionStatus::Missed;
+    repo::put(&conn, &mut clock, &mut other).unwrap();
+    let tomorrow = later + Duration::days(1);
+    let revived = write::edit_action(&conn, &mut clock, &other.id, Some((tomorrow, tomorrow + Duration::minutes(30)))).unwrap();
+    assert_eq!(revived.status, ActionStatus::Planned, "a missed action moved by hand is planned again");
 }
 
 #[test]

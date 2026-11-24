@@ -168,6 +168,7 @@ pub fn run() {
             commands::learning::app_set_locked,
             commands::replan::app_run_proposals,
             commands::replan::app_undo_run,
+            commands::replan::app_catch_up,
             realtime::app_realtime_up,
             commands::location::app_location_enable,
             commands::location::app_location_disable,

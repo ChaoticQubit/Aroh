@@ -116,6 +116,27 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/actions/{action_id}/miss-replan:
+    get:
+      tags:
+      - runs
+      operationId: get_miss_replan
+      parameters:
+      - name: action_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: The replan a miss of the action started, if any (Q78)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MissReplan'
+      security:
+      - bearer: []
   /v1/actions/{action_id}/replan:
     get:
       tags:
@@ -1439,6 +1460,18 @@ components:
       - music
       - finance
       - habits
+    MissReplan:
+      type: object
+      description: |-
+        The replan started by a miss of one action, as
+        `GET /v1/actions/{action_id}/miss-replan` answers; `run_id` is null when
+        the miss started none.
+      properties:
+        run_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
     Origin:
       type: string
       description: |-
