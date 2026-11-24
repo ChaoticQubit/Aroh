@@ -214,6 +214,14 @@
     L.show(line);
     await sleep(800);
   };
+  const replanPhase = (phase) => async () => {
+    const { editStatus } = await import('/src/lib/app/replan.svelte.ts');
+    editStatus.dismiss();
+    editStatus.phase = phase;
+    await sleep(800);
+    const line = document.querySelector('main')?.textContent.includes(phase.text.slice(0, 20));
+    await result(`replan-status-${phase.kind}`, !!line, `line ${!!line}`);
+  };
   let SCREENS = [];
   const screenList = () => {
   const persona = 'nutrition-coach';
@@ -257,7 +265,9 @@
       [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Start session')?.click();
       await sleep(1200);
     } },
-    { name: '26-action-chat', path: `/actions/${work?.id}/chat`, max: 3 }
+    { name: '26-action-chat', path: `/actions/${work?.id}/chat`, max: 3 },
+    { name: '27-replan-updated', path: '/today', one: true, prep: replanPhase({ kind: 'updated', text: 'Updated: moved Read one chapter of The Joy of X to Tue 15:00, removed Walk.', tone: 'done', runId: 'gate-replan', undo: true }) },
+    { name: '28-replan-failed', path: '/calendar', one: true, prep: replanPhase({ kind: 'failed', text: 'Could not replan. The run stopped: the model provider did not answer after 3 tries.', tone: 'missed', runId: 'gate-replan' }) }
   ];
   if (smoke) SCREENS = SCREENS.filter((x) => ['06-goal-questions', '14-settings'].includes(x.name));
   if (only.length) SCREENS = SCREENS.filter((x) => only.includes(x.name));
@@ -266,6 +276,7 @@
     signedIn = true;
     transient = false;
     decided = false;
+    (await import('/src/lib/app/replan.svelte.ts')).editStatus.dismiss();
     s.before?.();
     await go(s.path === '/inbox' ? '/today' : '/inbox');
     await go(s.path);

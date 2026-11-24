@@ -1,5 +1,43 @@
 # Build 6 gate (Q67)
 
+## Final gate run (pod 44)
+
+Date: 2026-11-23, 17:01 to 18:12. Branch `fix/gate6-ui` at master `139145f` merged. This includes pod 43's replan status and the G1 to G4 fixes. Simulators: `aroh-p44` ran the gate and `aroh-p44g` ran the guards (both iPhone 15 Pro, debug build). The frontend came from a fresh vite on port 1448, run headless. The time box was 60 minutes. The run took 71, because a second, shorter tap run was needed for the card and replan screens.
+
+Verdict: **GATE PASS**. No critical or high defect was found. One new medium defect, G5, goes to the backlog.
+
+| Step | What ran | Result |
+|---|---|---|
+| Screens, light and dark | `gate4.sh` with `AROH_GATE_ONLY` set to the build 6 screens and Today, Calendar day, 07, 08b, 09, 09b to 09f, 23 to 26, and the new 27 and 28 | Every overflow and 16 px check passes. `run-again-cancel`, `run-again-blocked` and both `replan-status-*` checks also pass. |
+| Keyboard and spaces pass, every field | `gate4.js` keyboard pass | 66 of 68 keyboard checks pass and 67 of 67 spaces checks pass. This covers every new card field (why, exercise name, sets, reps, load, rest, block title, items, steps and step minutes, notes, coach message) and the Run again answers. The two fails are not product defects; see the next section. |
+| Tap pass, every button | `gate4.js` tap pass, run 1 on the screens above, run 2 on 23, 24, 26, 27 and 28 | Run 1 timed out partway through 09d (09d's control count was logged, but its taps did not all finish) and recorded 156 taps. Run 2 finished: 78 taps, 14 did nothing. Every "nothing" is explained in the next section. |
+| `e2e/pod37.sh` light and dark, `AROH_FLOW=pod37-app.js` | `aroh-p44g` | pass |
+| `e2e/pod31.sh` | `aroh-p44g` | pass. No horizontal overflow in light or dark, and Done is struck on the calendar. |
+| `e2e/pod32.sh` (ask) | `aroh-p44g` | pass. The deny variant was not run. |
+| `e2e/pod33.sh` | `aroh-p44g` | pass |
+| `e2e/pod43.sh` light and dark | `aroh-p44g` | pass, "problems: none" |
+
+Results: `build6-final-results.txt` and `build6-final-taps.txt`. Screenshots: `docs/screenshots/gate6-final/{light,dark}` from this run, and `docs/screenshots/gate6-fix/{light,dark}` for the G1 to G4 fixes.
+
+### New defect
+
+| ID | Severity | What | Screenshot | Where |
+|---|---|---|---|---|
+| G5 | medium | The card chat composer shows the mic, "Speak to the coach", but tapping it does nothing. `CardChat` renders `CardComposer` without `onmic`, and `mic` defaults to true. On the card page itself the mic starts speech. | `gate6-final/light/26-action-chat.png` | `CardChat.svelte:64` |
+
+### Fails and "nothing" taps that are not product defects
+
+- `keyboard-goal-chat`: the very first field of the keyboard pass got no keyboard (`kb=none`). The next 65 fields opened it, and gate 6 runs passed this field before. It is flaky, from the first keyboard appearance on a fresh simulator. It goes to the backlog as low.
+- `keyboard-coach-rule`: "field not found". 21-coach was not in `AROH_GATE_ONLY`, so the harness fell back to `/personas`, which has no rule field. This is a harness artefact.
+- Undo (27) and Retry (28) on the replan status did nothing. The harness sets `editStatus.phase` directly, without a tracked edit, and `undo()` and `retry()` return early when no edit is tracked. The real Undo and Retry paths need an engine replan run. `e2e/pod43.sh` covers the status states and Dismiss.
+- Retry on Today in run 1 was the same injected replan status, left over from screen 28. `open()` in `gate4.js` now dismisses it before each screen.
+- "Move ..., drag or use the arrow keys" (23, 24): a plain tap on a drag grip does nothing by design.
+- Decrease Weight on Today did nothing on an empty value.
+- "Run again" in 09b sits under the open sheet, so the sheet is already open.
+- "Today", "Day", "Week" and "Mon" in the calendar views are the current selection.
+
+## First gate run
+
 Date: 2026-11-23. Branch `chore/gate-build6` off master `bd048eb` (pod 40 `6f1c4d4`, pod 37 `3834a98`). Simulator `aroh-g6` (iPhone 15 Pro, iOS 26.1), debug build, frontend from a fresh vite on port 1447, run headless. Time-boxed to 90 minutes.
 
 Verdict: **GATE FAIL**. No critical or high defect was found. The gate still fails, for two reasons:
