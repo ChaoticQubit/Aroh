@@ -23,6 +23,7 @@ pub mod profile;
 pub mod push;
 pub mod queue;
 pub mod rows;
+pub mod sequence;
 pub mod teams;
 pub mod tools;
 pub mod triage;

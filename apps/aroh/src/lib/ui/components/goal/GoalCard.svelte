@@ -5,6 +5,7 @@
 	import { Button } from '$lib/ui/primitives/button';
 	import * as Card from '$lib/ui/primitives/card';
 	import { Input } from '$lib/ui/primitives/input';
+	import { Switch } from '$lib/ui/primitives/switch';
 	import Fold from '../Fold.svelte';
 	import Render from '../Render.svelte';
 	import Segmented from '../Segmented.svelte';
@@ -25,7 +26,8 @@
 
 	/**
 	 * The goal page (Q72, Q76): header and status card (Stop, Retry, Change time limit), then
-	 * cards: Overview, Plan (open while agents wait, closed after approval), Questions and answers
+	 * cards: Overview, Plan (open while agents wait, closed after approval; "Keep sessions in
+	 * order" through `ordered` and `onordered`, Q79), Questions and answers
 	 * (`onanswers`; open for Run again with `rerun`, `onrerun`, `oncancelrerun`), Research with
 	 * files, Agent activity (`steps`), Coaches and plugins (`coaches`, `plugins`, `oncontrols`)
 	 * and Chat, where questions and the plan to approve appear.
@@ -62,6 +64,8 @@
 		onretryfile,
 		onremove,
 		planContext,
+		ordered = false,
+		onordered,
 		children
 	}: {
 		goal: GoalHeader;
@@ -95,6 +99,8 @@
 		onretryfile?: (id: string) => void;
 		onremove?: (id: string) => void;
 		planContext?: PlanContext;
+		ordered?: boolean;
+		onordered?: (on: boolean) => void;
 		children?: Snippet;
 	} = $props();
 
@@ -202,6 +208,12 @@
 		{:else}
 			{#if !waiting}<p class="text-sm text-muted">No sessions planned yet.</p>{/if}
 		{/each}
+		{#if onordered}
+			<label class="flex min-h-14 cursor-pointer items-center gap-3 rounded-sm border border-border bg-bg px-3 py-2" for="{id}-ordered">
+				<span class="flex flex-1 flex-col"><span class="text-sm font-medium">Keep sessions in order</span><span class="text-xs text-muted">A missed session moves ahead and later ones shift forward.</span></span>
+				<Switch id="{id}-ordered" checked={ordered} onCheckedChange={(on) => onordered(on)} />
+			</label>
+		{/if}
 		{#if versions.length > 1}
 			<div class="flex flex-col gap-2">
 				<p class="text-sm font-medium">Dashboard version</p>

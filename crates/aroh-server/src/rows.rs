@@ -283,7 +283,7 @@ mod tests {
             "id": "0190f2a0-0000-7000-8000-000000000091", "user_id": "0190f2a0-0000-7000-8000-00000000000a",
             "category_id": null, "title": "Read Dune", "context": null, "deadline": "2027-01-31",
             "status": "active", "autonomy": "ask", "created_at": "2026-11-23T08:00:00Z",
-            "reminders": true, "use_calendars": true, "run_limit_minutes": null,
+            "reminders": true, "use_calendars": true, "run_limit_minutes": null, "ordered": false,
             "updated_at": "1763683200000-0000-00000000000000aa", "deleted": false
         })
     }

@@ -322,8 +322,9 @@ synced! {
 synced! {
     /// A goal: one category, free-form context, optional deadline (`YYYY-MM-DD`),
     /// the autonomy level agents follow when changing its plan, and its agent
-    /// controls: local reminders, calendar reads and a run time limit in minutes
-    /// (`None` uses the Settings default).
+    /// controls: local reminders, calendar reads, a run time limit in minutes
+    /// (`None` uses the Settings default) and `ordered`, whether replans keep
+    /// its sessions in sequence (Q79).
     Goal, GOALS, "goals" {
         category_id: Option<String> => Text,
         title: String => Text,
@@ -335,6 +336,7 @@ synced! {
         reminders: bool => Bool,
         use_calendars: bool => Bool,
         run_limit_minutes: Option<i64> => Int,
+        ordered: bool => Bool,
     }
 }
 
@@ -1080,6 +1082,7 @@ pub mod samples {
             created_at: at(8),
             reminders: true,
             use_calendars: true,
+            ordered: false,
             run_limit_minutes: None,
             updated_at: STAMP.into(),
             deleted: false,

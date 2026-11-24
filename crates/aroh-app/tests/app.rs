@@ -485,6 +485,16 @@ fn goal_controls_are_stored_and_bad_limits_refused() {
 }
 
 #[test]
+fn goal_order_switch_is_stored() {
+    let (conn, mut clock, _) = seeded();
+    let goal = repo::list::<Goal>(&conn, &[]).unwrap().remove(0);
+    assert!(!goal.ordered, "goals start unordered");
+    assert!(write::set_goal_ordered(&conn, &mut clock, &goal.id, true).unwrap().ordered);
+    assert!(repo::get::<Goal>(&conn, &goal.id).unwrap().ordered);
+    assert!(!write::set_goal_ordered(&conn, &mut clock, &goal.id, false).unwrap().ordered);
+}
+
+#[test]
 fn category_guess_names_a_seeded_category_of_the_owner() {
     let (conn, mut clock, user) = setup();
     tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();

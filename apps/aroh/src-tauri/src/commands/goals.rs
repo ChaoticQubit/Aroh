@@ -120,6 +120,15 @@ pub fn set_goal_controls(
     Ok(goal)
 }
 
+/// Sets whether replans keep goal `goal_id`'s sessions in order (Q79).
+/// Output: the stored goal.
+#[tauri::command]
+pub fn set_goal_ordered(app: AppHandle, state: State<'_, AppState>, goal_id: String, ordered: bool) -> Result<Goal, String> {
+    let goal = with_core(&state, |c| write::set_goal_ordered(&c.conn, &mut c.clock, &goal_id, ordered))?;
+    after_write(&app);
+    Ok(goal)
+}
+
 /// Edits profile fact `id` to `fact`, dated now. Output: the stored fact.
 #[tauri::command]
 pub fn edit_fact(state: State<'_, AppState>, id: String, fact: String) -> Result<Preference, String> {

@@ -16,7 +16,7 @@ function fixture(): Snapshot {
 			{ id: 'c-fit', name: 'Health and Fitness', color: '#4f7a5a', seeded: true },
 			{ id: 'c-own', name: 'Music', color: '#000000', seeded: false }
 		],
-		goals: [{ id: goalId, category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: '2027-02-01', status: 'active', autonomy: 'balanced', created_at: '2026-11-01T00:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null }],
+		goals: [{ id: goalId, category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: '2027-02-01', status: 'active', autonomy: 'balanced', created_at: '2026-11-01T00:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null, ordered: false }],
 		actions: [
 			{ id: 'a1', goal_id: goalId, series_id: null, occurrence: null, title: 'Strength session', notes: null, start_at: '2026-11-26T18:00:00Z', end_at: '2026-11-26T19:00:00Z', status: 'planned', locked: false, done_at: null }
 		],

@@ -116,6 +116,7 @@ impl Api {
             created_at: utc(T0),
             reminders: true,
             use_calendars: true,
+            ordered: false,
             run_limit_minutes: None,
             updated_at: String::new(),
             deleted: false,
@@ -195,7 +196,7 @@ fn coach_intake() -> Value {
 fn plan() -> Value {
     json!({
         "summary": "Three easy runs a week and new shoes.",
-        "timezone": "Europe/Berlin", "daily_minutes": null, "needed_minutes": null,
+        "timezone": "Europe/Berlin", "daily_minutes": null, "needed_minutes": null, "ordered": false, "ordered_why": "Runs stand in for each other.",
         "items": [
             {"title": "Easy run", "start": "2026-11-23T07:00:00", "minutes": 30, "rrule": "FREQ=WEEKLY;BYDAY=MO,WE,FR", "notes": "Run 1 min, walk 2 min, eight rounds"},
             {"title": "Buy running shoes", "start": "2026-11-24T18:00:00", "minutes": 30, "rrule": null, "notes": "Gait check"}
@@ -765,7 +766,7 @@ async fn planner_repairs_a_plan_over_busy_time() {
         }
         if body.contains("You are Goal planner") {
             let start = if body.contains("overlaps busy") { "2026-11-23T07:00:00" } else { "2026-11-23T09:15:00" };
-            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [], "daily_minutes": null, "needed_minutes": null,
+            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [], "daily_minutes": null, "needed_minutes": null, "ordered": false, "ordered_why": "Runs stand in for each other.",
                 "items": [{"title": "Easy run", "start": start, "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
             return sse_text(&plan.to_string());
         }
@@ -941,7 +942,7 @@ async fn triage_rejects_bad_requests() {
 fn music_plan() -> Value {
     json!({
         "summary": "Learn Clair de Lune section by section, then raise the tempo.",
-        "timezone": "Europe/Berlin", "daily_minutes": null, "needed_minutes": null,
+        "timezone": "Europe/Berlin", "daily_minutes": null, "needed_minutes": null, "ordered": false, "ordered_why": "Runs stand in for each other.",
         "items": [
             {"title": "Piano practice: bars 1 to 14", "start": "2026-11-23T19:00:00", "minutes": 30, "rrule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR,SA", "notes": "Hands separately, slow"},
             {"title": "Record a run-through", "start": "2026-11-29T11:00:00", "minutes": 20, "rrule": null, "notes": "Play it through twice, slow"}
@@ -1360,7 +1361,7 @@ fn profile_models() -> Arc<FnTransport> {
             return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
         }
         if body.contains("You are Goal planner") {
-            let plan = json!({"summary": "One run.", "timezone": "UTC", "trackers": [], "daily_minutes": null, "needed_minutes": null,
+            let plan = json!({"summary": "One run.", "timezone": "UTC", "trackers": [], "daily_minutes": null, "needed_minutes": null, "ordered": false, "ordered_why": "Runs stand in for each other.",
                 "items": [{"title": "Easy run", "start": "2026-11-23T09:15:00", "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
             return sse_text(&plan.to_string());
         }
@@ -1511,7 +1512,7 @@ async fn a_goal_that_skips_calendars_plans_without_busy_time() {
             return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
         }
         if body.contains("You are Goal planner") {
-            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [], "daily_minutes": null, "needed_minutes": null,
+            let plan = json!({"summary": "One run.", "timezone": "Europe/Berlin", "trackers": [], "daily_minutes": null, "needed_minutes": null, "ordered": false, "ordered_why": "Runs stand in for each other.",
                 "items": [{"title": "Easy run", "start": "2026-11-23T09:15:00", "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
             return sse_text(&plan.to_string());
         }
@@ -1622,7 +1623,7 @@ fn limits_models() -> Arc<FnTransport> {
             return sse_text(&json!({"summary": "The book has 22 chapters of about 20 minutes each.", "sources": []}).to_string());
         }
         if body.contains("You are Practice planner") {
-            return sse_text(&json!({"summary": "One chapter a day.", "timezone": "UTC", "trackers": [], "daily_minutes": 20, "needed_minutes": 440,
+            return sse_text(&json!({"summary": "One chapter a day.", "timezone": "UTC", "trackers": [], "daily_minutes": 20, "needed_minutes": 440, "ordered": true, "ordered_why": "Chapters build on each other.",
                 "items": [{"title": "Read", "start": "2026-11-24T20:00:00", "minutes": 20, "rrule": "FREQ=DAILY", "notes": "Next chapter"}]}).to_string());
         }
         json_reply(400, json!({}))

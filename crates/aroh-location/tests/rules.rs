@@ -50,6 +50,7 @@ fn goal(n: u32, title: &str, category: &str) -> Goal {
         created_at: at(1, 0, 0),
         reminders: true,
         use_calendars: true,
+        ordered: false,
         run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,

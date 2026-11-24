@@ -204,11 +204,16 @@ async fn run_state(pool: &PgPool, run: RunId, key: &str) -> Result<Value, Server
 }
 
 /// Reads what a run plans around from its latest checkpoint's state: the `busy`
-/// key as eval slots and the ids of the `calendar` entries marked locked.
-/// Both empty for a run without those keys, before its first checkpoint, or
-/// before the run exists.
-pub async fn run_bounds(pool: &PgPool, run: Option<RunId>) -> Result<(Vec<evals::Slot>, BTreeSet<String>), ServerError> {
-    let Some(run) = run else { return Ok((Vec::new(), BTreeSet::new())) };
+/// key as eval slots, the ids of the `calendar` entries marked locked, and the
+/// replan sequence bounds (`calendar`, `ordered`, `daily_minutes`, `now` local
+/// to the goal's zone). All empty for a run without those keys, before its first
+/// checkpoint, or before the run exists.
+pub async fn run_bounds(
+    pool: &PgPool,
+    run: Option<RunId>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(Vec<evals::Slot>, BTreeSet<String>, crate::sequence::Bounds), ServerError> {
+    let Some(run) = run else { return Ok((Vec::new(), BTreeSet::new(), Default::default())) };
     let busy = evals::busy_slots(&run_state(pool, run, "busy").await?).map_err(ServerError::Setup)?;
     let calendar = run_state(pool, run, "calendar").await?;
     let fixed = calendar
@@ -218,7 +223,11 @@ pub async fn run_bounds(pool: &PgPool, run: Option<RunId>) -> Result<(Vec<evals:
         .filter(|a| a.get("locked").and_then(Value::as_bool) == Some(true))
         .filter_map(|a| a.get("id").and_then(Value::as_str).map(str::to_string))
         .collect();
-    Ok((busy, fixed))
+    let ordered = run_state(pool, run, "ordered").await?.as_bool().unwrap_or(false);
+    let cap = run_state(pool, run, "daily_minutes").await?.as_i64();
+    let zone = run_state(pool, run, "goal").await?.get("timezone").and_then(Value::as_str).map(crate::triggers::zone_or_utc).unwrap_or(chrono_tz::UTC);
+    let sequence = crate::sequence::Bounds::from_calendar(&calendar, ordered, cap, now.with_timezone(&zone).naive_local()).map_err(ServerError::Setup)?;
+    Ok((busy, fixed, sequence))
 }
 
 /// The kind of `user`'s goal `goal` as its team reads it, so the intake
@@ -266,7 +275,7 @@ impl RunIo {
         let env_cards = env.clone();
         tools.register_toolkit(crate::triage::triage_toolkit(env)).map_err(|e| ServerError::Setup(e.to_string()))?;
         register_web(&mut tools, search_kit(&deps, user).await?, deps.web.clone())?;
-        let (busy, fixed) = run_bounds(&deps.pool, run).await?;
+        let (busy, fixed, sequence) = run_bounds(&deps.pool, run, crate::rows::utc(deps.clock.now_ms())).await?;
         let kind = goal_kind(&deps.pool, user, goal).await?;
         let mut conditions = Conditions::new();
         conditions.register("autonomy_gate", Arc::new(autonomy_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
@@ -289,7 +298,7 @@ impl RunIo {
             writer,
             settings,
             tools,
-            evals: evals::registry_for(busy, fixed, kind),
+            evals: evals::registry_for(busy, fixed, kind, sequence),
             events,
             personas: workflows::loader(personas),
             conditions,

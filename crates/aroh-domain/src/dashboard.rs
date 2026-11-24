@@ -329,6 +329,7 @@ mod tests {
             created_at: created,
             reminders: true,
             use_calendars: false,
+            ordered: false,
             run_limit_minutes: None,
             updated_at: String::new(),
             deleted: false,

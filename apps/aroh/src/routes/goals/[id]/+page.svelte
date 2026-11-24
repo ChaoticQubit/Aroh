@@ -153,6 +153,17 @@
 		});
 	}
 
+	/** Saves the goal's "Keep sessions in order" switch (Q79) and syncs it for the next replan. */
+	function onordered(on: boolean) {
+		const g = goal;
+		if (!g) return;
+		void data.run(async () => {
+			await client.setGoalOrdered(g.id, on);
+			await client.sync().catch(() => null);
+			await data.load();
+		});
+	}
+
 	/** Syncs first, so a time limit just changed in the agents sheet reaches the engine, then retries. */
 	async function onretry() {
 		await client.sync().catch(() => null);
@@ -237,6 +248,8 @@
 			onretryfile={(key) => void retryUpload(key)}
 			onlink={(url) => attaching(() => client.attachLink(goal.id, url))}
 			{planContext}
+			ordered={goal.ordered}
+			{onordered}
 			onremove={(fid) => (retries.has(fid) ? ((retries.delete(fid)), (failed = failed.filter((f) => f.id !== fid))) : attaching(() => client.removeGoalFile(fid)))}
 		/>
 	{/key}

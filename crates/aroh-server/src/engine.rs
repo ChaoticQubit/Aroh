@@ -507,9 +507,8 @@ impl Engine {
         Runner::new(queue, checkpoints, Arc::new(io)).with_lease_ms(self.lease_ms)
     }
 
-    async fn calendar(&self, user: Uuid, tz: Tz, goal: Option<&str>, from: DateTime<Utc>) -> Result<Vec<Value>, ServerError> {
+    async fn calendar(&self, user: Uuid, tz: Tz, goal: Option<&str>, from: DateTime<Utc>, until: DateTime<Utc>) -> Result<Vec<Value>, ServerError> {
         let filters: Vec<(&str, String)> = goal.map(|g| vec![("goal_id", g.to_string())]).unwrap_or_default();
-        let until = self.now() + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
         let mut actions: Vec<Action> = list_rows::<Action>(&self.deps.pool, user, &filters, false)
             .await?
             .into_iter()
@@ -585,6 +584,7 @@ impl Engine {
                     created_at: now,
                     reminders: req.reminders.unwrap_or(true),
                     use_calendars: req.use_calendars.unwrap_or(true),
+                    ordered: false,
                     run_limit_minutes: req.run_limit_minutes,
                     updated_at: String::new(),
                     deleted: false,
@@ -606,7 +606,8 @@ impl Engine {
     async fn planning_input(&self, user: Uuid, goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Result<Map<String, Value>, ServerError> {
         let mut input = Map::new();
         input.insert("goal".into(), Self::goal_input(goal, tz, now));
-        input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
+        let until = now + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
+        input.insert("calendar".into(), json!(self.calendar(user, tz, None, now, until).await?));
         input.insert("profile".into(), json!(self.profile(user).await?));
         input.insert("files".into(), json!(crate::files::goal_files(&self.deps.pool, user, &goal.id).await?));
         input.insert("places".into(), json!(self.places(user).await?));
@@ -720,8 +721,9 @@ impl Engine {
     }
 
     /// Starts a replan of `user`'s `goal` for `reason` in zone `tz`, for the
-    /// owner and every trigger alike: calendar, profile and autonomy as
-    /// input, then the goal's pending action events are claimed by the run.
+    /// owner and every trigger alike: calendar (all remaining sessions of an
+    /// ordered goal), order switch, daily cap (goal answer, else profile),
+    /// profile and autonomy as input; then the run claims the goal's events.
     pub(crate) async fn replan(&self, user: Uuid, goal: &Goal, reason: &str, tz: Tz) -> Result<RunId, ServerError> {
         let now = self.now();
         let goal_id = Uuid::parse_str(&goal.id).map_err(|_| ServerError::Db("bad goal id".into()))?;
@@ -729,7 +731,15 @@ impl Engine {
         let mut input = Map::new();
         input.insert("goal".into(), Self::goal_input(goal, tz, now));
         let from = now - Duration::days(PAST_DAYS);
-        input.insert("calendar".into(), json!(self.calendar(user, tz, Some(&goal.id), from).await?));
+        let until = if goal.ordered { DateTime::<Utc>::MAX_UTC } else { now + Duration::days(i64::from(DEFAULT_WINDOW_DAYS)) };
+        input.insert("calendar".into(), json!(self.calendar(user, tz, Some(&goal.id), from, until).await?));
+        input.insert("ordered".into(), json!(goal.ordered));
+        let mut caps = Map::new();
+        caps.insert("profile".into(), json!(self.profile(user).await?));
+        if let Some((_, answers)) = self.saved_answers(user, goal_id).await? {
+            caps.insert("answers".into(), answers);
+        }
+        input.insert("daily_minutes".into(), json!(crate::limits::daily_cap(&caps)));
         let (busy, away_days) = self.busy(user, &goal, tz, now).await?;
         input.insert("busy".into(), json!(busy));
         input.insert("away_days".into(), json!(away_days));

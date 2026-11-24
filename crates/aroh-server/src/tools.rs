@@ -204,15 +204,17 @@ fn valid_rules(tracker: &Tracker, planned: &[PlanRule]) -> Vec<rows::TrackerRule
         .collect()
 }
 
-/// The planner's output: summary, timezone, items and trackers.
-/// The owner approves it before `write_plan` stores it.
-/// Matches the `plan` state key of the new-goal workflow.
+/// The planner's output: summary, timezone, items, trackers and whether the
+/// sessions must keep their sequence (`ordered`, Q79). The owner approves it
+/// before `write_plan` stores it. Matches the `plan` state key of the new-goal workflow.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Plan {
     pub summary: String,
     pub timezone: String,
     pub items: Vec<PlanItem>,
     pub trackers: Vec<PlanTracker>,
+    #[serde(default)]
+    pub ordered: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -257,7 +259,7 @@ async fn clear_old_plan(env: &ToolEnv, goal: &str, keep_actions: &[String], keep
 }
 
 /// Stores an approved plan as actions, series and trackers, activates a draft
-/// goal and, when the owner moved the date on the limits card (B41), sets the
+/// goal with the plan's `ordered` (a later plan keeps the owner's switch) and, when the owner moved the date on the limits card (B41), sets the
 /// goal's deadline to `move_to`. With `replace` it first ends the old plan
 /// (`clear_old_plan`) and adds no tracker whose name the goal already has.
 /// Rows a replay of the same call wrote before are left as they are.
@@ -374,6 +376,7 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, replace: 
         if g.status == GoalStatus::Draft || moved.is_some() {
             if g.status == GoalStatus::Draft {
                 g.status = GoalStatus::Active;
+                g.ordered = plan.ordered.unwrap_or(false);
             }
             if let Some(d) = moved {
                 g.deadline = Some(d.to_string());
@@ -451,6 +454,12 @@ pub struct ProposalRecord {
 struct RecordArgs {
     goal: GoalInput,
     proposal: ProposalInput,
+    #[serde(default)]
+    calendar: Value,
+    #[serde(default)]
+    ordered: bool,
+    #[serde(default)]
+    daily_minutes: Option<i64>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -486,6 +495,10 @@ async fn record_proposal(env: &ToolEnv, args: RecordArgs, ctx: &ToolContext) -> 
     let tz = timezone(&args.goal.timezone)?;
     let size: ProposalSize = serde_json::from_value(json!(args.proposal.size))
         .map_err(|_| ToolError::InvalidArgs("size must be small or big".into()))?;
+    let now = env.now().with_timezone(&tz).naive_local();
+    let bounds = crate::sequence::Bounds::from_calendar(&args.calendar, args.ordered, args.daily_minutes, now).map_err(ToolError::InvalidArgs)?;
+    let proposed: Vec<Value> = args.proposal.changes.iter().map(|c| serde_json::to_value(c).expect("changes serialize")).collect();
+    crate::sequence::check(&bounds, &proposed).map_err(ToolError::InvalidArgs)?;
     let mut changes = Vec::with_capacity(args.proposal.changes.len());
     for c in &args.proposal.changes {
         let after = || -> Result<Span, ToolError> {
@@ -591,11 +604,14 @@ async fn apply_proposal(env: &ToolEnv, record: &ProposalRecord, ctx: &ToolContex
             skipped += 1;
             continue;
         }
-        undo.push(json!({"op": "restore", "action_id": a.id, "before": span_of(&a), "deleted": a.deleted}));
+        undo.push(json!({"op": "restore", "action_id": a.id, "before": span_of(&a), "deleted": a.deleted, "status": a.status}));
         match &c.after {
             Some(span) => {
                 a.start_at = span.start_at;
                 a.end_at = span.end_at;
+                if a.status == ActionStatus::Missed {
+                    a.status = ActionStatus::Planned;
+                }
             }
             None => a.deleted = true,
         }

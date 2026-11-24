@@ -4,7 +4,7 @@
 
 use crate::{invalid, Result};
 use aroh_domain::hlc::Hlc;
-use aroh_domain::rows::{Action, Proposal, ProposalStatus};
+use aroh_domain::rows::{Action, ActionStatus, Proposal, ProposalStatus};
 use aroh_store::repo;
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
@@ -23,11 +23,18 @@ fn time(v: &Value, key: &str) -> Result<DateTime<Utc>> {
         .ok_or_else(|| invalid(format!("undo without {key}")))
 }
 
-fn restore(conn: &Connection, clock: &mut Hlc, id: &str, span: (DateTime<Utc>, DateTime<Utc>), deleted: bool) -> Result<()> {
+fn status_of(v: &Value) -> Option<ActionStatus> {
+    v.get("status").and_then(|s| serde_json::from_value(s.clone()).ok())
+}
+
+fn restore(conn: &Connection, clock: &mut Hlc, id: &str, span: (DateTime<Utc>, DateTime<Utc>), deleted: bool, status: Option<ActionStatus>) -> Result<()> {
     conn.execute("UPDATE actions SET deleted = 0 WHERE id = ?1", [id])?;
     let mut action: Action = repo::get(conn, id)?;
     (action.start_at, action.end_at) = span;
     action.deleted = deleted;
+    if let Some(status) = status.filter(|s| *s != ActionStatus::Done && action.status != ActionStatus::Done) {
+        action.status = status;
+    }
     repo::put(conn, clock, &mut action)?;
     Ok(())
 }
@@ -40,7 +47,7 @@ fn undo_one(conn: &Connection, clock: &mut Hlc, undo: &Value) -> Result<usize> {
             Some("restore") => {
                 let before = c.get("before").ok_or_else(|| invalid("undo without before"))?;
                 let deleted = c.get("deleted").and_then(Value::as_bool).unwrap_or(false);
-                restore(conn, clock, id, (time(before, "start_at")?, time(before, "end_at")?), deleted)?;
+                restore(conn, clock, id, (time(before, "start_at")?, time(before, "end_at")?), deleted, status_of(c))?;
             }
             Some("delete") => repo::delete::<Action>(conn, clock, id)?,
             other => return Err(invalid(format!("undo op {other:?}"))),
@@ -50,7 +57,7 @@ fn undo_one(conn: &Connection, clock: &mut Hlc, undo: &Value) -> Result<usize> {
     for a in undo.get("actions").and_then(Value::as_array).into_iter().flatten() {
         let id = a.get("id").and_then(Value::as_str).ok_or_else(|| invalid("undo without id"))?;
         match a.get("before").filter(|b| !b.is_null()) {
-            Some(before) => restore(conn, clock, id, (time(before, "start_at")?, time(before, "end_at")?), false)?,
+            Some(before) => restore(conn, clock, id, (time(before, "start_at")?, time(before, "end_at")?), false, status_of(before))?,
             None => repo::delete::<Action>(conn, clock, id)?,
         }
         done += 1;

@@ -472,6 +472,16 @@ pub fn set_goal_controls(conn: &Connection, clock: &mut Hlc, goal_id: &str, remi
     Ok(goal)
 }
 
+/// Sets whether replans of goal `goal_id` keep its sessions in sequence (Q79, "Keep
+/// sessions in order"). The next replan reads it from the synced goal row.
+/// Output: the stored goal.
+pub fn set_goal_ordered(conn: &Connection, clock: &mut Hlc, goal_id: &str, ordered: bool) -> Result<Goal> {
+    let mut goal: Goal = repo::get(conn, goal_id)?;
+    goal.ordered = ordered;
+    repo::put(conn, clock, &mut goal)?;
+    Ok(goal)
+}
+
 /// Most characters of a file name kept in its storage path.
 const STORED_NAME_CHARS: usize = 80;
 

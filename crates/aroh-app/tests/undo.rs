@@ -1,6 +1,6 @@
 use aroh_app::undo;
 use aroh_domain::hlc::Hlc;
-use aroh_domain::rows::{samples, Action, Proposal, ProposalSize, ProposalStatus};
+use aroh_domain::rows::{samples, Action, ActionStatus, Proposal, ProposalSize, ProposalStatus};
 use aroh_store::{db, repo, Error};
 use chrono::{Duration, TimeZone, Utc};
 use serde_json::json;
@@ -42,7 +42,7 @@ fn undo_run_restores_moves_removes_creates_and_marks_undone() {
         "0195a1b2-0000-7000-8000-0000000000a1",
         ProposalStatus::Applied,
         json!({"changes": [
-            {"op": "restore", "action_id": moved.id, "before": {"start_at": before.0, "end_at": before.1}, "deleted": false},
+            {"op": "restore", "action_id": moved.id, "before": {"start_at": before.0, "end_at": before.1}, "deleted": false, "status": "missed"},
             {"op": "delete", "action_id": created.id}
         ]}),
     );
@@ -52,6 +52,7 @@ fn undo_run_restores_moves_removes_creates_and_marks_undone() {
     assert_eq!(undo::undo_run(&conn, &mut clock, RUN).unwrap(), 2);
     let back: Action = repo::get(&conn, &moved.id).unwrap();
     assert_eq!((back.start_at, back.end_at), before);
+    assert_eq!(back.status, ActionStatus::Missed, "undo returns a replanned miss to missed");
     assert!(matches!(repo::get::<Action>(&conn, &created.id), Err(Error::NotFound(_))));
     assert_eq!(repo::get::<Proposal>(&conn, &p.id).unwrap().status, ProposalStatus::Undone);
     assert!(undo::undo_run(&conn, &mut clock, RUN).is_err(), "a second undo has nothing left");

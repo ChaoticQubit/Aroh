@@ -83,6 +83,7 @@ impl World {
             created_at: utc(T0),
             reminders: true,
             use_calendars: true,
+            ordered: false,
             run_limit_minutes: None,
             updated_at: String::new(),
             deleted: false,
@@ -484,6 +485,7 @@ async fn timezone_moves_every_review_of_the_owner() {
         created_at: utc(T0),
         reminders: true,
         use_calendars: true,
+        ordered: false,
         run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,
@@ -645,4 +647,82 @@ async fn a_replan_that_writes_new_actions_fills_their_cards_once_right_away() {
     w.later(31_000);
     w.tick().await;
     assert_eq!(w.count("select count(*) from public.adaptations where user_id = $1 and window_key like 'fill:plan:%'").await, 1, "one fill per plan version");
+}
+
+/// Seeds the owner's B63 reading goal on `w`: an ordered Auto goal with three
+/// sessions ended unlogged this morning (the scan derives them missed) and two
+/// planned later, in chapter order. Output: the goal and the action ids in that order.
+async fn b63_reading(w: &World) -> (Uuid, Vec<String>) {
+    let goal = w.goal(Autonomy::Auto).await;
+    let mut g = aroh_server::rows::get_row::<Goal>(&w.pool, w.user, &goal.to_string()).await.unwrap().unwrap();
+    g.ordered = true;
+    put_row(&w.pool, &w.hlc, w.user, &mut g).await.unwrap();
+    let sessions = [
+        ("Chapters 3-6", "2026-11-22T07:00:00Z"),
+        ("Chapters 7-9", "2026-11-22T08:00:00Z"),
+        ("Chapters 10-12", "2026-11-22T09:00:00Z"),
+        ("Chapters 12-14", "2026-11-23T19:00:00Z"),
+        ("Chapters 15-17", "2026-11-24T19:00:00Z"),
+    ];
+    let mut ids = Vec::new();
+    for (title, start) in sessions {
+        let mut a = w.action(goal, start).await;
+        a.title = title.into();
+        put_row(&w.pool, &w.hlc, w.user, &mut a).await.unwrap();
+        ids.push(a.id);
+    }
+    (goal, ids)
+}
+
+fn chapter_move(id: &str, title: &str, start: &str) -> Value {
+    json!({"op": "move", "action_id": id, "title": title, "start": start, "minutes": 30})
+}
+
+async fn chapters(w: &World, goal: Uuid) -> Vec<(String, String)> {
+    db::query_as("select title, status from public.actions where goal_id = $1 and not deleted order by start_at")
+        .bind(goal)
+        .fetch_all(&w.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b63_missed_reading_replan_shifts_the_sequence_and_plans_it() {
+    let w = world(json!(null)).await;
+    let (goal, ids) = b63_reading(&w).await;
+    *w.analyst.lock().unwrap() = json!({"summary": "Shift the reading forward.", "size": "big", "changes": [
+        chapter_move(&ids[0], "Chapters 3-6", "2026-11-22T20:00:00"),
+        chapter_move(&ids[1], "Chapters 7-9", "2026-11-23T20:00:00"),
+        chapter_move(&ids[2], "Chapters 10-12", "2026-11-24T20:00:00"),
+        chapter_move(&ids[3], "Chapters 12-14", "2026-11-25T20:00:00"),
+        chapter_move(&ids[4], "Chapters 15-17", "2026-11-26T20:00:00")
+    ]});
+    w.tick().await;
+    assert!(w.seen.lock().unwrap().iter().any(|b| b.contains("You are Adaptation analyst") && (b.contains(r#"\"ordered\":true"#) || b.contains(r#""ordered":true"#))), "the analyst reads the order switch");
+    let planned = |t: &str| (t.to_string(), "planned".to_string());
+    assert_eq!(
+        chapters(&w, goal).await,
+        vec![planned("Chapters 3-6"), planned("Chapters 7-9"), planned("Chapters 10-12"), planned("Chapters 12-14"), planned("Chapters 15-17")]
+    );
+    assert_eq!(w.count("select count(*) from public.proposals where user_id = $1 and status = 'applied'").await, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b63_catch_up_and_out_of_order_replan_never_lands() {
+    let w = world(json!(null)).await;
+    let (goal, ids) = b63_reading(&w).await;
+    *w.analyst.lock().unwrap() = json!({"summary": "Catch up.", "size": "big", "changes": [
+        {"op": "create", "action_id": null, "title": "Catch up: Chapters 3-6", "start": "2026-11-23T08:00:00", "minutes": 30},
+        chapter_move(&ids[1], "Chapters 7-9", "2026-11-26T20:00:00"),
+        chapter_move(&ids[2], "Chapters 10-12", "2026-11-28T20:00:00")
+    ]});
+    let before = chapters(&w, goal).await;
+    w.engine.tick(TickOptions::default()).await.unwrap();
+    let analyst_calls = w.seen.lock().unwrap().iter().filter(|b| b.contains("You are Adaptation analyst")).count();
+    assert_eq!(analyst_calls, 2, "one repair round, then the run fails");
+    assert!(w.seen.lock().unwrap().iter().any(|b| b.contains("repeats the missed session")), "the repair round names the duplicate");
+    assert_eq!(w.count("select count(*) from public.proposals where user_id = $1").await, 0, "nothing is recorded");
+    assert_eq!(chapters(&w, goal).await, before, "no catch-up, no move");
 }

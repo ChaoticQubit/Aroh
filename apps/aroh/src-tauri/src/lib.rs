@@ -144,6 +144,7 @@ pub fn run() {
             commands::goals::guess_category,
             commands::goals::add_category,
             commands::goals::set_goal_controls,
+            commands::goals::set_goal_ordered,
             commands::goals::edit_fact,
             commands::goals::block_topic,
             commands::goals::allow_topic,

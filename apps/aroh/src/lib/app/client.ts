@@ -17,6 +17,7 @@ export type Goal = {
 	reminders: boolean;
 	use_calendars: boolean;
 	run_limit_minutes: number | null;
+	ordered: boolean;
 };
 
 /** An action row; times are RFC 3339 UTC. */
@@ -228,6 +229,9 @@ export const deleteGoal = (goalId: string, keepActions: boolean) => invoke<void>
 /** Sets a goal's reminders, calendar reads and run time limit in minutes (null: the Settings limit). */
 export const setGoalControls = (goalId: string, reminders: boolean, useCalendars: boolean, runLimitMinutes: number | null) =>
 	invoke<Goal>('set_goal_controls', { goalId, reminders, useCalendars, runLimitMinutes });
+
+/** Sets whether replans keep a goal's sessions in order (Q79, "Keep sessions in order"). */
+export const setGoalOrdered = (goalId: string, ordered: boolean) => invoke<Goal>('set_goal_ordered', { goalId, ordered });
 
 /** Makes a vendor and model the default provider. Never takes a key. */
 export const saveProvider = (vendor: string, model: string) => invoke<ProviderSetting>('app_save_provider', { vendor, model });
