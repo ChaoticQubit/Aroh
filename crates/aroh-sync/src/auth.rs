@@ -92,10 +92,34 @@ pub async fn password_session(config: &Config, email: &str, password: &str) -> R
     token(config, "password", json!({"email": email.trim(), "password": password})).await
 }
 
-/// Creates an account through GoTrue sign-up and returns its session
-/// without touching the keychain. Errors when the project requires email
-/// confirmation (no session comes back) or the email is taken.
-pub async fn sign_up_session(config: &Config, email: &str, password: &str) -> Result<Session> {
+/// Trades a native identity token (Sign in with Apple) for a session without touching
+/// the keychain. `nonce` is the raw nonce whose SHA-256 the app handed to Apple; GoTrue
+/// hashes it again and compares. Errors on an empty token or a refusal.
+pub async fn id_token_session(config: &Config, provider: &str, id_token: &str, nonce: &str) -> Result<Session> {
+    if id_token.is_empty() || nonce.is_empty() {
+        return Err(Error::Auth("Apple returned no identity token".into()));
+    }
+    token(config, "id_token", json!({"provider": provider, "id_token": id_token, "nonce": nonce})).await
+}
+
+/// Signs in with a native identity token and stores the session in the keychain.
+/// Input: the project config, the provider ("apple"), the token and the raw nonce.
+/// Output: the new session.
+pub async fn sign_in_id_token(config: &Config, provider: &str, id_token: &str, nonce: &str) -> Result<Session> {
+    let session = id_token_session(config, provider, id_token, nonce).await?;
+    save(&session)?;
+    Ok(session)
+}
+
+/// What a GoTrue sign-up gave back: a session, or none because the project
+/// requires the new address to be confirmed first ("check your email").
+#[derive(Debug)]
+pub enum SignUp {
+    SignedIn(Session),
+    ConfirmEmail,
+}
+
+async fn sign_up_reply(config: &Config, email: &str, password: &str) -> Result<SignUp> {
     let response = http()
         .post(format!("{}/auth/v1/signup", config.url))
         .header("apikey", &config.anon_key)
@@ -104,18 +128,30 @@ pub async fn sign_up_session(config: &Config, email: &str, password: &str) -> Re
         .await?;
     let body: serde_json::Value = check(response).await?.json().await?;
     if body.get("access_token").is_none() {
-        return Err(Error::Auth("confirm the email, then sign in".into()));
+        return Ok(SignUp::ConfirmEmail);
     }
-    parse(serde_json::from_value(body).map_err(|_| Error::Auth("unexpected sign-up response".into()))?)
+    Ok(SignUp::SignedIn(parse(serde_json::from_value(body).map_err(|_| Error::Auth("unexpected sign-up response".into()))?)?))
 }
 
-/// Creates an account and stores its session in the keychain.
+/// Creates an account through GoTrue sign-up and returns its session
+/// without touching the keychain. Errors when the project requires email
+/// confirmation (no session comes back) or the email is taken.
+pub async fn sign_up_session(config: &Config, email: &str, password: &str) -> Result<Session> {
+    match sign_up_reply(config, email, password).await? {
+        SignUp::SignedIn(session) => Ok(session),
+        SignUp::ConfirmEmail => Err(Error::Auth("confirm the email, then sign in".into())),
+    }
+}
+
+/// Creates an account and stores its session in the keychain when one comes back.
 /// Input: the project config and the new credentials.
-/// Output: the new session.
-pub async fn sign_up(config: &Config, email: &str, password: &str) -> Result<Session> {
-    let session = sign_up_session(config, email, password).await?;
-    save(&session)?;
-    Ok(session)
+/// Output: the session, or `ConfirmEmail` when the address must be confirmed first.
+pub async fn sign_up(config: &Config, email: &str, password: &str) -> Result<SignUp> {
+    let reply = sign_up_reply(config, email, password).await?;
+    if let SignUp::SignedIn(session) = &reply {
+        save(session)?;
+    }
+    Ok(reply)
 }
 
 /// Revokes the session on the server when reachable and always removes it
@@ -182,6 +218,12 @@ mod tests {
     /// Serves one HTTP request on a local port with a GoTrue token reply.
     /// Returns the project URL and a handle that yields the raw request head.
     async fn gotrue_once() -> (String, tokio::task::JoinHandle<String>) {
+        gotrue_reply(json!({"access_token": "a", "refresh_token": "r", "expires_in": 3600, "user": {"id": "0190f2a0-0000-7000-8000-00000000000a"}})).await
+    }
+
+    /// Serves one HTTP request on a local port with `body` as the JSON reply.
+    /// Returns the project URL and a handle that yields the raw request head.
+    async fn gotrue_reply(body: serde_json::Value) -> (String, tokio::task::JoinHandle<String>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
@@ -194,12 +236,35 @@ mod tests {
                 assert!(n > 0, "the client closed before sending headers");
                 seen.extend_from_slice(&chunk[..n]);
             }
-            let body = json!({"access_token": "a", "refresh_token": "r", "expires_in": 3600, "user": {"id": "0190f2a0-0000-7000-8000-00000000000a"}}).to_string();
+            let body = body.to_string();
             let reply = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
             socket.write_all(reply.as_bytes()).await.unwrap();
             String::from_utf8_lossy(&seen).to_lowercase()
         });
         (url, served)
+    }
+
+    #[tokio::test]
+    async fn a_sign_up_that_needs_email_confirmation_is_check_your_email_not_an_error() {
+        let (url, served) = gotrue_reply(json!({"id": "0190f2a0-0000-7000-8000-00000000000a", "email": "me@aroh.test", "confirmation_sent_at": "2026-11-23T12:00:00Z"})).await;
+        let config = Config::new(&url, "sb_publishable_test_key_0001").unwrap();
+        let reply = sign_up_reply(&config, "me@aroh.test", "secret-password").await.unwrap();
+        assert!(matches!(reply, SignUp::ConfirmEmail), "{reply:?}");
+        assert!(served.await.unwrap().starts_with("post /auth/v1/signup "));
+        let (url, _) = gotrue_once().await;
+        let config = Config::new(&url, "sb_publishable_test_key_0001").unwrap();
+        assert!(matches!(sign_up_reply(&config, "me@aroh.test", "secret-password").await.unwrap(), SignUp::SignedIn(_)));
+    }
+
+    #[tokio::test]
+    async fn apple_sign_in_trades_the_id_token_and_raw_nonce_for_a_session() {
+        let (url, served) = gotrue_once().await;
+        let config = Config::new(&url, "sb_publishable_test_key_0001").unwrap();
+        let session = id_token_session(&config, "apple", "header.payload.sig", "raw-nonce").await.unwrap();
+        assert_eq!(session.user_id, "0190f2a0-0000-7000-8000-00000000000a");
+        let head = served.await.unwrap();
+        assert!(head.starts_with("post /auth/v1/token?grant_type=id_token "), "{head}");
+        assert!(id_token_session(&config, "apple", "", "raw-nonce").await.is_err(), "an empty token never reaches the server");
     }
 
     #[tokio::test]

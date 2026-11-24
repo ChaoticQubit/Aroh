@@ -79,7 +79,7 @@
 </script>
 
 <div class="flex h-full flex-col">
-	<CardChat coach={COACH} {entries} onsend={ask} onundo={undo} />
+	<CardChat coach={COACH} {entries} keep="card:{id}" onsend={ask} onundo={undo} />
 	{#if busy}<p class="px-4 pb-2 text-sm text-muted" role="status">The coach is changing the card.</p>{/if}
 </div>
 {#if pending && action}

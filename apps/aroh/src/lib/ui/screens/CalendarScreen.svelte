@@ -5,7 +5,6 @@
 	import Segmented from '../components/Segmented.svelte';
 	import CategoryFilter from '../components/CategoryFilter.svelte';
 	import CalendarGrid from './CalendarGrid.svelte';
-	import WeekStrip from '../components/planning/WeekStrip.svelte';
 	import ActionSheet from './ActionSheet.svelte';
 	import AllDayChoice from '../components/planning/AllDayChoice.svelte';
 	import { allDayOn, applyEdits } from './edits';
@@ -16,13 +15,14 @@
 	import type { ActionEdit, AllDayView, BusyView, CategoryView, DayKind, DayPick } from './types';
 
 	/**
-	 * Calendar: toolbar with Today, previous, next and the Day, Week, Month switch, category chips,
-	 * then a week hour grid on wide containers or a week strip over a day grid on phones. Kept device
+	 * Calendar: month title with the range and its session count, Today, previous, next and the Day,
+	 * Week, Month switch, category chips, then a week hour grid on wide containers or, on phones, the
+	 * the same week as a compact hour grid of seven narrow day columns (Q78). Kept device
 	 * events (`busy`) show in the hour grids as neutral blocks, device all-day events (`allDay`) in
 	 * an all-day row and as bars in month cells and the week strip, with the kind question for the
 	 * first unanswered one in view; tapping a chip reopens it. A sideways swipe pages a day, week or
 	 * month like the arrows. Tapping an action opens the edit
-	 * sheet; `onedit`, `onlock`, `ondelete` and `onchoose` report the changes. `initialView`, `day`, `editing`,
+	 * sheet; `onstatus`, `onedit`, `onlock`, `ondelete` and `onchoose` report the changes. `initialView`, `day`, `editing`,
 	 * `confirming`, `selected` and `inline` (sheet drawn in place for mockups) set the opening state.
 	 */
 	let {
@@ -36,6 +36,7 @@
 		confirming = false,
 		selected: selectedId = null,
 		inline = false,
+		onstatus,
 		onedit,
 		onlock,
 		ondelete,
@@ -51,6 +52,7 @@
 		confirming?: boolean;
 		selected?: string | null;
 		inline?: boolean;
+		onstatus?: (id: string, status: 'planned' | 'done' | 'skipped') => void;
 		onedit?: (edit: ActionEdit) => void;
 		onlock?: (id: string, locked: boolean) => void;
 		ondelete?: (id: string) => void;
@@ -84,12 +86,18 @@
 	const monthDays = $derived(Array.from({ length: 42 }, (_, i) => shiftDay(monthGridStart, i)));
 	const range = $derived(
 		view === 'day'
-			? formatDate(anchor, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+			? formatDate(anchor, { weekday: 'long', day: 'numeric', month: 'long' })
 			: view === 'week'
-				? `${formatDate(week[0], { day: 'numeric', month: 'short' })} - ${formatDate(week[6], { day: 'numeric', month: 'short', year: 'numeric' })}`
-				: formatDate(monthStart, { month: 'long', year: 'numeric' })
+				? `${formatDate(week[0], { day: 'numeric', month: 'short' })} to ${formatDate(week[6], { day: 'numeric', month: 'short' })}`
+				: formatDate(monthStart, { month: 'long' })
 	);
-
+	const inRange = $derived(
+		visible.filter((a) => {
+			const d = formatYmd(a.start, zone);
+			return view === 'month' ? d.slice(0, 7) === monthStart.slice(0, 7) : shown.includes(d);
+		})
+	);
+	const goalCount = $derived(new Set(inRange.map((a) => a.goalTitle)).size);
 	/** Moves the anchor one day, week or month in `dir`. */
 	function step(dir: 1 | -1) {
 		anchor = stepAnchor(view, anchor, dir);
@@ -124,20 +132,25 @@
 	}
 </script>
 
-<div class="flex flex-col gap-3 p-4 @3xl:p-6">
-	<div class="flex flex-wrap items-center gap-2">
-		<Button variant="outline" size="touch" class="@3xl:h-9" onclick={() => (anchor = today)}>Today</Button>
+<div class="flex flex-col gap-4 p-4 @3xl:p-6">
+	<div class="flex items-start justify-between gap-3">
+		<header class="flex min-w-0 flex-col gap-1">
+			<h2 class="text-2xl leading-tight font-semibold">{formatDate(view === 'month' ? monthStart : anchor, { month: 'long', year: 'numeric' })}</h2>
+			<p class="text-sm text-muted" aria-live="polite">{range} · {inRange.length} {inRange.length === 1 ? 'session' : 'sessions'} across {goalCount} {goalCount === 1 ? 'goal' : 'goals'}</p>
+		</header>
+		<Button variant="outline" size="touch" class="shrink-0 @3xl:h-9" onclick={() => (anchor = today)}>Today</Button>
+	</div>
+	<div class="flex items-center justify-between gap-2">
 		<Button variant="ghost" size="icon-touch" class="@3xl:size-9" aria-label="Previous" onclick={() => step(-1)}><ChevronLeft /></Button>
-		<Button variant="ghost" size="icon-touch" class="@3xl:size-9" aria-label="Next" onclick={() => step(1)}><ChevronRight /></Button>
-		<p class="mr-auto text-sm font-semibold" aria-live="polite">{range}</p>
 		<Segmented label="Calendar view" bind:value={view} options={[{ value: 'day', label: 'Day' }, { value: 'week', label: 'Week' }, { value: 'month', label: 'Month' }]} />
+		<Button variant="ghost" size="icon-touch" class="@3xl:size-9" aria-label="Next" onclick={() => step(1)}><ChevronRight /></Button>
 	</div>
 	<CategoryFilter categories={used} bind:hidden />
 	{#if asking && onchoose}<AllDayChoice event={asking} onchoose={choose} onclose={reopened ? () => (choosing = null) : undefined} />{/if}
 
-	<div class="flex flex-col gap-3" use:swipe={step}>
+	<div class="flex flex-col gap-4" use:swipe={step}>
 	{#if view === 'month'}
-		<div class="overflow-hidden rounded-md border border-border bg-bg">
+		<div class="overflow-hidden rounded-sm border border-border bg-bg">
 			<div class="grid grid-cols-7 border-b border-border">
 				{#each week as d (d)}<p class="py-2 text-center text-xs text-muted">{formatDate(d, { weekday: 'short' })}</p>{/each}
 			</div>
@@ -173,15 +186,12 @@
 		</div>
 	{:else if view === 'week'}
 		<div class="hidden @3xl:block"><CalendarGrid days={week} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} /></div>
-		<div class="flex flex-col gap-3 @3xl:hidden">
-			<WeekStrip spec={{ kind: 'week_strip', label: 'This week', actions: visible, startDay: week[0] }} allDay={events} onchange={(d) => (anchor = d as string)} />
-			<CalendarGrid days={[anchor]} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} />
-		</div>
+		<div class="@3xl:hidden"><CalendarGrid compact days={week} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} /></div>
 	{:else}
 		<CalendarGrid days={[anchor]} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} />
 	{/if}
 	</div>
 </div>
 {#if open}
-	<ActionSheet action={open} {confirming} {inline} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />
+	<ActionSheet action={open} {confirming} {inline} {onstatus} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />
 {/if}

@@ -27,6 +27,8 @@ pub enum Error {
     Http(String),
     #[error("server answered {0}: {1}")]
     Status(u16, String),
+    #[error("{0}: {1}")]
+    Refused(&'static str, String),
 }
 
 impl From<reqwest::Error> for Error {

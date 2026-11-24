@@ -1,11 +1,12 @@
 import type { Clock } from '$lib/ui/clock';
 import type { ActionView, CategorySlot, ChangeView, ComponentSpec, Point, SpecOf, Unit, ViewSpec } from '$lib/ui/contract';
-import { daysBetween, formatDate, formatDay, formatYmd, minuteOfDay, mondayOf, shiftDay } from '$lib/ui/format';
+import { daysBetween, formatDate, formatDay, formatTime, formatYmd, minuteOfDay, mondayOf, shiftDay } from '$lib/ui/format';
 import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, ProfileView, RunView, SettingsView } from '$lib/ui/screens/types';
 import { catalog } from './catalog';
 import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerEntry, TrackerField } from './client';
 import { ACTIVE, type Insight, type RunSummary } from './engine';
 import type { Tone } from '$lib/ui/components/StatusChip.svelte';
+import { PACE_LABEL, type GoalStats } from './dashboard';
 
 const SEEDED_SLOTS: Record<string, CategorySlot> = { Learning: 1, 'Health and Fitness': 2, Financial: 3, 'Hobby and Skill': 4, 'Career and Projects': 5, Habit: 6 };
 
@@ -233,6 +234,47 @@ export function goalRows(s: Snapshot, zone: string): GoalRow[] {
 			const c = goalCategory(categories, g);
 			return { id: g.id, title: g.title, category: c.name, slot: c.slot, deadline: g.deadline ? deadlineAt(g.deadline, zone) : null, autonomy: AUTONOMY_LABEL[g.autonomy] };
 		});
+}
+
+/** A goal's line on the Goals list: status chip tone and label, done and due sessions to date, and its next step or null. */
+export type GoalProgress = { tone: Tone; label: string; done: number; due: number; line: string | null };
+
+const PACE_TONE: Record<GoalStats['pace'], Tone> = { on_track: 'done', ahead: 'done', behind: 'missed' };
+
+/**
+ * The status, progress and next step of every non-archived goal, by goal id. Draft is Planning,
+ * paused Paused, done Done; an active goal with a proposal waiting is Waiting for you, else its
+ * dashboard pace (`stats`; null while loading gives Active). The line names the next planned
+ * session, else the sessions missed this week, else null.
+ */
+export function goalProgress(s: Snapshot, stats: GoalStats[] | null, clock: Clock): Record<string, GoalProgress> {
+	const today = formatYmd(clock.now, clock.zone);
+	const figures = new Map((stats ?? []).map((st) => [st.goal_id, st]));
+	const waiting = new Set(s.proposals.filter((p) => p.status === 'proposed').map((p) => p.goal_id));
+	const out: Record<string, GoalProgress> = {};
+	for (const g of s.goals.filter((g) => g.status !== 'archived')) {
+		const st = figures.get(g.id);
+		const actions = s.actions.filter((a) => a.goal_id === g.id).sort((a, b) => a.start_at.localeCompare(b.start_at));
+		const next = actions.find((a) => a.status === 'planned' && Date.parse(a.start_at) > Date.parse(clock.now));
+		const missed = weekActions(actions, clock).filter((a) => a.status === 'missed').length;
+		const status: { tone: Tone; label: string } =
+			g.status === 'draft'
+				? { tone: 'planned', label: 'Planning' }
+				: g.status === 'paused'
+					? { tone: 'skipped', label: 'Paused' }
+					: g.status === 'done'
+						? { tone: 'done', label: 'Done' }
+						: waiting.has(g.id)
+							? { tone: 'warn', label: 'Waiting for you' }
+							: st
+								? { tone: PACE_TONE[st.pace], label: PACE_LABEL[st.pace] }
+								: { tone: 'planned', label: 'Active' };
+		const when = next && (formatYmd(next.start_at, clock.zone) === today ? 'today' : formatDay(next.start_at, clock.zone));
+		const line = next ? `Next: ${next.title}, ${when} ${formatTime(next.start_at, clock.zone)}` : missed ? `${missed} ${missed === 1 ? 'session' : 'sessions'} missed this week` : null;
+		console.assert(!st || (st.done >= 0 && st.due >= 0), 'dashboard counts are never negative');
+		out[g.id] = { ...status, done: st?.done ?? 0, due: st?.due ?? 0, line };
+	}
+	return out;
 }
 
 function changes(p: Proposal): ChangeView[] {

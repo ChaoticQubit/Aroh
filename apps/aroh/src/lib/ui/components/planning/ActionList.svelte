@@ -5,11 +5,13 @@
 	import StatusChip, { DOT } from '../StatusChip.svelte';
 	import { getClock } from '$lib/ui/clock';
 	import { dayLabels, formatTime, formatYmd } from '$lib/ui/format';
-	import { actionStyle } from '$lib/ui/status';
+	import { actionStyle, logState } from '$lib/ui/status';
 	import type { ActionView, OnChange, SpecOf } from '$lib/ui/contract';
 
 	/**
-	 * Actions in time order with a done toggle; emits `{ id, status }` on a tick. With `onopen` a row's
+	 * Actions in time order with a done toggle on every row whatever its status, so a missed or
+	 * skipped action can be done later (Q78), and its status chip ("Not logged yet" once it ended
+	 * until its day is over); emits `{ id, status }` on a tick. With `onopen` a row's
 	 * time and title open that action by id, else they link to its card page (Q71). Titles wrap to two
 	 * lines and goal names to one, so a row never outgrows its container. A list that spans days
 	 * shows each row's day ("Today", "Tue 24") above its times.
@@ -41,6 +43,7 @@
 		<ul class="-mx-4 -mb-4 divide-y divide-border border-t border-border">
 			{#each items as a, i (a.id)}
 				{@const day = days[i]}
+				{@const chip = logState(a, now, zone)}
 				<li class="flex min-h-12 items-center gap-3 py-1 pr-1 pl-4">
 					<svelte:element
 						this={onopen ? 'button' : 'a'}
@@ -59,21 +62,18 @@
 						</span>
 					</svelte:element>
 					{#if a.locked}<Lock class="size-4 shrink-0 text-muted" aria-label="Locked" />{/if}
-					{#if a.status === 'missed' || a.status === 'skipped'}
-						<span class="mr-3"><StatusChip tone={a.status} label={a.status === 'missed' ? 'Missed' : 'Skipped'} /></span>
-					{:else}
-						<button
-							type="button"
-							aria-pressed={a.status === 'done'}
-							aria-label="{a.status === 'done' ? 'Mark not done' : 'Mark done'}: {a.title}"
-							class="flex size-11 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-							onclick={() => toggle(a)}
-						>
-							<span class="flex size-4 items-center justify-center rounded-[3px] border {a.status === 'done' ? 'border-status-done bg-status-done text-bg' : 'border-border-strong text-transparent hover:border-fg'}">
-								<Check class="size-3" strokeWidth={3} />
-							</span>
-						</button>
-					{/if}
+					{#if chip && a.status !== 'done'}<StatusChip tone={chip.tone} label={chip.label} />{/if}
+					<button
+						type="button"
+						aria-pressed={a.status === 'done'}
+						aria-label="{a.status === 'done' ? 'Mark not done' : 'Mark done'}: {a.title}"
+						class="flex size-11 shrink-0 items-center justify-center rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+						onclick={() => toggle(a)}
+					>
+						<span class="flex size-4 items-center justify-center rounded-[3px] border {a.status === 'done' ? 'border-status-done bg-status-done text-bg' : 'border-border-strong text-transparent hover:border-fg'}">
+							<Check class="size-3" strokeWidth={3} />
+						</span>
+					</button>
 				</li>
 			{/each}
 		</ul>

@@ -7,5 +7,5 @@ The Aroh app includes third-party software under their own licences, among them
 crates under the Mozilla Public License 2.0 used unmodified. Their names, licences,
 source locations and licence texts are listed in THIRD_PARTY_NOTICES.md.
 
-troupekit/ is licensed under MIT OR Apache-2.0 (see troupekit/LICENSE-MIT and
-troupekit/LICENSE-APACHE).
+troupekit (https://github.com/ChaoticQubit/troupekit) is licensed under MIT OR
+Apache-2.0.

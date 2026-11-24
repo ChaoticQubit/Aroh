@@ -5,10 +5,10 @@ use aroh_domain::hlc::Hlc;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{Action, ActionSeries, ActionStatus};
 use aroh_store::repo;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 
-pub use aroh_domain::time::MISSED_GRACE_MIN;
+pub use aroh_domain::time::{missed_at, MISSED_GRACE_MIN};
 
 /// What one tick changed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
@@ -23,7 +23,7 @@ pub struct Tick {
 /// Seeds the categories of `user_id` (insert-or-ignore), settles occurrences pulled in an
 /// old zone ([`crate::travel::settle`]) and rows of deleted goals ([`crate::remove::settle_orphans`]), materializes every live series for `[now, now +
 /// 14 days)`, keeps actions off Busy days from today on (local in `zone`), and marks planned
-/// actions that ended more than [`MISSED_GRACE_MIN`] minutes before `now` as missed.
+/// actions missed once their local day in `zone` is over ([`missed_at`], Q78).
 /// Running it twice changes nothing. Output: the counts changed.
 pub fn tick(conn: &Connection, clock: &mut Hlc, user_id: &str, now: DateTime<Utc>, zone: chrono_tz::Tz) -> Result<Tick> {
     let mut report = Tick::default();
@@ -39,9 +39,8 @@ pub fn tick(conn: &Connection, clock: &mut Hlc, user_id: &str, now: DateTime<Utc
     }
     let today = now.with_timezone(&zone).date_naive();
     report.moved = crate::write::keep_off_busy_days(conn, clock, user_id, today, zone)?.0.len();
-    let cutoff = now - Duration::minutes(MISSED_GRACE_MIN);
     for mut action in repo::list::<Action>(conn, &[("user_id", user_id), ("status", "planned")])? {
-        if action.end_at < cutoff {
+        if now >= missed_at(action.start_at, action.end_at, zone) {
             action.status = ActionStatus::Missed;
             repo::put(conn, clock, &mut action)?;
             report.missed += 1;

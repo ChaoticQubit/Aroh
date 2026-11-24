@@ -18,7 +18,7 @@ const action: Action = {
 };
 const snapshot = {
 	categories: [],
-	goals: [{ id: 'g1', category_id: null, title: 'Six pack', context: null, deadline: null, status: 'active', autonomy: 'ask', created_at: '2026-11-23T12:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null }],
+	goals: [{ id: 'g1', category_id: null, title: 'Six pack', context: null, deadline: null, status: 'active', autonomy: 'ask', created_at: '2026-11-23T12:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null, ordered: false }],
 	actions: []
 } as unknown as Snapshot;
 

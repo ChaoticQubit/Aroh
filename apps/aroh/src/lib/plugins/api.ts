@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 /** One plugin version of a goal: `tree` is the validated tree, or null with the validator's `error`. */
-export type PluginVersion = { id: string; name: string; version: number; enabled: boolean; active: boolean; tree: unknown | null; error: string | null };
+export type PluginVersion = { id: string; name: string; version: number; enabled: boolean; active: boolean; tree: unknown | null; error: string | null; created_run_id?: string | null };
 
 /** The goal's plugin versions, newest first. */
 export const listPlugins = (goalId: string) => invoke<PluginVersion[]>('plugins_list', { goalId });

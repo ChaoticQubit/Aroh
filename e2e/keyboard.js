@@ -26,7 +26,7 @@
   };
 
   try {
-    await until('first-launch setup', () => text().includes('Skip for now'), 120000);
+    await until('onboarding', () => text().includes('Get started'), 120000);
     await skipSetup();
     await sleep(1500);
     await report('rest');

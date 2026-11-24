@@ -38,6 +38,7 @@ fn goal(conn: &Connection, clock: &mut Hlc, user_id: &str, title: &str, category
         created_at: now,
         reminders: true,
         use_calendars: true,
+        ordered: false,
         run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,
@@ -174,6 +175,7 @@ fn extras(conn: &Connection, clock: &mut Hlc, goal: &Goal, now: DateTime<Utc>) -
             goal_id: Some(goal.id.clone()),
             name: name.into(),
             toml: format!("name = \"{name}\"\n"),
+            created_run_id: None,
             updated_at: String::new(),
             deleted: false,
         };

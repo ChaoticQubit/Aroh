@@ -13,6 +13,7 @@
 		action,
 		confirming = false,
 		inline = false,
+		onstatus,
 		onsave,
 		onlock,
 		ondelete,
@@ -21,6 +22,7 @@
 		action: ActionView;
 		confirming?: boolean;
 		inline?: boolean;
+		onstatus?: (id: string, status: 'planned' | 'done' | 'skipped') => void;
 		onsave?: (edit: ActionEdit) => void;
 		onlock?: (id: string, locked: boolean) => void;
 		ondelete?: (id: string) => void;
@@ -32,7 +34,7 @@
 
 {#snippet body()}
 	<span class="mx-auto h-1 w-9 rounded-full bg-border-strong" aria-hidden="true"></span>
-	<ActionEditor {action} {confirming} {onsave} {onlock} {ondelete} {onclose} />
+	<ActionEditor {action} {confirming} {onstatus} {onsave} {onlock} {ondelete} {onclose} />
 {/snippet}
 
 {#if inline}

@@ -240,4 +240,23 @@ describe('run limits (Q60)', () => {
 		await e.setRunLimit(8);
 		expect(sent).toEqual(['POST /v1/runs/r1/cancel null', 'POST /v1/runs/r1/retry null', 'GET /v1/settings/run-limit null', 'PUT /v1/settings/run-limit {"minutes":8}']);
 	});
+
+	it('records AI consent and deletes the account under /v1/account (Q76)', async () => {
+		const sent: string[] = [];
+		let consentAt: string | null = null;
+		const e = new Engine(async (method, path, body) => {
+			sent.push(`${method} ${path} ${JSON.stringify(body ?? null)}`);
+			if (path === '/v1/account' && method === 'GET') return { status: 200, body: { ai_consent_at: consentAt, open_goals: 0 } };
+			if (path === '/v1/account') return { status: 202, body: { purge_after: '2026-12-08T10:00:00Z' } };
+			return { status: 204, body: null };
+		});
+		await expect(e.consent()).resolves.toEqual({ ok: true, value: false });
+		consentAt = '2026-11-23T10:00:00Z';
+		await expect(e.consent()).resolves.toEqual({ ok: true, value: true });
+		await expect(e.giveConsent()).resolves.toEqual({ ok: true, value: true });
+		await expect(e.deleteAccount()).resolves.toEqual({ ok: true, value: { purge_after: '2026-12-08T10:00:00Z' } });
+		expect(sent).toEqual(['GET /v1/account null', 'GET /v1/account null', 'PUT /v1/account/consent {"ai":true}', 'DELETE /v1/account null']);
+		const old = new Engine(async () => ({ status: 404, body: null }));
+		await expect(old.giveConsent()).resolves.toEqual({ ok: true, value: false });
+	});
 });

@@ -2,6 +2,7 @@
 	import Clock from '@lucide/svelte/icons/clock';
 	import NotebookPen from '@lucide/svelte/icons/notebook-pen';
 	import Sparkles from '@lucide/svelte/icons/sparkles';
+	import type { Snippet } from 'svelte';
 	import * as Card from '$lib/ui/primitives/card';
 	import { Button } from '$lib/ui/primitives/button';
 	import Segmented from '../Segmented.svelte';
@@ -18,6 +19,7 @@
 	 * log with easy / ok / hard, and the card chat composer with mic. `mode` `log` turns the workout into
 	 * per-set logging; an `outline` card shows its one line, the later weeks and when it is filled.
 	 * With `oncard` the plan is edited in place (why, rows, notes via `onnotes`); log taps call `onlog`.
+	 * `status` draws under the header: the status, its log control and Change time (Q78).
 	 */
 	let {
 		meta,
@@ -39,7 +41,8 @@
 		onedit,
 		onstart,
 		onfinish,
-		onmic
+		onmic,
+		status
 	}: {
 		meta: CardMeta;
 		card: ActionCardData;
@@ -61,6 +64,7 @@
 		onstart?: () => void;
 		onfinish?: () => void;
 		onmic?: () => void;
+		status?: Snippet;
 	} = $props();
 
 	let effort = $derived<string>(log.effort ?? '');
@@ -88,6 +92,7 @@
 			</p>
 			<p class="text-xs text-muted">{meta.week} · {meta.coach}</p>
 		</header>
+		{@render status?.()}
 
 		{#if card.depth === 'outline' && !card.blocks.length}
 			<Card.Root size="sm" class="gap-2 px-4">

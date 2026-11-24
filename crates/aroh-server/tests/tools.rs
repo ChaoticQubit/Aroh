@@ -27,6 +27,7 @@ async fn env(pool: &PgPool, user: Uuid) -> ToolEnv {
         created_at: utc(T0),
         reminders: true,
         use_calendars: true,
+        ordered: false,
         run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,
@@ -326,4 +327,132 @@ async fn cards_fill_the_slots_once_and_chat_edits_apply_with_undo() {
     assert_eq!(undo["rows"][0]["card"]["blocks"][0]["exercises"][0]["name"], "Back squat", "undo holds the card before the edit");
     let bad = json!({"request": {"action_id": first, "scope": "forever", "text": "x"}, "change": {"reply": "x", "minutes": 45, "card": leg_card("Squat")}});
     assert!(card_tool(&env, "edit_card").call(bad, &ctx).await.is_err());
+}
+
+/// The replan `calendar` state of `env`'s goal as the engine builds it: every
+/// live action with id, title, local UTC start, minutes, status and locked flag.
+/// Input: the tool env. Output: the JSON list.
+async fn calendar(env: &ToolEnv) -> Value {
+    let rows: Vec<(String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>, String, bool)> = db::query_as(
+        "select id::text, title, start_at, end_at, status, locked from public.actions where goal_id = $1 and not deleted order by start_at",
+    )
+    .bind(env.goal.unwrap())
+    .fetch_all(&env.pool)
+    .await
+    .unwrap();
+    Value::Array(
+        rows.into_iter()
+            .map(|(id, title, start, end, status, locked)| {
+                json!({"id": id, "title": title, "start": start.format("%Y-%m-%dT%H:%M:%S").to_string(), "minutes": (end - start).num_minutes(), "status": status, "locked": locked})
+            })
+            .collect(),
+    )
+}
+
+async fn plan_sessions(env: &ToolEnv, ordered: bool, items: &[(&str, &str)]) -> Vec<String> {
+    let items: Vec<Value> = items.iter().map(|(title, start)| json!({"title": title, "start": start, "minutes": 30, "rrule": null, "notes": "Read"})).collect();
+    let plan = json!({"plan": {"summary": "s", "timezone": "UTC", "trackers": [], "items": items, "ordered": ordered}});
+    tool(env, "write_plan").call(plan, &ToolContext::for_call(RunId::new(), 1, 0)).await.unwrap();
+    let stored: bool = db::query_scalar("select ordered from public.goals where id = $1").bind(env.goal.unwrap()).fetch_one(&env.pool).await.unwrap();
+    assert_eq!(stored, ordered, "the planner's order switch lands on the goal");
+    db::query_scalar("select id::text from public.actions where goal_id = $1 order by start_at").bind(env.goal.unwrap()).fetch_all(&env.pool).await.unwrap()
+}
+
+async fn mark_missed(env: &ToolEnv, ids: &[String]) {
+    for id in ids {
+        let mut a = get_row::<Action>(&env.pool, env.user, id).await.unwrap().unwrap();
+        a.status = ActionStatus::Missed;
+        put_row(&env.pool, &env.hlc, env.user, &mut a).await.unwrap();
+    }
+}
+
+fn moved(id: &str, title: &str, start: &str) -> Value {
+    json!({"op": "move", "action_id": id, "title": title, "start": start, "minutes": 30})
+}
+
+async fn live_sessions(env: &ToolEnv) -> Vec<(String, String)> {
+    db::query_as("select title, status from public.actions where goal_id = $1 and not deleted order by start_at")
+        .bind(env.goal.unwrap())
+        .fetch_all(&env.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b63_ordered_replan_keeps_chapter_order_and_plans_missed_sessions() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let ids = plan_sessions(
+        &env,
+        true,
+        &[
+            ("Chapters 3-6", "2026-11-22T08:00:00"),
+            ("Chapters 7-9", "2026-11-22T09:00:00"),
+            ("Chapters 10-12", "2026-11-22T10:00:00"),
+            ("Chapters 12-14", "2026-11-23T20:00:00"),
+            ("Chapters 15-17", "2026-11-24T20:00:00"),
+        ],
+    )
+    .await;
+    mark_missed(&env, &ids[..3]).await;
+    let ctx = ToolContext::for_call(RunId::new(), 2, 0);
+    let record = |changes: Value| json!({"goal": {"timezone": "UTC"}, "proposal": {"summary": "Catch up", "size": "big", "changes": changes}, "ordered": true, "daily_minutes": 30});
+
+    let owner_b63 = json!([
+        {"op": "create", "action_id": null, "title": "Catch up: Chapters 3-6", "start": "2026-11-23T07:00:00", "minutes": 30},
+        moved(&ids[1], "Chapters 7-9", "2026-11-26T20:00:00"),
+        moved(&ids[2], "Chapters 10-12", "2026-11-28T20:00:00")
+    ]);
+    let mut args = record(owner_b63);
+    args["calendar"] = calendar(&env).await;
+    let err = tool(&env, "record_proposal").call(args, &ctx).await.unwrap_err();
+    assert!(matches!(&err, ToolError::InvalidArgs(m) if m.contains("repeats the missed session")), "{err}");
+    let out_of_order = json!([
+        moved(&ids[0], "Chapters 3-6", "2026-11-22T20:00:00"),
+        moved(&ids[1], "Chapters 7-9", "2026-11-26T20:00:00"),
+        moved(&ids[2], "Chapters 10-12", "2026-11-28T20:00:00")
+    ]);
+    let mut args = record(out_of_order);
+    args["calendar"] = calendar(&env).await;
+    let err = tool(&env, "record_proposal").call(args, &ctx).await.unwrap_err();
+    assert!(matches!(&err, ToolError::InvalidArgs(m) if m.contains("Keep the sequence")), "{err}");
+    assert_eq!(count(&pool, "proposals", env.goal.unwrap()).await, 0, "a rejected plan records nothing");
+
+    let shifted = json!([
+        moved(&ids[0], "Chapters 3-6", "2026-11-22T20:00:00"),
+        moved(&ids[1], "Chapters 7-9", "2026-11-23T20:00:00"),
+        moved(&ids[2], "Chapters 10-12", "2026-11-24T20:00:00"),
+        moved(&ids[3], "Chapters 12-14", "2026-11-25T20:00:00"),
+        moved(&ids[4], "Chapters 15-17", "2026-11-26T20:00:00")
+    ]);
+    let mut args = record(shifted);
+    args["calendar"] = calendar(&env).await;
+    let recorded: Value = serde_json::from_str(&tool(&env, "record_proposal").call(args, &ctx).await.unwrap().content).unwrap();
+    let outcome: Value = serde_json::from_str(&tool(&env, "apply_proposal").call(json!({"proposal_record": recorded}), &ctx).await.unwrap().content).unwrap();
+    assert_eq!(outcome, json!({"status": "applied", "applied": 5, "skipped": 0}));
+    let planned = |t: &str| (t.to_string(), "planned".to_string());
+    assert_eq!(
+        live_sessions(&env).await,
+        vec![planned("Chapters 3-6"), planned("Chapters 7-9"), planned("Chapters 10-12"), planned("Chapters 12-14"), planned("Chapters 15-17")],
+        "order kept, moved sessions planned, no duplicate"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn unordered_replan_may_move_a_missed_workout_after_later_ones() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let ids = plan_sessions(&env, false, &[("Leg day", "2026-11-22T07:00:00"), ("Upper body", "2026-11-23T07:00:00"), ("Core", "2026-11-24T07:00:00")]).await;
+    mark_missed(&env, &ids[..1]).await;
+    let ctx = ToolContext::for_call(RunId::new(), 2, 0);
+    let args = json!({"goal": {"timezone": "UTC"}, "calendar": calendar(&env).await, "ordered": false, "daily_minutes": 45,
+        "proposal": {"summary": "Leg day after Core", "size": "small", "changes": [moved(&ids[0], "Leg day", "2026-11-25T07:00:00")]}});
+    let recorded: Value = serde_json::from_str(&tool(&env, "record_proposal").call(args, &ctx).await.unwrap().content).unwrap();
+    tool(&env, "apply_proposal").call(json!({"proposal_record": recorded}), &ctx).await.unwrap();
+    let planned = |t: &str| (t.to_string(), "planned".to_string());
+    assert_eq!(live_sessions(&env).await, vec![planned("Upper body"), planned("Core"), planned("Leg day")]);
 }

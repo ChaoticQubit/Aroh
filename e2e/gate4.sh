@@ -36,7 +36,7 @@ xcrun simctl spawn "$udid" defaults write com.apple.keyboard.preferences DidShow
 drive() {
   flow="$1"
   minutes="$2"
-  { printf 'window.AROH_E2E = {"smoke":%s,"only":%s,"nokb":%s,"notaps":%s};\n' "${AROH_GATE_SMOKE:-false}" "${AROH_GATE_ONLY:-[]}" "${AROH_GATE_NOKB:-false}" "${AROH_GATE_NOTAPS:-false}"; cat "$here/drive-lib.js" "$here/$flow"; } > "$state/gate4-drive.js"
+  { printf 'window.AROH_E2E = {"smoke":%s,"only":%s,"nokb":%s,"notaps":%s,"noob":%s,"noscreens":%s,"extra":%s};\n' "${AROH_GATE_SMOKE:-false}" "${AROH_GATE_ONLY:-[]}" "${AROH_GATE_NOKB:-false}" "${AROH_GATE_NOTAPS:-false}" "${AROH_GATE_NOOB:-false}" "${AROH_GATE_NOSCREENS:-false}" "${AROH_GATE_EXTRA:-false}"; cat "$here/drive-lib.js" "$here/$flow"; } > "$state/gate4-drive.js"
   rm -f "$appdir/dev-marks.log"
   SIMCTL_CHILD_AROH_DEV_SCRIPT="$state/gate4-drive.js" xcrun simctl launch --console --terminate-running-process "$udid" "$bundle" > "$state/gate4-app.log" 2>&1 &
   launcher=$!

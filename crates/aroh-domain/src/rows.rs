@@ -322,8 +322,9 @@ synced! {
 synced! {
     /// A goal: one category, free-form context, optional deadline (`YYYY-MM-DD`),
     /// the autonomy level agents follow when changing its plan, and its agent
-    /// controls: local reminders, calendar reads and a run time limit in minutes
-    /// (`None` uses the Settings default).
+    /// controls: local reminders, calendar reads, a run time limit in minutes
+    /// (`None` uses the Settings default) and `ordered`, whether replans keep
+    /// its sessions in sequence (Q79).
     Goal, GOALS, "goals" {
         category_id: Option<String> => Text,
         title: String => Text,
@@ -335,6 +336,7 @@ synced! {
         reminders: bool => Bool,
         use_calendars: bool => Bool,
         run_limit_minutes: Option<i64> => Int,
+        ordered: bool => Bool,
     }
 }
 
@@ -368,21 +370,25 @@ synced! {
 
 synced! {
     /// A persona TOML, scoped to one goal or, with no `goal_id`, to the user library (Q9).
+    /// `created_run_id` is the run whose agent created it, when one did.
     Persona, PERSONAS, "personas" {
         goal_id: Option<String> => Text,
         name: String => Text,
         toml: String => Text,
+        created_run_id: Option<String> => Text,
     }
 }
 
 synced! {
     /// A plugin bundle TOML with its version and enabled flag (Q16).
+    /// `created_run_id` is the run whose agent created this version, when one did.
     Plugin, PLUGINS, "plugins" {
         goal_id: Option<String> => Text,
         name: String => Text,
         version: i64 => Int,
         bundle_toml: String => Text,
         enabled: bool => Bool,
+        created_run_id: Option<String> => Text,
     }
 }
 
@@ -747,6 +753,7 @@ impl Persona {
     fn check_fields(&self) -> Result<()> {
         check_opt_uuid("personas.goal_id", &self.goal_id)?;
         check_text("personas.name", &self.name, 1, 100)?;
+        check_opt_uuid("personas.created_run_id", &self.created_run_id)?;
         check_text("personas.toml", &self.toml, 1, TOML_MAX)
     }
 }
@@ -755,6 +762,7 @@ impl Plugin {
     fn check_fields(&self) -> Result<()> {
         check_opt_uuid("plugins.goal_id", &self.goal_id)?;
         check_text("plugins.name", &self.name, 1, 100)?;
+        check_opt_uuid("plugins.created_run_id", &self.created_run_id)?;
         if self.version < 1 {
             return Err(invalid("plugins.version", "versions start at 1"));
         }
@@ -1074,6 +1082,7 @@ pub mod samples {
             created_at: at(8),
             reminders: true,
             use_calendars: true,
+            ordered: false,
             run_limit_minutes: None,
             updated_at: STAMP.into(),
             deleted: false,
@@ -1186,8 +1195,8 @@ pub mod samples {
             to(goal()),
             to(GoalLink { id: id(3), user_id: user(), from_goal_id: goal_id(), to_goal_id: id(0x92), kind: LinkKind::Supports, confirmed: false, updated_at: stamp(), deleted: false }),
             to(GoalFile { id: id(4), user_id: user(), goal_id: goal_id(), name: "plan.pdf".into(), kind: FileKind::Document, storage_path: Some(format!("goals/{}/plan.pdf", goal_id())), url: None, mime: Some("application/pdf".into()), size_bytes: 1024, ingest_status: IngestStatus::Pending, extracted_text: None, updated_at: stamp(), deleted: false }),
-            to(Persona { id: id(5), user_id: user(), goal_id: Some(goal_id()), name: "coach".into(), toml: "role = \"coach\"".into(), updated_at: stamp(), deleted: false }),
-            to(Plugin { id: id(6), user_id: user(), goal_id: Some(goal_id()), name: "fitness".into(), version: 1, bundle_toml: "name = \"fitness\"".into(), enabled: true, updated_at: stamp(), deleted: false }),
+            to(Persona { id: id(5), user_id: user(), goal_id: Some(goal_id()), name: "coach".into(), toml: "role = \"coach\"".into(), created_run_id: None, updated_at: stamp(), deleted: false }),
+            to(Plugin { id: id(6), user_id: user(), goal_id: Some(goal_id()), name: "fitness".into(), version: 1, bundle_toml: "name = \"fitness\"".into(), enabled: true, created_run_id: None, updated_at: stamp(), deleted: false }),
             to(tracker()),
             to(TrackerEntry { id: id(8), user_id: user(), tracker_id: id(7), data: serde_json::json!({"weight": 81.5, "meal": "clean"}).as_object().unwrap().clone(), source: EntrySource::CheckIn, raw_text: None, logged_at: at(20), updated_at: stamp(), deleted: false }),
             to(series()),
@@ -1236,6 +1245,20 @@ mod tests {
             keys_sorted.sort_unstable();
             assert_eq!(keys_sorted, expected, "{}", table.name);
             (table.check)(&row).unwrap_or_else(|e| panic!("{}: {e}", table.name));
+        }
+    }
+
+    #[test]
+    fn created_run_id_is_optional_and_a_uuid() {
+        for table in [&PERSONAS, &PLUGINS] {
+            let index = SYNCED.iter().position(|t| t.name == table.name).unwrap();
+            let mut row = samples::all()[index].clone();
+            row.as_object_mut().unwrap().remove("created_run_id");
+            (table.check)(&row).unwrap_or_else(|e| panic!("{}: {e}", table.name));
+            row["created_run_id"] = "0190f2a0-0000-7000-8000-0000000000c1".into();
+            (table.check)(&row).unwrap_or_else(|e| panic!("{}: {e}", table.name));
+            row["created_run_id"] = "run-1".into();
+            assert!((table.check)(&row).is_err(), "{}", table.name);
         }
     }
 

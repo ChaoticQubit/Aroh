@@ -1,10 +1,11 @@
 use crate::error::ServerError;
-use crate::rows::{get_row, list_rows, put_row, ServerClock};
+use crate::rows::{get_row, list_rows, put_row, set_run_plugin, ServerClock};
 use crate::db::PgPool;
 use aroh_domain::rows::{Goal, Persona, Plugin, Tracker};
 use aroh_plugins::versions::{enable, history, next_version};
 use aroh_plugins::Bundle;
 use serde::{Deserialize, Serialize};
+use troupekit_core::ids::RunId;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -92,7 +93,9 @@ impl Writer<'_> {
     /// Stores bundle `text` as the next version of `goal`'s plugin, under
     /// row `id` (a replayed call finds its row and keeps its version), adds
     /// the bundle's missing trackers and its personas, and enables it when asked.
-    pub async fn store(&self, goal: Uuid, text: &str, id: String, enabled: bool) -> Result<Plugin, ServerError> {
+    /// A store from `run` marks the new rows as created by it and records the
+    /// version on the run; rows that already exist keep their `created_run_id`.
+    pub async fn store(&self, goal: Uuid, text: &str, id: String, enabled: bool, run: Option<RunId>) -> Result<Plugin, ServerError> {
         let bundle = check(text)?;
         let goal_row = self.goal(goal).await?;
         let goal_text = goal_row.id.clone();
@@ -108,6 +111,7 @@ impl Writer<'_> {
                     version: next_version(&rows, Some(&goal_text), &bundle.name),
                     bundle_toml: text.to_string(),
                     enabled: false,
+                    created_run_id: run.map(|r| r.to_string()),
                     updated_at: String::new(),
                     deleted: false,
                 };
@@ -116,7 +120,10 @@ impl Writer<'_> {
             }
         };
         self.trackers(&goal_text, &bundle).await?;
-        self.personas(&goal_text, &bundle).await?;
+        self.personas(&goal_text, &bundle, run).await?;
+        if let Some(run) = run {
+            set_run_plugin(self.pool, self.user, run, &row).await?;
+        }
         if enabled {
             return self.enable(&row.id).await;
         }
@@ -131,17 +138,22 @@ impl Writer<'_> {
         Ok(())
     }
 
-    async fn personas(&self, goal: &str, bundle: &Bundle) -> Result<(), ServerError> {
+    async fn personas(&self, goal: &str, bundle: &Bundle, run: Option<RunId>) -> Result<(), ServerError> {
         for p in &bundle.personas {
             let id = aroh_domain::derived_id(&format!("plugin-persona:{goal}"), &p.name, 0);
-            let previous = get_row::<Persona>(self.pool, self.user, &id).await?.map(|r| r.updated_at).unwrap_or_default();
+            let existing = get_row::<Persona>(self.pool, self.user, &id).await?;
+            let created_run_id = match &existing {
+                Some(row) => row.created_run_id.clone(),
+                None => run.map(|r| r.to_string()),
+            };
             let mut row = Persona {
                 id,
                 user_id: self.user.to_string(),
                 goal_id: Some(goal.to_string()),
                 name: p.name.clone(),
                 toml: p.toml.clone(),
-                updated_at: previous,
+                created_run_id,
+                updated_at: existing.map(|r| r.updated_at).unwrap_or_default(),
                 deleted: false,
             };
             put_row(self.pool, self.hlc, self.user, &mut row).await?;

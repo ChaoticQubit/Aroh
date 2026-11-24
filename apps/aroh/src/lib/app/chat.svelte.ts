@@ -7,6 +7,7 @@ import { connectWakeups, wakeups } from './realtime';
 import { blankDraft, startBody } from './newgoal';
 import { deviceZone } from '$lib/ui/clock';
 import { originRun, pickRun } from './goalcard';
+import { deviceKeep, readSent, rememberSent, type Keep } from './chatkeep';
 
 const POLL_MAX = 400;
 const DAY_MS = 86_400_000;
@@ -42,6 +43,7 @@ export async function follow(runId: string, onview: (v: RunView) => void = () =>
  * text answers the goal's waiting run or starts a replan (see `route`). The thread keeps what was
  * said; the run's state renders after it from the events since the owner last spoke. Open
  * questions render last as one group with one submit; nothing is posted until it is submitted.
+ * Owner messages sent on a goal are kept in `store` (B62) and open again after the greeting.
  */
 export class GoalChat {
 	log = $state<ChatMessage[]>([]);
@@ -56,10 +58,13 @@ export class GoalChat {
 	private seq = -1;
 	private shown = '';
 	private plan: { items: PlanItem[]; timezone: string } | null = null;
+	private store: Keep | null;
 
-	constructor(goalId: string | null, greeting: string) {
+	constructor(goalId: string | null, greeting: string, store: Keep | null = deviceKeep()) {
 		this.goalId = goalId;
-		this.log = [{ type: 'message', from: 'persona', name: 'Aroh', text: greeting }];
+		this.store = store;
+		const kept: ChatMessage[] = goalId ? readSent(store, goalId).map((m) => ({ type: 'message', from: 'owner', name: 'You', text: m.text })) : [];
+		this.log = [{ type: 'message', from: 'persona', name: 'Aroh', text: greeting }, ...kept];
 	}
 
 	/** Every message of the thread, in order, with the open question group last. */
@@ -171,6 +176,7 @@ export class GoalChat {
 			this.goalId = started.value.goal_id;
 			return this.watch(started.value.run_id);
 		}
+		rememberSent(this.store, this.goalId, text, Date.now());
 		const sent = await engine.sendChat(this.goalId, text);
 		if (!sent.ok) return this.say(sent.message);
 		this.change = sent.value.change ?? null;

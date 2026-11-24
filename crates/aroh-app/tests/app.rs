@@ -3,6 +3,7 @@ use aroh_domain::hlc::Hlc;
 use aroh_domain::rows::{Action, ActionSeries, ActionStatus, Category, EntrySource, FileKind, Goal, GoalFile, IngestStatus, Preference, PreferenceOrigin, Proposal, ProposalStatus, ProviderSetting, Record, Tracker, TrackerEntry};
 use aroh_domain::remind::PlannedKind;
 use aroh_domain::schema::SYNCED;
+use aroh_domain::time::missed_at;
 use aroh_store::sync::pending;
 use aroh_store::{db, repo};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -107,9 +108,48 @@ fn tick_marks_overdue_planned_actions_missed() {
     let report = tick::tick(&conn, &mut clock, &user, later, ZONE).unwrap();
     assert!(report.missed > 0);
     let actions: Vec<Action> = repo::list(&conn, &[]).unwrap();
-    let grace = Duration::minutes(tick::MISSED_GRACE_MIN);
-    assert!(actions.iter().all(|a| !(a.status == ActionStatus::Planned && a.end_at + grace < later)));
+    assert!(actions.iter().all(|a| !(a.status == ActionStatus::Planned && missed_at(a.start_at, a.end_at, ZONE) <= later)));
     assert!(actions.iter().any(|a| a.status == ActionStatus::Done));
+}
+
+#[test]
+fn an_unlogged_action_stays_planned_until_the_end_of_its_local_day() {
+    let (conn, mut clock, user) = setup();
+    let morning = ZONE.with_ymd_and_hms(2026, 11, 24, 7, 0, 0).unwrap().with_timezone(&Utc);
+    let mut action = Action { start_at: morning, end_at: morning + Duration::minutes(30), ..aroh_domain::rows::samples::action() };
+    action.user_id = user.clone();
+    action.updated_at = String::new();
+    repo::put(&conn, &mut clock, &mut action).unwrap();
+    let evening = ZONE.with_ymd_and_hms(2026, 11, 24, 23, 59, 0).unwrap().with_timezone(&Utc);
+    assert_eq!(tick::tick(&conn, &mut clock, &user, evening, ZONE).unwrap().missed, 0);
+    assert_eq!(repo::get::<Action>(&conn, &action.id).unwrap().status, ActionStatus::Planned);
+    let midnight = ZONE.with_ymd_and_hms(2026, 11, 25, 0, 0, 0).unwrap().with_timezone(&Utc);
+    assert_eq!(tick::tick(&conn, &mut clock, &user, midnight, ZONE).unwrap().missed, 1);
+    assert_eq!(repo::get::<Action>(&conn, &action.id).unwrap().status, ActionStatus::Missed);
+}
+
+#[test]
+fn every_status_stays_editable_and_a_missed_action_can_be_done_later() {
+    let (conn, mut clock, user) = seeded();
+    tick::tick(&conn, &mut clock, &user, now() + Duration::days(2), ZONE).unwrap();
+    let missed = repo::list::<Action>(&conn, &[("status", "missed")]).unwrap().remove(0);
+    let later = now() + Duration::days(2);
+    let done = write::set_action_status(&conn, &mut clock, &missed.id, ActionStatus::Done, later).unwrap();
+    assert_eq!((done.status, done.done_at), (ActionStatus::Done, Some(later)));
+    for status in [ActionStatus::Skipped, ActionStatus::Planned, ActionStatus::Done] {
+        assert_eq!(write::set_action_status(&conn, &mut clock, &missed.id, status, later).unwrap().status, status);
+    }
+    let start = missed.start_at + Duration::hours(1);
+    let moved = write::edit_action(&conn, &mut clock, &missed.id, Some((start, start + Duration::minutes(40)))).unwrap();
+    assert_eq!((moved.status, moved.end_at - moved.start_at), (ActionStatus::Done, Duration::minutes(40)));
+    assert!(aroh_app::card::set_notes(&conn, &mut clock, &missed.id, "Did it after work").is_ok());
+
+    let mut other = repo::list::<Action>(&conn, &[("status", "planned")]).unwrap().remove(0);
+    other.status = ActionStatus::Missed;
+    repo::put(&conn, &mut clock, &mut other).unwrap();
+    let tomorrow = later + Duration::days(1);
+    let revived = write::edit_action(&conn, &mut clock, &other.id, Some((tomorrow, tomorrow + Duration::minutes(30)))).unwrap();
+    assert_eq!(revived.status, ActionStatus::Planned, "a missed action moved by hand is planned again");
 }
 
 #[test]
@@ -485,6 +525,16 @@ fn goal_controls_are_stored_and_bad_limits_refused() {
 }
 
 #[test]
+fn goal_order_switch_is_stored() {
+    let (conn, mut clock, _) = seeded();
+    let goal = repo::list::<Goal>(&conn, &[]).unwrap().remove(0);
+    assert!(!goal.ordered, "goals start unordered");
+    assert!(write::set_goal_ordered(&conn, &mut clock, &goal.id, true).unwrap().ordered);
+    assert!(repo::get::<Goal>(&conn, &goal.id).unwrap().ordered);
+    assert!(!write::set_goal_ordered(&conn, &mut clock, &goal.id, false).unwrap().ordered);
+}
+
+#[test]
 fn category_guess_names_a_seeded_category_of_the_owner() {
     let (conn, mut clock, user) = setup();
     tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
@@ -509,4 +559,35 @@ fn new_categories_take_the_next_free_hue_or_the_owner_pick() {
     let picked = write::add_category(&conn, &mut clock, &user, "Choir", Some(&hues[4].to_uppercase())).unwrap();
     assert_eq!(picked.color, hues[4]);
     assert_eq!(pending(&conn, Category::TABLE, &user, clock.node(), "", 50).unwrap().len(), 3);
+}
+
+#[test]
+fn wipe_leaves_an_empty_store_that_another_account_can_adopt() {
+    let (mut conn, mut clock, local_user) = seeded();
+    tick::tick(&conn, &mut clock, &local_user, now(), ZONE).unwrap();
+    local::adopt(&mut conn, ACCOUNT).unwrap();
+    local::set_setting(&conn, "server_url", "https://engine.example.org").unwrap();
+    local::queue_log(&conn, "ran 5 km", now()).unwrap();
+    aroh_store::sync::set_state(&conn, &format!("pull:{ACCOUNT}:goals"), "40").unwrap();
+
+    assert!(local::wipe(&mut conn).unwrap() > 0);
+    let tables: Vec<String> = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(tables.len() > SYNCED.len());
+    for t in &tables {
+        let left: i64 = conn.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0)).unwrap();
+        let kept = if t == "sync_state" { 1 } else { 0 };
+        assert_eq!(left, kept, "{t} holds only the server address");
+    }
+    assert_eq!(local::account(&conn).unwrap(), None);
+    assert_eq!(local::setting(&conn, "server_url").unwrap().as_deref(), Some("https://engine.example.org"), "the server address stays so the user can sign back in");
+    assert_ne!(local::user_id(&conn).unwrap(), ACCOUNT);
+    local::adopt(&mut conn, "0190f2a0-0000-7000-8000-0000000000ad").unwrap();
+    assert!(local::wipe(&mut conn).unwrap() > 0);
+    assert_eq!(local::wipe(&mut conn).unwrap(), 0, "a second wipe finds nothing");
 }

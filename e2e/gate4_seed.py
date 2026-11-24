@@ -26,6 +26,7 @@ EXTRA = [
     ("19:30", 30, "Clair de Lune bars one to fourteen, left hand alone first, then both hands slowly", "planned"),
     ("21:00", 20, "Read one chapter of The Joy of X and write a three sentence summary in the reading log", "planned"),
 ]
+MISSED = "Core circuit: dead bugs, side planks and bird dogs, three rounds before dinner"
 
 
 def iso(dt):
@@ -37,7 +38,7 @@ def main():
     """Turns the six-pack sample in the app store into long real-world data for the build 4 gate.
     Input: store path and IANA zone. Output: long goal, series and action titles, a reading goal,
     ten one-off actions today and three on each of the next six days with done, skipped and missed
-    ones; prints the counts."""
+    ones, and one missed action yesterday; prints the counts."""
     path, zone = sys.argv[1], zoneinfo.ZoneInfo(sys.argv[2])
     db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row
@@ -71,10 +72,17 @@ def main():
                 a["card"] = None
             db.execute(f"INSERT INTO actions ({', '.join(a)}) VALUES ({', '.join('?' * len(a))})", list(a.values()))
             count += 1
+    start = datetime.datetime.combine(today - datetime.timedelta(days=1), datetime.time(18, 0), zone)
+    a = dict(row, id=str(uuid.uuid4()), goal_id=goals["Six pack by Feb 1"]["id"], series_id=None, occurrence=None, title=MISSED, notes=None,
+             start_at=iso(start), end_at=iso(start + datetime.timedelta(minutes=25)), status="missed", locked=0, done_at=None, deleted=0)
+    if "card" in a:
+        a["card"] = None
+    db.execute(f"INSERT INTO actions ({', '.join(a)}) VALUES ({', '.join('?' * len(a))})", list(a.values()))
+    count += 1
     db.commit()
     statuses = dict(db.execute("SELECT status, count(*) FROM actions WHERE deleted = 0 GROUP BY status").fetchall())
     print(f"seeded {count} actions, statuses {statuses}, goals {db.execute('SELECT count(*) FROM goals WHERE deleted = 0').fetchone()[0]}")
-    assert count == 10 + 6 * 3, "ten actions today and three on each of six days"
+    assert count == 10 + 6 * 3 + 1, "ten actions today, three on each of six days and one missed yesterday"
 
 
 if __name__ == "__main__":

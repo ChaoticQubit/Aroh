@@ -24,6 +24,7 @@ fn put_goal(conn: &Connection, clock: &mut Hlc, user: &str, title: &str) -> Stri
         created_at: now() - Duration::days(200),
         reminders: false,
         use_calendars: false,
+        ordered: false,
         run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,

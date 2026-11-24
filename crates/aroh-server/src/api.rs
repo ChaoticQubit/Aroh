@@ -1,4 +1,5 @@
-use crate::auth::{Service, UserId, Verifier};
+use crate::account::{AccountView, DeletionScheduled, SetConsent};
+use crate::auth::{AnyUser, Service, UserId, Verifier};
 use crate::cards::CardChat;
 use crate::engine::{Answer, Engine, GivenAnswer, KeyTest, RunAgain, RunLimit, RunSummary, RunView, SetKey, StartGoal, StartReplan, Started, SubmitLog, TickSummary, Waiting};
 use crate::error::{ErrorBody, ErrorDetail, ServerError};
@@ -8,7 +9,7 @@ use crate::plugins::{PluginView, SavePlugin, Writer};
 use crate::teams::Kind;
 use crate::push::{ApnsEnv, DeviceInfo, Platform, PushSummary, RegisterDevice};
 use crate::triage::{StartTriage, TriageEvent};
-use crate::triggers::{EditReplan, ReviewSchedule, SetReview, SetTimezone, TimezoneSet};
+use crate::triggers::{EditReplan, MissReplan, ReviewSchedule, SetReview, SetTimezone, TimezoneSet};
 use crate::vault::KeyInfo;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRef, Path, Query, State};
@@ -287,6 +288,13 @@ async fn get_edit_replan(State(s): State<AppState>, UserId(user): UserId, Path(a
     Ok(Json(s.engine.edit_replan(user, action_id).await?))
 }
 
+#[utoipa::path(get, path = "/v1/actions/{action_id}/miss-replan", tag = "runs", security(("bearer" = [])),
+    params(("action_id" = Uuid, Path)),
+    responses((status = 200, description = "The replan a miss of the action started, if any (Q78)", body = MissReplan)))]
+async fn get_miss_replan(State(s): State<AppState>, UserId(user): UserId, Path(action_id): Path<Uuid>) -> Result<Json<MissReplan>, ServerError> {
+    Ok(Json(s.engine.miss_replan(user, action_id).await?))
+}
+
 #[utoipa::path(get, path = "/v1/goals/{goal_id}/review", tag = "insights", security(("bearer" = [])),
     params(("goal_id" = Uuid, Path)),
     responses((status = 200, description = "The goal's weekly review", body = ReviewSchedule), (status = 404, body = ErrorBody)))]
@@ -339,7 +347,7 @@ async fn save_plugin(
     json: Result<Json<SavePlugin>, JsonRejection>,
 ) -> Result<(StatusCode, Json<PluginView>), ServerError> {
     let req = body(json, true)?;
-    let row = writer(&s, user).store(goal_id, &req.bundle_toml, Uuid::now_v7().to_string(), req.enable.unwrap_or(true)).await?;
+    let row = writer(&s, user).store(goal_id, &req.bundle_toml, Uuid::now_v7().to_string(), req.enable.unwrap_or(true), None).await?;
     Ok((StatusCode::CREATED, Json(PluginView::from(&row))))
 }
 
@@ -432,6 +440,28 @@ async fn push_tick(State(s): State<AppState>, _svc: Service) -> Result<Json<Push
     }
 }
 
+#[utoipa::path(get, path = "/v1/account", tag = "account", security(("bearer" = [])),
+    responses((status = 200, description = "AI consent and use of every per-user limit", body = AccountView)))]
+async fn get_account(State(s): State<AppState>, UserId(user): UserId) -> Result<Json<AccountView>, ServerError> {
+    Ok(Json(crate::account::view(&s.engine.deps().pool, user).await?))
+}
+
+#[utoipa::path(put, path = "/v1/account/consent", tag = "account", security(("bearer" = [])),
+    request_body = SetConsent,
+    responses((status = 200, description = "Consent recorded (first time kept) or withdrawn", body = AccountView), (status = 400, body = ErrorBody)))]
+async fn set_consent(State(s): State<AppState>, UserId(user): UserId, json: Result<Json<SetConsent>, JsonRejection>) -> Result<Json<AccountView>, ServerError> {
+    let req = body(json, true)?;
+    let pool = &s.engine.deps().pool;
+    crate::account::set_consent(pool, user, req.ai, crate::rows::utc(s.engine.deps().clock.now_ms())).await?;
+    Ok(Json(crate::account::view(pool, user).await?))
+}
+
+#[utoipa::path(delete, path = "/v1/account", tag = "account", security(("bearer" = [])),
+    responses((status = 202, description = "Disabled now: devices and sessions signed out, no runs, no data served. Everything is deleted at purge_after unless the user signs in again first. Repeating returns the first date", body = DeletionScheduled)))]
+async fn delete_account(State(s): State<AppState>, AnyUser(user): AnyUser) -> Result<(StatusCode, Json<DeletionScheduled>), ServerError> {
+    Ok((StatusCode::ACCEPTED, Json(s.engine.delete_account(user).await?)))
+}
+
 struct Bearer;
 
 impl Modify for Bearer {
@@ -448,11 +478,11 @@ impl Modify for Bearer {
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
     paths(health, list_keys, set_key, delete_key, test_key, start_goal, start_replan, run_again, card_chat, submit_log, start_triage, list_runs, get_run, answer, cancel_run, retry_run, get_run_limit, set_run_limit, tick, enqueue_hook, register_device, unregister_device, push_tick,
-        list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review, set_timezone, get_edit_replan,
-        list_personas, copy_persona, edit_persona),
+        list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review, set_timezone, get_edit_replan, get_miss_replan,
+        list_personas, copy_persona, edit_persona, get_account, set_consent, delete_account),
     components(schemas(KeyInfo, SetKey, KeyTest, StartGoal, StartReplan, RunAgain, GivenAnswer, CardChat, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, RunLimit, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
-        SavePlugin, PluginView, Insight, ReviewSchedule, SetReview, SetTimezone, TimezoneSet, EditReplan,
-        EditPersona, PersonaView, Origin, Kind)),
+        SavePlugin, PluginView, Insight, ReviewSchedule, SetReview, SetTimezone, TimezoneSet, EditReplan, MissReplan,
+        EditPersona, PersonaView, Origin, Kind, AccountView, SetConsent, DeletionScheduled)),
     modifiers(&Bearer)
 )]
 pub struct ApiDoc;
@@ -498,6 +528,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/insights", get(list_insights))
         .route("/v1/goals/{goal_id}/review", get(get_review).put(set_review))
         .route("/v1/actions/{action_id}/replan", get(get_edit_replan))
+        .route("/v1/actions/{action_id}/miss-replan", get(get_miss_replan))
         .route("/v1/timezone", put(set_timezone))
+        .route("/v1/account", get(get_account).delete(delete_account))
+        .route("/v1/account/consent", put(set_consent))
         .with_state(state)
 }

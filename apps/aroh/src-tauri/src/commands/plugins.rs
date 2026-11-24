@@ -14,7 +14,8 @@ use tauri::{AppHandle, State};
 const FILE: &str = "plugin.toml";
 
 /// One plugin version of a goal as the goal screen reads it: the row, whether it is the
-/// version the dashboard renders, and its validated tree, or the validator's error.
+/// version the dashboard renders, its validated tree, or the validator's error, and the
+/// agent run that created it (none when the owner or an older app made it).
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginVersion {
     pub id: String,
@@ -24,6 +25,7 @@ pub struct PluginVersion {
     pub active: bool,
     pub tree: Option<Value>,
     pub error: Option<String>,
+    pub created_run_id: Option<String>,
 }
 
 fn invalid(reason: impl ToString) -> aroh_app::Error {
@@ -49,6 +51,7 @@ fn versions(c: &Core, goal_id: &str) -> aroh_app::Result<Vec<PluginVersion>> {
                 active: on.as_deref() == Some(p.id.as_str()),
                 error: parsed.as_ref().err().map(ToString::to_string),
                 tree: parsed.ok().map(|b| b.tree),
+                created_run_id: p.created_run_id.clone(),
             }
         })
         .collect())
@@ -80,6 +83,7 @@ fn save(c: &mut Core, goal_id: &str, text: &str) -> aroh_app::Result<()> {
         version: next_version(&rows(c, &goal.id)?, Some(&goal.id), &bundle.name),
         bundle_toml: text.to_string(),
         enabled: true,
+        created_run_id: None,
         updated_at: String::new(),
         deleted: false,
     };

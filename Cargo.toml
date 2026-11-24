@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "apps/aroh/src-tauri"]
-exclude = ["troupekit"]
 
 [workspace.package]
 edition = "2021"

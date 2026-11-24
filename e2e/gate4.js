@@ -6,7 +6,8 @@
   const called = [];
   const invoke = (cmd, args) => real.call(T, cmd, args ?? {});
   const note = (m) => invoke('app_dev_mark', { mark: String(m).replace(/[^\x20-\x7e]/g, '?').slice(0, 80) }).catch(() => {});
-  const result = (name, ok, detail = '') => note(`result ${name} ${ok ? 'pass' : 'fail'} ${detail}`);
+  let quiet = false;
+  const result = (name, ok, detail = '') => (quiet ? Promise.resolve() : note(`result ${name} ${ok ? 'pass' : 'fail'} ${detail}`));
   const shot = async (name) => {
     await note(`shot ${name}`);
     await sleep(4500);
@@ -19,8 +20,9 @@
   window.alert = (m) => note(`dialog alert ${m}`);
   window.confirm = (m) => (note(`dialog confirm ${m}`), false);
   window.prompt = (m) => (note(`dialog prompt ${m}`), null);
-  let six, piano, save, reading, snap, hooked, work, list;
+  let six, piano, save, reading, snap, hooked, work, list, missedToday, missedY;
   let signedIn = true;
+  const SPOKEN = 'Move the long run to Saturday morning,  keep two easy runs on weekdays and swap the Thursday intervals for hills because my knee feels better on soft ground. '.repeat(3).trim();
   let transient = false;
   let decided = false;
   const setup = async () => {
@@ -37,6 +39,9 @@
   work = ahead.find((a) => cardOf(a)?.blocks?.some((b) => b.kind === 'workout'));
   list = ahead.find((a) => !cardOf(a)?.blocks?.some((b) => b.kind === 'workout'));
   if (!work || !list) throw new Error(`gate seed cards missing: ${ahead.length} carded actions`);
+  missedToday = snap.actions.find((a) => a.status === 'missed' && a.title.startsWith('Review last week'));
+  missedY = snap.actions.find((a) => a.status === 'missed' && a.title.startsWith('Core circuit'));
+  if (!missedToday || !missedY) throw new Error('gate seed missed actions missing');
 
   const QUESTIONS = [
     { id: 'days', text: 'How many days a week can you train without dropping it after the first week?', kind: 'number', choices: [], unit: 'days', min: 1, max: 7 },
@@ -95,6 +100,8 @@
     if (p === '/v1/keys') return { status: 200, body: [{ setting_id: 'k1', vendor: 'anthropic', last4: '4321', updated_at: ago(600) }] };
     if (p === '/v1/logs') return { status: 202, body: { run_id: null } };
     if (method === 'GET' && p === '/v1/personas') return { status: 200, body: PERSONAS };
+    if (method === 'GET' && p === '/v1/account') return { status: 200, body: { ai_consent_at: ago(60) } };
+    if (method === 'PUT' && p === '/v1/account/consent') return { status: 200, body: { ai_consent_at: ago(0) } };
     throw 'needs_engine: offline in the gate';
   };
   hooked = async (cmd, args, opts) => {
@@ -116,7 +123,20 @@
       called.push(cmd);
       if (cmd === 'app_account' && signedIn) return ok({ signed_in: true, email: 'owner.with.a.long.address@example.com', user_id: snap.goals[0]?.user_id ?? null });
       if (cmd === 'app_sync') return ok({ pushed: 0, pulled: 0 });
+      if (cmd === 'app_delete_account') {
+        note('gate delete-account hooked, nothing sent');
+        return ok({ purge_after: new Date(Date.now() + 15 * 864e5).toISOString() });
+      }
+      if (cmd === 'app_sign_in') {
+        const a = JSON.parse(init?.body ?? '{}');
+        note(`gate sign-in hooked create=${a.create}`);
+        if (a.create) return ok({ signed_in: false, check_email: true, email: a.email });
+        signedIn = true;
+        return ok({ signed_in: true, email: a.email, user_id: snap.goals[0]?.user_id ?? null });
+      }
       if (cmd === 'plugin:aroh-speech|open_settings') return ok(null);
+      if (cmd === 'plugin:aroh-speech|start') return ok(null);
+      if (cmd === 'plugin:aroh-speech|stop') return ok({ transcript: SPOKEN });
       if (cmd === 'app_engine') {
         const a = JSON.parse(init?.body ?? '{}');
         try {
@@ -187,6 +207,13 @@
     document.querySelector('button[aria-label="Color 3"]')?.click();
     await sleep(600);
   };
+  const openFolds = async () => {
+    for (const b of [...document.querySelectorAll('main button[aria-expanded="false"]')]) {
+      b.click();
+      await sleep(250);
+    }
+    await sleep(600);
+  };
   const runAgain = (edit) => async () => {
     [...document.querySelectorAll('main button')].find((b) => b.textContent.trim() === 'Run again')?.click();
     await until('run again sheet', () => text().includes('again?'), 6000).catch(() => note('result run-again-sheet fail no sheet'));
@@ -207,6 +234,66 @@
     const left = !text().includes('Run again with these answers') && text().includes('Replan with these answers');
     await result('run-again-cancel', left && first()?.value === saved, `saved "${saved}" now "${first()?.value}" left ${left}`);
   };
+  const composer = () => document.querySelector('main textarea[placeholder="Message your personas"]');
+  const openChat = async () => {
+    const head = [...document.querySelectorAll('main button[aria-expanded]')].find((b) => b.textContent.trim().startsWith('Chat'));
+    if (head?.getAttribute('aria-expanded') === 'false') head.click();
+    await sleep(800);
+  };
+  const leaveAndReturn = async (path) => {
+    await go('/today');
+    await sleep(800);
+    await go(path);
+    await sleep(2000);
+    await openChat();
+  };
+  const chatDraft = (path) => async () => {
+    await openChat();
+    L.type(composer(), 'Draft kept  across pages', false);
+    await sleep(600);
+    await leaveAndReturn(path);
+    const now = composer()?.value;
+    await result('chat-draft-kept', now === 'Draft kept  across pages', `value "${now}"`);
+    composer()?.scrollIntoView({ block: 'center' });
+  };
+  const chatVoice = async () => {
+    await openChat();
+    const mic = [...document.querySelectorAll('main button')].find((b) => b.getAttribute('aria-label') === 'Speak a message');
+    mic?.click();
+    await sleep(900);
+    [...document.querySelectorAll('main button')].find((b) => b.getAttribute('aria-label') === 'Stop speaking')?.click();
+    await sleep(1200);
+    const el = composer();
+    const cs = el && getComputedStyle(el);
+    const line = cs ? parseFloat(cs.lineHeight) : 0;
+    const grown = !!el && el.clientHeight > line * 4 && el.clientHeight <= line * 6 + 40;
+    const scrolls = !!el && el.scrollHeight > el.clientHeight + 4 && cs.overflowY === 'auto';
+    await result('chat-voice-composer', !!mic && el?.value === SPOKEN && grown && scrolls && parseFloat(cs.fontSize) >= 16, `mic ${!!mic} same ${el?.value === SPOKEN} h=${el?.clientHeight} line=${line} sh=${el?.scrollHeight} overflow=${cs?.overflowY} font=${cs?.fontSize}`);
+    el?.scrollIntoView({ block: 'center' });
+  };
+  const chatSent = (path) => async () => {
+    await openChat();
+    const msg = `Please keep Sundays free ${Date.now() % 1000}`;
+    L.type(composer(), msg, false);
+    await sleep(300);
+    [...document.querySelectorAll('main button')].find((b) => b.getAttribute('aria-label') === 'Send')?.click();
+    await sleep(700);
+    const shown = text().includes(msg);
+    await leaveAndReturn(path);
+    const kept = text().includes(msg);
+    await result('chat-sent-kept', shown && kept && composer()?.value === '', `shown ${shown} kept ${kept} composer "${composer()?.value}"`);
+    [...document.querySelectorAll('main li')].reverse().find((li) => li.textContent.includes(msg))?.scrollIntoView({ block: 'center' });
+  };
+  const cardDraft = (path) => async () => {
+    const box = () => document.querySelector('main textarea');
+    L.type(box(), 'Lighter  sets please', false);
+    await sleep(600);
+    await go('/today');
+    await sleep(800);
+    await go(path);
+    await sleep(2000);
+    await result('card-draft-kept', box()?.value === 'Lighter  sets please', `value "${box()?.value}"`);
+  };
   const runAgainBlocked = async () => {
     const b = [...document.querySelectorAll('main button')].find((x) => x.textContent.trim() === 'Run again');
     const line = 'Approve or decline the waiting plan first.';
@@ -222,25 +309,80 @@
     const line = document.querySelector('main')?.textContent.includes(phase.text.slice(0, 20));
     await result(`replan-status-${phase.kind}`, !!line, `line ${!!line}`);
   };
+  const weekCheck = async () => {
+    await calendarView('Week')();
+    const cols = () => [...document.querySelectorAll('[role=list][aria-label$=" actions"]')].filter(visible);
+    const fit = () => {
+      const w = shell()?.getBoundingClientRect().width ?? innerWidth;
+      return cols().every((c) => c.getBoundingClientRect().right <= w + 1) && document.documentElement.scrollWidth <= innerWidth + 1;
+    };
+    const n393 = cols().length;
+    const fit393 = fit();
+    const kept = shell()?.getAttribute('style') ?? '';
+    if (shell()) {
+      shell().style.right = 'auto';
+      shell().style.width = '375px';
+    }
+    await sleep(900);
+    const n375 = cols().length;
+    const fit375 = fit();
+    shell()?.setAttribute('style', kept);
+    await sleep(400);
+    await result('week-grid-7', n393 === 7 && n375 === 7 && fit393 && fit375, `393:${n393} fit ${fit393} 375:${n375} fit ${fit375}`);
+  };
+  const editRow = (a) => async () => {
+    const b = [...document.querySelectorAll('main [aria-label]')].find((x) => x.getAttribute('aria-label') === `Edit ${a.title}` && visible(x));
+    b?.scrollIntoView({ block: 'center' });
+    b?.click();
+    await sleep(1500);
+    const seg = document.querySelector(`[role=radiogroup][aria-label="Log ${a.title}"]`);
+    await result('late-log-sheet', !!b && !!seg && text().includes('Logged'), `row ${!!b} control ${!!seg}`);
+  };
+  const missedPage = async () => {
+    const seg = document.querySelector('[role=radiogroup][aria-label="Log this session"]');
+    const chip = document.querySelector('main section[aria-label="Session status"]')?.textContent ?? '';
+    await result('late-log-action-page', !!seg && /Missed|Not logged yet/.test(chip), `control ${!!seg} chip "${chip.replace(/\s+/g, ' ').slice(0, 40)}"`);
+    document.querySelector('main section[aria-label="Session status"]')?.scrollIntoView({ block: 'center' });
+  };
+  const catchUpOffer = async () => {
+    const { catchUp } = await import('/src/lib/app/catchup.svelte.ts');
+    catchUp.offer = { runId: 'gate-catch-up', text: 'A catch-up was added because this was missed. Remove it?', detail: 'Removes Core circuit: dead bugs, side planks and bird dogs, three rounds before dinner, Wed 18:00.' };
+    await sleep(900);
+    const box = document.querySelector('[data-testid=catch-up]');
+    await result('catch-up-offer', !!box && visible(box), `shown ${!!box}`);
+    box?.scrollIntoView({ block: 'center' });
+  };
+  const orderSwitch = () => document.querySelector('main [id$="-ordered"]');
+  const orderToggle = async () => {
+    await openFolds();
+    const sw = orderSwitch();
+    sw?.scrollIntoView({ block: 'center' });
+    await sleep(600);
+    await result('order-toggle-shown', !!sw && visible(sw) && text().includes('Keep sessions in order'), `switch ${!!sw}`);
+  };
   let SCREENS = [];
   const screenList = () => {
   const persona = 'nutrition-coach';
   SCREENS = [
     { name: '01-today', path: '/today', wait: LONG },
     { name: '02-calendar-day', path: '/calendar', prep: calendarView('Day') },
-    { name: '03-calendar-week', path: '/calendar', prep: calendarView('Week') },
+    { name: '03-calendar-week', path: '/calendar', prep: weekCheck },
     { name: '04-calendar-month', path: '/calendar', prep: calendarView('Month') },
     { name: '05-goals', path: '/goals', wait: LONG },
     { name: '06-goal-questions', path: `/goals/${six?.id}`, wait: 'questions to answer', max: 9 },
     { name: '07-goal-plan', path: `/goals/${save?.id}`, wait: 'Plan to approve', max: 5 },
     { name: '08-goal-stopped', path: `/goals/${piano?.id}`, wait: 'Stopped', max: 3 },
     { name: '09-goal-working', path: `/goals/${reading?.id}`, wait: 'Working', max: 3 },
+    { name: '09h-goal-chat-draft', path: `/goals/${piano?.id}`, wait: 'Stopped', one: true, prep: chatDraft(`/goals/${piano?.id}`) },
+    { name: '09i-goal-chat-voice', path: `/goals/${piano?.id}`, wait: 'Stopped', one: true, prep: chatVoice },
+    { name: '09j-goal-chat-sent', path: `/goals/${piano?.id}`, wait: 'Stopped', one: true, prep: chatSent(`/goals/${piano?.id}`) },
     { name: '08b-goal-failed-retry', path: `/goals/${piano?.id}`, wait: 'Failed', max: 3, before: () => (transient = true) },
     { name: '09b-run-again-sheet', path: `/goals/${save?.id}`, wait: 'Agents are idle', one: true, before: () => (decided = true), prep: runAgain(false) },
     { name: '09c-run-again-edit', path: `/goals/${save?.id}`, wait: 'Agents are idle', max: 5, before: () => (decided = true), prep: runAgain(true) },
     { name: '09e-run-again-cancel', path: `/goals/${save?.id}`, wait: 'Agents are idle', one: true, before: () => (decided = true), prep: runAgainCancel },
     { name: '09f-run-again-plan-waiting', path: `/goals/${save?.id}`, wait: 'Plan to approve', one: true, prep: runAgainBlocked },
     { name: '09d-run-again-no-answers', path: `/goals/${six?.id}`, wait: 'questions to answer', one: true, prep: runAgain(false) },
+    { name: '09b-goal-all-open', path: `/goals/${save?.id}`, wait: 'Plan to approve', max: 12, prep: openFolds },
     { name: '10-new-goal', path: '/goals/new', wait: 'Create goal' },
     { name: '11-new-goal-category', path: '/goals/new', prep: () => newGoal(true) },
     { name: '12-inbox', path: '/inbox', wait: 'questions to answer' },
@@ -248,7 +390,10 @@
     { name: '13-log', path: '/log' },
     { name: '14-settings', path: '/settings', max: 7 },
     { name: '15-settings-profile', path: '/settings/profile' },
-    { name: '16-settings-run-limit', path: '/settings', one: true, prep: async () => L.show('Time limit per run') },
+    { name: '16-settings-agents', path: '/settings/agents', max: 3 },
+    { name: '16b-settings-key', path: '/settings/key', max: 3 },
+    { name: '16c-settings-key-more', path: '/settings/key', max: 3, prep: async () => (text().includes('More providers') && tapText('More providers'), await sleep(600)) },
+    { name: '16d-settings-delete', path: '/settings/delete' },
     { name: '17-settings-location', path: '/settings/location' },
     { name: '17b-settings-location-on', path: '/settings/location', prep: async () => {
       [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Continue')?.click();
@@ -266,7 +411,12 @@
       await sleep(1200);
     } },
     { name: '26-action-chat', path: `/actions/${work?.id}/chat`, max: 3 },
+    { name: '26b-action-chat-draft', path: `/actions/${work?.id}/chat`, one: true, prep: cardDraft(`/actions/${work?.id}/chat`) },
     { name: '27-replan-updated', path: '/today', one: true, prep: replanPhase({ kind: 'updated', text: 'Updated: moved Read one chapter of The Joy of X to Tue 15:00, removed Walk.', tone: 'done', runId: 'gate-replan', undo: true }) },
+    { name: '29-today-log-sheet', path: '/today', wait: LONG, one: true, prep: editRow(missedToday) },
+    { name: '30-action-missed', path: `/actions/${missedY?.id}`, max: 3, prep: missedPage },
+    { name: '31-catch-up-offer', path: `/actions/${missedY?.id}`, one: true, prep: catchUpOffer },
+    { name: '32-goal-order-toggle', path: `/goals/${six?.id}`, wait: 'questions to answer', one: true, prep: orderToggle },
     { name: '28-replan-failed', path: '/calendar', one: true, prep: replanPhase({ kind: 'failed', text: 'Could not replan. The run stopped: the model provider did not answer after 3 tries.', tone: 'missed', runId: 'gate-replan' }) }
   ];
   if (smoke) SCREENS = SCREENS.filter((x) => ['06-goal-questions', '14-settings'].includes(x.name));
@@ -277,10 +427,19 @@
     transient = false;
     decided = false;
     (await import('/src/lib/app/replan.svelte.ts')).editStatus.dismiss();
+    (await import('/src/lib/app/catchup.svelte.ts')).catchUp.keep();
     s.before?.();
     await go(s.path === '/inbox' ? '/today' : '/inbox');
     await go(s.path);
     await sleep(1200);
+    if (/Goals that plan themselves|Step \d of 4/.test(text())) {
+      const { data } = await import('/src/lib/app/data.svelte.ts');
+      await L.invoke('app_set_setting', { name: 'setup_done', value: 'true' });
+      await data.load();
+      await note(`reopen ${s.name} after onboarding came up`);
+      await go(s.path);
+      await sleep(1200);
+    }
     if (s.wait) await until(`${s.wait} on ${s.name}`, () => text().includes(s.wait), 20000).catch(() => note(`result wait-${s.name} fail no "${s.wait}"`));
     if (s.prep) await s.prep();
     await sleep(600);
@@ -354,6 +513,7 @@
     el.scrollIntoView({ block: 'center' });
     await sleep(500);
     el.focus();
+    const took = document.activeElement === el;
     await until('keyboard', () => window.visualViewport.height < innerHeight - 150, 5000).catch(() => {});
     await sleep(900);
     const vv = window.visualViewport;
@@ -373,7 +533,7 @@
     await shot(`keyboard/${String(n).padStart(2, '0')}-${name}`);
     const stayed = document.activeElement === el && window.visualViewport.height < innerHeight - 150;
     const ok = opened && stayed && clear && !tabOnKb && above && barOk && wideOk && font >= 16;
-    await result(`keyboard-${name}`, ok, `kb=${opened ? Math.round(innerHeight - vv.height) : 'none'} stayed=${stayed} clear=${clear ? 'yes' : hit?.tagName} tab=${tabOnKb ? 'on' : 'off'} f=${Math.round(r.top)}-${Math.round(r.bottom)}/${Math.round(kbTop)} ${font}px`);
+    await result(`keyboard-${name}`, ok, `${ok ? '' : `took=${took} now=${document.activeElement?.tagName}${document.activeElement?.id ? '#' + document.activeElement.id : ''} `}kb=${opened ? Math.round(innerHeight - vv.height) : 'none'} stayed=${stayed} clear=${clear ? 'yes' : hit?.tagName} tab=${tabOnKb ? 'on' : 'off'} f=${Math.round(r.top)}-${Math.round(r.bottom)}/${Math.round(kbTop)} ${font}px`);
     await spaces(name, el);
     el.blur();
     await sleep(900);
@@ -400,7 +560,7 @@
       await sleep(800);
     });
     await kbField(9, 'places-search', '/settings/places', byPlaceholder('Search a place or address'));
-    await kbField(10, 'coach-rule', SCREENS.find((x) => x.name === '21-coach')?.path ?? '/personas', byPlaceholder('Add a rule'));
+    await kbField(10, 'coach-rule', '/personas/nutrition-coach', byPlaceholder('Add a rule'));
     const nameOf = (el) => (document.querySelector(`label[for="${el.id}"]`)?.textContent ?? el.getAttribute('aria-label') ?? el.placeholder ?? 'field').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30);
     let n = 11;
     await go('/inbox');
@@ -410,23 +570,23 @@
     const qs = answers().length;
     await note(`question inputs ${qs}`);
     for (let i = 0; i < qs; i++) await kbField(n++, `question-${i + 1}`, `/goals/${six?.id}`, () => answers()[i]);
-    for (const out of [false, true]) {
-      signedIn = !out;
+    for (const page of ['/settings/key', '/settings/agents']) {
       await go('/inbox');
-      await go('/settings');
+      await go(page);
       await sleep(2500);
       const names = textFields().map(nameOf);
-      await note(`settings ${out ? 'signed-out' : 'signed-in'} text fields ${names.length}`);
-      for (const [i, name] of names.entries()) await kbField(n++, `settings-${out ? 'out-' : ''}${name}`, '/settings', () => textFields()[i]);
+      await note(`settings ${page} text fields ${names.length}`);
+      for (const [i, name] of names.entries()) await kbField(n++, `settings-${page.split('/').pop()}-${name}`, page, () => textFields()[i]);
     }
     signedIn = true;
     await go('/inbox');
     await go(`/goals/${save?.id}`);
     await sleep(2500);
+    await openFolds();
     const given = () => [...document.querySelectorAll('main input[id*="-a-"]')].filter(visible);
     const gs = given().length;
     await note(`given answers ${gs}`);
-    for (let i = 0; i < gs; i++) await kbField(n++, `given-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i]);
+    for (let i = 0; i < gs; i++) await kbField(n++, `given-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i], openFolds);
     decided = true;
     for (let i = 0; i < gs; i++) await kbField(n++, `run-again-answer-${i + 1}`, `/goals/${save?.id}`, () => given()[i], runAgain(true));
     decided = false;
@@ -448,6 +608,240 @@
         await kbField(n++, `action-${tag}-${i + 1}-${name}`.slice(0, 50), path, () => textFields()[i], prep);
       }
     }
+    const { data } = await import('/src/lib/app/data.svelte.ts');
+    signedIn = false;
+    await gateServer(true);
+    await L.invoke('app_set_setting', { name: 'setup_done', value: 'false' });
+    await data.load();
+    await until('onboarding', () => text().includes('Get started'), 15000);
+    tapText('Get started');
+    await sleep(700);
+    tapText('Continue with email');
+    await sleep(700);
+    for (const label of ['Email', 'Password']) await kbField(n++, `onboarding-${label.toLowerCase()}`, '/today', () => L.field(label));
+    tapText('Back');
+    await sleep(700);
+    tapText('Use my own server');
+    await sleep(700);
+    for (const label of ['Supabase project URL', 'Supabase anon key', 'Aroh server URL']) await kbField(n++, `onboarding-${label.toLowerCase().replace(/ /g, '-')}`, '/today', () => L.field(label));
+    tapText('Back');
+    await sleep(700);
+    tapText('Not now');
+    await sleep(700);
+    tapText('Continue');
+    await sleep(700);
+    await kbField(n++, 'onboarding-first-goal', '/today', () => L.field('What do you want to reach?'));
+    signedIn = true;
+    tapText('Skip, show me the app');
+    await until('app back', () => text().includes('Dashboard'), 15000);
+    await gateServer(false);
+  };
+
+  const SERVER = [['supabase_url', 'https://gate-supabase.invalid'], ['supabase_anon_key', 'gate-anon-key-0123456789abcdef'], ['server_url', 'https://gate-server.invalid']];
+  const gateServer = async (on) => {
+    for (const [name, value] of SERVER) await L.invoke('app_set_setting', { name, value: on ? value : '' }).catch((e) => note(`result gate-server-${name} fail ${e}`));
+  };
+  const obCheck = async (name) => {
+    const past = (w) => [...document.querySelectorAll('body *')].filter(visible).find((el) => el.getBoundingClientRect().right > w + 1);
+    const p393 = document.documentElement.scrollWidth > innerWidth + 1 ? 'html' : past(innerWidth)?.tagName.toLowerCase();
+    const box = shell() ?? document.body;
+    const kept = box.getAttribute('style') ?? '';
+    box.style.right = 'auto';
+    box.style.width = '375px';
+    await sleep(700);
+    const p375 = [...box.querySelectorAll('*')].filter(visible).find((el) => el.getBoundingClientRect().right > 376);
+    const hit375 = p375 ? `${p375.tagName.toLowerCase()} ${String(p375.className).slice(0, 30)}` : null;
+    box.setAttribute('style', kept);
+    await sleep(300);
+    const small = smallInputs();
+    await result(`overflow-${name}`, !p393 && !hit375, `393:${p393 ?? 'none'} 375:${hit375 ?? 'none'}`);
+    await result(`inputs16-${name}`, !small.length, small[0] ?? 'all >= 16px');
+  };
+  const onboardingWalk = async (t) => {
+    const { data } = await import('/src/lib/app/data.svelte.ts');
+    await theme(t);
+    await gateServer(true);
+    if (t === 'light') {
+      await go('/inbox');
+      await go('/settings');
+      await sleep(2000);
+      signedIn = false;
+      const out = [...document.querySelectorAll('main button')].find((b) => b.textContent.trim().startsWith('Sign out') && visible(b));
+      await result('settings-sign-out', !!out, out ? 'tapped' : 'no Sign out button');
+      out?.click();
+    } else {
+      signedIn = false;
+      await L.invoke('app_set_setting', { name: 'setup_done', value: 'false' });
+    }
+    await data.load();
+    await until('onboarding', () => text().includes('Get started'), 15000);
+    const step = async (name, wait) => {
+      const seen = await until(`${name}`, () => text().includes(wait), 8000).then(() => true, () => false);
+      if (!seen) await note(`result ob-${name} fail no "${wait}"`);
+      if (t === 'light') await obCheck(`ob-${name}`);
+      await shot(`${t}/40-ob-${name}`);
+      return seen;
+    };
+    try {
+      await step('1-welcome', 'Get started');
+      tapText('Get started');
+      const signin = await step('2-signin', 'Continue with email');
+      await result(`ob-signin-email-${t}`, signin, signin ? 'Continue with email shown' : `screen "${text().slice(0, 60)}"`);
+      tapText('Use my own server');
+      await step('3-own-server', 'Supabase project URL');
+      tapText('Back');
+      await sleep(700);
+      tapText('Continue with email');
+      await step('4-email', 'Create account');
+      L.type(L.field('Email'), 'new.owner@example.com', false);
+      L.type(L.field('Password'), 'gate pass 1234', false);
+      await sleep(500);
+      tapText('Create account');
+      const check = await step('5-check-email', 'Check your email');
+      await result(`ob-check-email-${t}`, check && text().includes('new.owner@example.com'), `shown ${check}`);
+      tapText('I confirmed it, sign in');
+      await sleep(700);
+      L.type(L.field('Password'), 'gate pass 1234', false);
+      await sleep(500);
+      tapText('Sign in');
+      await step('6-key', 'Claude API key');
+      tapText('Add later');
+      const consent = await step('7-consent', 'I agree');
+      await result(`ob-consent-${t}`, consent && text().includes('Your goals and the AI'), `shown ${consent}`);
+      tapText('I agree');
+      await step('8-permissions', 'What Aroh may use');
+      tapText('Continue');
+      await step('9-first-goal', 'What do you want to reach?');
+      tapText('Skip, show me the app');
+      await until('app back', () => text().includes('Dashboard'), 15000);
+    } catch (e) {
+      await note(`result ob-walk-${t} fail ${String(e?.message ?? e).slice(0, 60)}`);
+      await L.invoke('app_set_setting', { name: 'setup_done', value: 'true' });
+      await data.load();
+    }
+    signedIn = true;
+    await gateServer(false);
+  };
+  const lateDone = async () => {
+    const status = async (id) => (await invoke('app_snapshot', { from: new Date(Date.now() - 30 * 864e5).toISOString(), to: new Date(Date.now() + 30 * 864e5).toISOString() })).actions.find((a) => a.id === id);
+    const pick = (group) => [...(document.querySelector(`[role=radiogroup][aria-label="${group}"]`)?.querySelectorAll('[role=radio]') ?? [])].find((r) => r.textContent.trim() === 'Done');
+    await go('/inbox');
+    await go('/today');
+    await sleep(2000);
+    await editRow(missedToday)();
+    pick(`Log ${missedToday.title}`)?.click();
+    await sleep(2500);
+    const a = await status(missedToday.id);
+    await shot('light/33-missed-done-today');
+    await result('missed-done-today', a?.status === 'done' && !!a?.done_at, `status ${a?.status} done_at ${a?.done_at}`);
+    await go('/inbox');
+    await go(`/actions/${missedY.id}`);
+    await sleep(2500);
+    pick('Log this session')?.click();
+    await sleep(2500);
+    const b = await status(missedY.id);
+    document.querySelector('main section[aria-label="Session status"]')?.scrollIntoView({ block: 'center' });
+    await shot('light/34-missed-done-action');
+    await result('missed-done-action-page', b?.status === 'done' && !!b?.done_at, `status ${b?.status} done_at ${b?.done_at}`);
+    const goalOrdered = async () => (await invoke('app_snapshot', { from: new Date().toISOString(), to: new Date(Date.now() + 864e5).toISOString() })).goals.find((g) => g.id === six.id)?.ordered;
+    await go('/inbox');
+    await go(`/goals/${six.id}`);
+    await sleep(2500);
+    await openFolds();
+    const was = await goalOrdered();
+    const before = orderSwitch()?.getAttribute('aria-checked');
+    orderSwitch()?.click();
+    await sleep(2000);
+    const now = await goalOrdered();
+    const after = orderSwitch()?.getAttribute('aria-checked');
+    await go('/inbox');
+    await go(`/goals/${six.id}`);
+    await sleep(2500);
+    await openFolds();
+    const kept = orderSwitch()?.getAttribute('aria-checked');
+    orderSwitch()?.scrollIntoView({ block: 'center' });
+    await shot('light/35-order-toggled');
+    await result('order-toggle-saves', !!was === !now && before !== after && kept === after, `db ${was}->${now} ui ${before}->${after} reload ${kept}`);
+    orderSwitch()?.click();
+    await sleep(1500);
+  };
+
+  const extras = async () => {
+    const { data } = await import('/src/lib/app/data.svelte.ts');
+    await kbField(70, 'action-chat-page-composer', `/actions/${work?.id}/chat`, () => textFields()[0]);
+    await theme('light');
+    await gateServer(true);
+    signedIn = false;
+    await L.invoke('app_set_setting', { name: 'setup_done', value: 'false' });
+    await data.load();
+    await until('onboarding', () => text().includes('Get started'), 15000);
+    const react = async (name, label, wait, scope = document) => {
+      const b = [...scope.querySelectorAll('button')].find((x) => x.textContent.trim() === label && visible(x));
+      if (!b) return result(`ob-tap-${name}`, false, `no button ${label}`);
+      const before = sig();
+      called.length = 0;
+      b.click();
+      const changed = await until(name, () => (wait ? text().includes(wait) : sig() !== before), 8000).then(() => true, () => false);
+      const native = called.filter((c) => !['app_dev_mark', 'app_snapshot', 'app_engine', 'app_set_setting'].includes(c));
+      const cmds = [...new Set(called.filter((c) => !['app_dev_mark', 'app_snapshot'].includes(c)))].join(',').slice(0, 40);
+      await result(`ob-tap-${name}`, changed || native.length > 0, `${changed ? 'reacted' : native.length ? 'native' : 'no change'} ${cmds}`);
+      await shot(`light/50-ob-${name}`);
+    };
+    try {
+      tapText('Get started');
+      await until('signin', () => text().includes('Continue with email'), 8000);
+      const apple = [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Continue with Apple' && visible(b));
+      await note(`ob apple button shown=${apple} phone-only`);
+      tapText('Use my own server');
+      await until('server form', () => text().includes('Supabase project URL'), 8000);
+      L.type(L.field('Supabase project URL'), 'https://gate-supabase.invalid', false);
+      L.type(L.field('Supabase anon key'), 'gate-anon-key-0123456789abcdef', false);
+      L.type(L.field('Aroh server URL'), 'https://gate-server.invalid', false);
+      await sleep(500);
+      await react('save-and-continue', 'Save and continue', 'Continue with email');
+      tapText('Continue with email');
+      await sleep(700);
+      L.type(L.field('Email'), 'owner@example.com', false);
+      L.type(L.field('Password'), 'gate pass 1234', false);
+      await sleep(500);
+      tapText('Sign in');
+      await until('key step', () => text().includes('Claude API key'), 8000);
+      await kbField(71, 'onboarding-claude-key', '/today', () => L.field('Claude API key'));
+      if (!L.field('Claude API key')?.value) L.type(L.field('Claude API key'), SAMPLES.key, false);
+      await sleep(500);
+      await react('save-key', 'Save key', null);
+      if (text().includes('Claude API key')) tapText('Add later');
+      await until('consent', () => text().includes('I agree'), 8000);
+      tapText('I agree');
+      await until('permissions', () => text().includes('What Aroh may use'), 8000);
+      const allows = [...document.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Allow' && visible(b)).length;
+      await note(`ob allow buttons ${allows}`);
+      const rows = [...document.querySelectorAll('li')].filter((li) => [...li.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Allow'));
+      for (const row of rows) {
+        const name = row.querySelector('span span')?.textContent.trim().toLowerCase().replace(/[^a-z]+/g, '-') ?? 'row';
+        await react(`allow-${name}`, 'Allow', null, row);
+        await sleep(1500);
+      }
+      tapText('Continue');
+      await until('first goal', () => text().includes('What do you want to reach?'), 8000);
+      const examples = [...document.querySelectorAll('ul button')].filter(visible);
+      let filled = 0;
+      for (const e of examples) {
+        e.click();
+        await sleep(400);
+        if (L.field('What do you want to reach?')?.value === e.textContent.trim()) filled++;
+      }
+      await result('ob-tap-examples', examples.length > 0 && filled === examples.length, `${filled} of ${examples.length} fill the goal`);
+      await shot('light/50-ob-examples');
+      tapText('Skip, show me the app');
+      await until('app back', () => text().includes('Dashboard'), 15000);
+    } catch (e) {
+      await note(`result ob-extra fail ${String(e?.message ?? e).slice(0, 60)}`);
+      await L.invoke('app_set_setting', { name: 'setup_done', value: 'true' });
+      await data.load();
+    }
+    signedIn = true;
+    await gateServer(false);
   };
 
   const NATIVE = /^(Speak a message|Speak a log entry|Stop speaking|Photo|File|Log with a photo|Open Settings)$/;
@@ -467,6 +861,7 @@
   const buttons = async () => {
     let dead = 0;
     let tapped = 0;
+    quiet = true;
     for (const s of SCREENS) {
       await open(s);
       const keys = [];
@@ -516,11 +911,12 @@
         await sleep(300);
       }
     }
+    quiet = false;
     await note(`taps ${tapped} tapped, ${dead} did nothing`);
   };
 
   try {
-    await until('app rendered', () => text().includes('Skip for now') || (text().includes('Calendar') && text().includes('Dashboard')), 120000);
+    await until('app rendered', () => text().includes('Get started') || (text().includes('Calendar') && text().includes('Dashboard')), 120000);
     await skipSetup();
     await setup();
     screenList();
@@ -528,10 +924,20 @@
     await data.load();
     const acct = await T.invoke('app_account', {}).catch((e) => ({ email: `error ${e}` }));
     await result('harness-hook', String(acct?.email).startsWith('owner.with'), `account ${acct?.email} via ipc fetch`);
-    const lightBad = await screens('light');
-    await result('overflow-all', lightBad === 0, `${lightBad} screens with overflow`);
-    if (!smoke) await screens('dark');
+    if (!window.AROH_E2E.noscreens) {
+      const lightBad = await screens('light');
+      await result('overflow-all', lightBad === 0, `${lightBad} screens with overflow`);
+      if (!smoke) await screens('dark');
+    }
+    if (!window.AROH_E2E.noob) {
+      await onboardingWalk('light');
+      await onboardingWalk('dark');
+      await theme('light');
+      await lateDone().catch((e) => note(`result late-done fail ${String(e?.message ?? e).slice(0, 60)}`));
+    }
+    if (window.AROH_E2E.extra) await extras();
     await theme('light');
+    await sleep(6000);
     if (only.length) {
       await go('/inbox');
       await sleep(2500);

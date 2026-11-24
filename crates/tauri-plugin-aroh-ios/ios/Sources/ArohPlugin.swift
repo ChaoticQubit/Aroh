@@ -22,6 +22,11 @@ class SeedArgs: Decodable {
   let samples: [SeedSample]
 }
 
+/// Arguments of `apple_sign_in`: the raw nonce, hashed before it goes to Apple.
+class AppleArgs: Decodable {
+  let nonce: String
+}
+
 /// Arguments of `location_authorize`: `when_in_use` first, then `always`.
 class LocationStepArgs: Decodable {
   let step: String
@@ -187,6 +192,19 @@ class ArohPlugin: Plugin {
         invoke.resolve(["url": url] as [String: String])
       } else {
         invoke.reject("No map image.", code: "snapshot_failed")
+      }
+    }
+  }
+
+  @objc public func apple_sign_in(_ invoke: Invoke) {
+    guard let args = try? invoke.parseArgs(AppleArgs.self), !args.nonce.isEmpty else {
+      invoke.reject("Bad arguments.", code: "bad_args")
+      return
+    }
+    AppleSignIn.shared.start(nonce: args.nonce) { result in
+      switch result {
+      case .success(let token): invoke.resolve(["id_token": token] as [String: String])
+      case .failure(let error): invoke.reject(error.message, code: error.code)
       }
     }
   }

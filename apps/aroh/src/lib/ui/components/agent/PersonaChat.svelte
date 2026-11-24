@@ -17,6 +17,9 @@
 	import { Dictation, type Speech } from '$lib/app/speech.svelte';
 	import DictationNotice from '../inputs/DictationNotice.svelte';
 	import { scrollFor } from '$lib/app/questions';
+	import { untrack } from 'svelte';
+	import { deviceKeep, readDraft, writeDraft } from '$lib/app/chatkeep';
+	import { grow } from '$lib/ui/grow';
 
 	/**
 	 * Owner and persona thread with inline cards, a question group, research progress and a plan
@@ -27,7 +30,8 @@
 	 * `inline` the thread flows in the page, which is the only scroller, and the composer sticks
 	 * to the bottom of the screen (the goal card); only a new question group scrolls into view.
 	 * A plan with its items renders as the week strip (Q65) on `planContext`, in category `slot`; the
-	 * limits question group renders as the can't-fit card (Q64).
+	 * limits question group renders as the can't-fit card (Q64). With `keep` the unsent draft is
+	 * kept under that key until sent (B60); inline, a sent message scrolls into view (B62).
 	 */
 	let {
 		messages,
@@ -36,12 +40,18 @@
 		voice,
 		inline = false,
 		planContext,
-		slot = 1
-	}: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean; voice?: Speech; inline?: boolean; planContext?: PlanContext; slot?: number } = $props();
+		slot = 1,
+		keep
+	}: { messages: ChatMessage[]; onchange?: OnChange; echo?: boolean; voice?: Speech; inline?: boolean; planContext?: PlanContext; slot?: number; keep?: string } = $props();
 
 	const id = $props.id();
 	let sent = $state<ChatMessage[]>([]);
-	let draft = $state('');
+	const store = deviceKeep();
+	let draft = $state(untrack(() => (keep ? readDraft(store, keep) : '')));
+	let follow = false;
+	$effect(() => {
+		if (keep) writeDraft(store, keep, draft);
+	});
 	let approved = $state(false);
 	const dictation = $derived(voice ? new Dictation(voice, (text) => (draft = text)) : null);
 	let fixed = $state<number[]>([]);
@@ -54,7 +64,10 @@
 		const next = scrollFor(thread, seenGroup);
 		seenGroup = next.seen;
 		if (!thread.length || !list) return;
-		if (next.to === 'bottom' && !inline) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+		const sentNow = follow;
+		follow = false;
+		if (next.to === 'bottom' && inline && sentNow) (list.lastElementChild as HTMLElement | null)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		else if (next.to === 'bottom' && !inline) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
 		else if (next.to === 'group') (list.lastElementChild as HTMLElement | null)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 	});
 
@@ -72,6 +85,7 @@
 		if (!text) return;
 		if (echo) sent.push({ type: 'message', from: 'owner', name: 'You', text });
 		draft = '';
+		follow = true;
 		onchange?.({ type: 'send', text });
 	}
 </script>
@@ -185,7 +199,8 @@
 				{id}
 				rows="1"
 				placeholder="Message your personas"
-				class="max-h-32 min-h-11 min-w-0 flex-1 resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:truncate placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+				use:grow={draft}
+				class="min-h-11 min-w-0 flex-1 resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:truncate placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 				bind:value={draft}
 				onkeydown={(e) => {
 					if (e.key === 'Enter' && !e.shiftKey) {

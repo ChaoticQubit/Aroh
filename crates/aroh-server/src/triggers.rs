@@ -8,7 +8,7 @@ use aroh_domain::calendar::local_days;
 use aroh_domain::recur::DEFAULT_WINDOW_DAYS;
 use aroh_domain::rows::{Action, ActionStatus, Autonomy, BusyBlock, CadenceFreq, Goal, GoalStatus, RuleOp, Tracker, TrackerEntry, TrackerField};
 use crate::conflicts;
-use aroh_domain::time::MISSED_GRACE_MIN;
+use aroh_domain::time::{missed_at, MISSED_GRACE_MIN};
 use chrono::{DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
 use crate::workflows::LEARN_PREFERENCE;
@@ -222,8 +222,9 @@ pub fn next_review(weekday: u8, at: &str, tz: Tz, after: DateTime<Utc>) -> Resul
 }
 
 /// One pending status event of an action: kind (`missed`, `skipped`,
-/// `done`), the action's title and span, and when it was done.
-/// Read from `action_events.after`.
+/// `done`), the action's title and span, when it was done, and whether the
+/// action was missed before (a `missed` event or a missed `before` row).
+/// Read from `action_events`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusEvent {
     pub id: i64,
@@ -232,16 +233,19 @@ pub struct StatusEvent {
     pub start_at: DateTime<Utc>,
     pub end_at: DateTime<Utc>,
     pub done_at: Option<DateTime<Utc>>,
+    pub was_missed: bool,
 }
 
 impl StatusEvent {
-    /// Whether this event asks for adaptation: missed and skipped always,
-    /// done only when done more than the grace after the action ended.
+    /// Whether this event asks for adaptation in the owner's zone `tz`:
+    /// missed and skipped always; done only when logged after the action's
+    /// local day ended ([`missed_at`]) and the action was never missed, since
+    /// a late done after a miss is the owner's catch-up call (Q78).
     /// Returns false for any other kind.
-    pub fn counts(&self) -> bool {
+    pub fn counts(&self, tz: Tz) -> bool {
         match self.kind.as_str() {
             "missed" | "skipped" => true,
-            "done" => self.done_at.is_some_and(|d| d > self.end_at + Duration::minutes(MISSED_GRACE_MIN)),
+            "done" => !self.was_missed && self.done_at.is_some_and(|d| d >= missed_at(self.start_at, self.end_at, tz)),
             _ => false,
         }
     }
@@ -252,7 +256,7 @@ impl StatusEvent {
 /// Events that do not count are left out.
 pub fn event_reason(events: &[StatusEvent], tz: Tz) -> String {
     let mut parts = Vec::new();
-    for e in events.iter().filter(|e| e.counts()) {
+    for e in events.iter().filter(|e| e.counts(tz)) {
         let word = match e.kind.as_str() {
             "missed" => "Missed",
             "skipped" => "Skipped",
@@ -271,26 +275,54 @@ pub(crate) fn zone_or_utc(name: &str) -> Tz {
     name.parse().unwrap_or(Tz::UTC)
 }
 
-/// Inserts `missed` events for live planned actions of active goals that
-/// ended in the lookback window but more than the grace ago; only goal
-/// `only` when given. Existing events are kept. Returns rows added.
+/// The zone the missed rule uses when the owner's zone is unknown or
+/// unreadable: the last midnight on Earth, so an action is never missed early.
+pub const MISSED_FALLBACK_ZONE: Tz = Tz::Etc__GMTPlus12;
+
+/// Inserts `missed` events for live planned actions of active goals whose
+/// local day ended ([`missed_at`], Q78) within the lookback window; the zone
+/// is the goal's review zone, else any review zone of the owner, else
+/// [`MISSED_FALLBACK_ZONE`]. Only goal `only` when given. Existing events are
+/// kept. Returns rows added.
 pub async fn derive_missed(pool: &db::PgPool, now: DateTime<Utc>, only: Option<(Uuid, Uuid)>) -> Result<u64, ServerError> {
     let cut = now - Duration::minutes(MISSED_GRACE_MIN);
     let from = now - Duration::hours(MISSED_LOOKBACK_HOURS);
-    let done = db::query(
-        "insert into public.action_events (user_id, goal_id, action_id, kind, after)
-         select a.user_id, a.goal_id, a.id, 'missed',
-           jsonb_build_object('title', a.title, 'start_at', a.start_at, 'end_at', a.end_at, 'status', 'missed', 'done_at', null)
+    let candidates: Vec<(Uuid, Uuid, DateTime<Utc>, DateTime<Utc>, Option<String>)> = db::query_as(
+        "select a.user_id, a.id, a.start_at, a.end_at,
+           coalesce((select s.timezone from public.review_schedules s where s.user_id = a.user_id and s.goal_id = a.goal_id),
+                    (select s.timezone from public.review_schedules s where s.user_id = a.user_id order by s.goal_id limit 1))
          from public.actions a join public.goals g on g.user_id = a.user_id and g.id = a.goal_id
          where not a.deleted and not g.deleted and g.status = 'active' and a.status = 'planned'
            and a.end_at < $1 and a.end_at >= $2
-           and ($3::uuid is null or (a.user_id = $3 and a.goal_id = $4))
-         on conflict (user_id, action_id, kind) where kind in ('missed', 'skipped') do nothing",
+           and ($3::uuid is null or (a.user_id = $3 and a.goal_id = $4))",
     )
     .bind(cut)
     .bind(from)
     .bind(only.map(|o| o.0))
     .bind(only.map(|o| o.1))
+    .fetch_all(pool)
+    .await?;
+    let (users, ids): (Vec<Uuid>, Vec<Uuid>) = candidates
+        .into_iter()
+        .filter(|(_, _, start, end, zone)| {
+            let tz = zone.as_deref().and_then(|z| z.parse::<Tz>().ok()).unwrap_or(MISSED_FALLBACK_ZONE);
+            now >= missed_at(*start, *end, tz)
+        })
+        .map(|(user, id, ..)| (user, id))
+        .unzip();
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let done = db::query(
+        "insert into public.action_events (user_id, goal_id, action_id, kind, after)
+         select a.user_id, a.goal_id, a.id, 'missed',
+           jsonb_build_object('title', a.title, 'start_at', a.start_at, 'end_at', a.end_at, 'status', 'missed', 'done_at', null)
+         from public.actions a join unnest($1::uuid[], $2::uuid[]) as t(user_id, id) on a.user_id = t.user_id and a.id = t.id
+         where a.status = 'planned' and not a.deleted
+         on conflict (user_id, action_id, kind) where kind in ('missed', 'skipped') do nothing",
+    )
+    .bind(&users)
+    .bind(&ids)
     .execute(pool)
     .await?;
     Ok(done.rows_affected())
@@ -503,16 +535,19 @@ impl Engine {
     }
 
     async fn scan_events(&self, pool: &db::PgPool, now: DateTime<Utc>) -> Result<usize, ServerError> {
-        let rows: Vec<(i64, Uuid, Uuid, String, Value, Option<String>, Option<bool>)> = db::query_as(
-            "select e.id, e.user_id, e.goal_id, e.kind, e.after, a.status, a.deleted
+        let rows: Vec<(i64, Uuid, Uuid, String, Value, Option<String>, Option<bool>, bool)> = db::query_as(
+            "select e.id, e.user_id, e.goal_id, e.kind, e.after, a.status, a.deleted,
+               coalesce(e.before->>'status', '') = 'missed' or exists(select 1 from public.action_events m
+                 where m.user_id = e.user_id and m.action_id = e.action_id and m.kind = 'missed')
              from public.action_events e left join public.actions a on a.user_id = e.user_id and a.id = e.action_id
              where not e.handled and e.kind in ('missed', 'skipped', 'done') order by e.id",
         )
         .fetch_all(pool)
         .await?;
         let mut per_goal: BTreeMap<(Uuid, Uuid), Vec<StatusEvent>> = BTreeMap::new();
+        let mut zones: BTreeMap<(Uuid, Uuid), Tz> = BTreeMap::new();
         let mut stale = Vec::new();
-        for (id, user, goal, kind, after, status, deleted) in rows {
+        for (id, user, goal, kind, after, status, deleted, was_missed) in rows {
             let event = StatusEvent {
                 id,
                 title: after.get("title").and_then(Value::as_str).unwrap_or("Action").to_string(),
@@ -520,12 +555,17 @@ impl Engine {
                 end_at: time_of(&after, "end_at").unwrap_or(now),
                 done_at: time_of(&after, "done_at"),
                 kind: kind.clone(),
+                was_missed,
             };
             let current = match kind.as_str() {
                 "missed" => matches!(status.as_deref(), Some("planned" | "missed")),
                 other => status.as_deref() == Some(other),
             };
-            if !event.counts() || !current || deleted != Some(false) {
+            let tz = match zones.get(&(user, goal)) {
+                Some(tz) => *tz,
+                None => *zones.entry((user, goal)).or_insert(goal_zone(pool, user, goal).await?),
+            };
+            if !event.counts(tz) || !current || deleted != Some(false) {
                 stale.push(id);
             } else {
                 per_goal.entry((user, goal)).or_default().push(event);
@@ -540,7 +580,7 @@ impl Engine {
             if busy(pool, user, goal_id).await? {
                 continue;
             }
-            let tz = goal_zone(pool, user, goal_id).await?;
+            let tz = zones.get(&(user, goal_id)).copied().unwrap_or(Tz::UTC);
             let reason = event_reason(&events, tz);
             assert!(!reason.is_empty(), "only counting events reach a reason");
             if self.trigger_replan(user, &goal, Source::Actions, &actions_window(now), &reason, now).await? {
@@ -616,9 +656,11 @@ impl Engine {
 
     async fn review_reason(&self, pool: &db::PgPool, user: Uuid, goal: Uuid, now: DateTime<Utc>) -> Result<String, ServerError> {
         let cut = now - Duration::minutes(MISSED_GRACE_MIN);
+        let tz = goal_zone(pool, user, goal).await?;
+        let today = local_instant(now.with_timezone(&tz).date_naive(), NaiveTime::MIN, tz).unwrap_or(now - Duration::days(1));
         let (done, missed, skipped, ahead): (i64, i64, i64, i64) = db::query_as(
             "select count(*) filter (where status = 'done' and end_at >= $3),
-                    count(*) filter (where (status = 'missed' or (status = 'planned' and end_at < $4)) and end_at >= $3),
+                    count(*) filter (where (status = 'missed' or (status = 'planned' and end_at < $4 and start_at < $6)) and end_at >= $3),
                     count(*) filter (where status = 'skipped' and end_at >= $3),
                     count(*) filter (where status = 'planned' and start_at >= $5 and start_at < $5 + interval '7 days')
              from public.actions where user_id = $1 and goal_id = $2 and not deleted",
@@ -628,6 +670,7 @@ impl Engine {
         .bind(now - Duration::days(7))
         .bind(cut)
         .bind(now)
+        .bind(today)
         .fetch_one(pool)
         .await?;
         Ok(format!(
@@ -807,6 +850,33 @@ impl Engine {
         };
         Ok(EditReplan { event_at: Some(at), checked: checked_at.is_some(), run_id, waiting_on })
     }
+
+    /// The replan a miss of `user`'s action `action` started (Q78): the run
+    /// that claimed the action's `missed` event, when a scan of status events
+    /// started it (adaptation source `actions`). The app offers to remove what
+    /// that run added once the owner logs the action done. Never reads
+    /// another user's rows.
+    pub async fn miss_replan(&self, user: Uuid, action: Uuid) -> Result<MissReplan, ServerError> {
+        let run_id: Option<Uuid> = db::query_scalar(
+            "select e.handled_by from public.action_events e
+             join public.adaptations d on d.user_id = e.user_id and d.run_id = e.handled_by and d.source = 'actions'
+             where e.user_id = $1 and e.action_id = $2 and e.kind = 'missed' and e.handled_by is not null
+             order by e.id desc limit 1",
+        )
+        .bind(user)
+        .bind(action)
+        .fetch_optional(&self.deps().pool)
+        .await?;
+        Ok(MissReplan { run_id })
+    }
+}
+
+/// The replan started by a miss of one action, as
+/// `GET /v1/actions/{action_id}/miss-replan` answers; `run_id` is null when
+/// the miss started none.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct MissReplan {
+    pub run_id: Option<Uuid>,
 }
 
 /// A goal's weekly review: weekday (0 = Sunday), local `at` (`HH:MM`),
@@ -1054,7 +1124,7 @@ mod tests {
 
     fn status(kind: &str, end: &str, done: Option<&str>) -> StatusEvent {
         let end_at = at(end);
-        StatusEvent { id: 1, kind: kind.into(), title: "Easy run".into(), start_at: end_at - Duration::minutes(30), end_at, done_at: done.map(at) }
+        StatusEvent { id: 1, kind: kind.into(), title: "Easy run".into(), start_at: end_at - Duration::minutes(30), end_at, done_at: done.map(at), was_missed: false }
     }
 
     #[test]
@@ -1069,13 +1139,15 @@ mod tests {
     }
 
     #[test]
-    fn done_late_only_after_grace() {
-        assert!(status("missed", "2026-11-21T07:30:00Z", None).counts());
-        assert!(status("skipped", "2026-11-21T07:30:00Z", None).counts());
-        assert!(!status("done", "2026-11-21T07:30:00Z", Some("2026-11-21T07:40:00Z")).counts());
-        assert!(!status("done", "2026-11-21T07:30:00Z", Some("2026-11-21T07:45:00Z")).counts());
-        assert!(status("done", "2026-11-21T07:30:00Z", Some("2026-11-21T07:46:00Z")).counts());
-        assert!(!status("move", "2026-11-21T07:30:00Z", None).counts());
+    fn done_late_only_after_the_local_day_and_never_after_a_miss() {
+        assert!(status("missed", "2026-11-21T07:30:00Z", None).counts(BERLIN));
+        assert!(status("skipped", "2026-11-21T07:30:00Z", None).counts(BERLIN));
+        assert!(!status("done", "2026-11-21T07:30:00Z", Some("2026-11-21T07:46:00Z")).counts(BERLIN));
+        assert!(!status("done", "2026-11-21T07:30:00Z", Some("2026-11-21T22:59:00Z")).counts(BERLIN), "same local day is not late");
+        assert!(status("done", "2026-11-21T07:30:00Z", Some("2026-11-21T23:00:00Z")).counts(BERLIN));
+        let after_miss = StatusEvent { was_missed: true, ..status("done", "2026-11-21T07:30:00Z", Some("2026-11-22T09:00:00Z")) };
+        assert!(!after_miss.counts(BERLIN), "a late done after a miss is the owner's catch-up call");
+        assert!(!status("move", "2026-11-21T07:30:00Z", None).counts(BERLIN));
     }
 
     #[test]
@@ -1083,7 +1155,7 @@ mod tests {
         let events = vec![
             status("missed", "2026-11-21T06:30:00Z", None),
             status("done", "2026-11-21T08:30:00Z", Some("2026-11-21T08:35:00Z")),
-            status("done", "2026-11-22T17:30:00Z", Some("2026-11-22T19:00:00Z")),
+            status("done", "2026-11-22T17:30:00Z", Some("2026-11-23T19:00:00Z")),
         ];
         assert_eq!(event_reason(&events, BERLIN), "Missed: Easy run (Sat 07:00). Done late: Easy run (Sun 18:00).");
     }

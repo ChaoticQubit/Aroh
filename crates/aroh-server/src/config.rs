@@ -15,6 +15,7 @@ pub struct Config {
     pub allow_custom_base_url: bool,
     pub search_toml: Option<String>,
     pub apns: Option<crate::push::ApnsConfig>,
+    pub supabase: Option<(String, String)>,
 }
 
 impl std::fmt::Debug for Config {
@@ -25,6 +26,7 @@ impl std::fmt::Debug for Config {
             .field("bind", &self.bind)
             .field("allow_custom_base_url", &self.allow_custom_base_url)
             .field("apns", &self.apns)
+            .field("supabase", &self.supabase.as_ref().map(|(url, _)| url))
             .finish_non_exhaustive()
     }
 }
@@ -48,7 +50,13 @@ impl Config {
             ),
             None => None,
         };
+        let supabase = match (get("AROH_SUPABASE_URL"), get("AROH_SUPABASE_SECRET_KEY")) {
+            (Some(url), Some(key)) => Some((url, key)),
+            (None, None) => None,
+            _ => return Err(ServerError::Config("set both AROH_SUPABASE_URL and AROH_SUPABASE_SECRET_KEY, or neither".into())),
+        };
         Ok(Config {
+            supabase,
             database_url: need("DATABASE_URL")?,
             master_key: MasterKey::from_base64(&need("AROH_MASTER_KEY")?)?,
             jwt_secret,
@@ -79,5 +87,12 @@ mod tests {
         assert_eq!(c.bind, "0.0.0.0:9000");
         assert!(!c.allow_custom_base_url);
         assert!(!format!("{c:?}").contains("super-secret-value"));
+        assert!(c.supabase.is_none());
+        vars.insert("AROH_SUPABASE_URL".to_string(), "https://x.supabase.co".to_string());
+        assert!(Config::from_vars(&vars).unwrap_err().to_string().contains("AROH_SUPABASE_SECRET_KEY"));
+        vars.insert("AROH_SUPABASE_SECRET_KEY".to_string(), "sb_secret_test-value".to_string());
+        let c = Config::from_vars(&vars).unwrap();
+        assert_eq!(c.supabase.as_ref().map(|s| s.0.as_str()), Some("https://x.supabase.co"));
+        assert!(!format!("{c:?}").contains("sb_secret_test-value"));
     }
 }

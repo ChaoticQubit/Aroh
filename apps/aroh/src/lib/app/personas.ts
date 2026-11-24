@@ -1,4 +1,4 @@
-import type { CategoryView, CoachGroup, CoachView } from '$lib/ui/screens/types';
+import type { CategoryView, CoachGroup, CoachView, PluginUsed } from '$lib/ui/screens/types';
 import type { Persona as PersonaRow, Snapshot } from './client';
 import { engine, type EngineResult } from './engine';
 
@@ -32,34 +32,63 @@ export function groupByTeam(views: PersonaView[], categories: CategoryView[]): (
 	return [...groups, { title: 'Shared', slot: null, personas: shared }].filter((g) => g.personas.length > 0);
 }
 
+/** The run fields the goal page reads: id, persona slugs, and the plugin version the run used. */
+export type GoalRun = { run_id?: string; personas?: string[]; plugin_id?: string | null; plugin_version?: number | null };
+
 /**
  * The coaches that worked on goal `goalId`: its persona rows and the persona slugs of its runs,
  * once each, in library order, then the slugs the library lacks, which show under their slug.
- * `runs` are the goal's runs as `GET /v1/runs?goal_id=` lists them.
+ * `runs` counts the goal's runs naming the coach; `fresh` is true when an agent created its row
+ * in one of them. `runs` are the goal's runs as `GET /v1/runs?goal_id=` lists them.
  */
-export function coachesOn(views: PersonaView[], rows: PersonaRow[], runs: { personas?: string[] }[], goalId: string): CoachView[] {
-	const names = new Set([...rows.filter((r) => r.goal_id === goalId).map((r) => r.name), ...runs.flatMap((r) => r.personas ?? [])]);
+export function coachesOn(views: PersonaView[], rows: PersonaRow[], runs: GoalRun[], goalId: string): CoachView[] {
+	const mine = rows.filter((r) => r.goal_id === goalId);
+	const names = new Set([...mine.map((r) => r.name), ...runs.flatMap((r) => r.personas ?? [])]);
+	const ids = new Set(runs.map((r) => r.run_id).filter(Boolean));
 	const known = views.filter((v) => names.has(v.name));
 	const unknown = [...names].filter((n) => !views.some((v) => v.name === n));
-	return [...known, ...unknown.map((name): CoachView => ({ name, display_name: name, role: '', instructions: '', guardrails: [], locked: [], source: 'builtin' }))];
+	const all = [...known, ...unknown.map((name): CoachView => ({ name, display_name: name, role: '', instructions: '', guardrails: [], locked: [], source: 'builtin' }))];
+	return all.map((c) => ({
+		...c,
+		runs: runs.filter((r) => r.personas?.includes(c.name)).length,
+		fresh: mine.some((r) => r.name === c.name && !!r.created_run_id && ids.has(r.created_run_id))
+	}));
+}
+
+/**
+ * The plugins goal runs used, one per plugin name: the newest version a run used, how many runs
+ * used any of its versions, and `fresh` when a run of this goal created one of those versions.
+ * `plugins` are the goal's plugin versions; `runs` the goal's runs.
+ */
+export function pluginsUsed(plugins: { id: string; name: string; version: number; created_run_id?: string | null }[], runs: GoalRun[]): PluginUsed[] {
+	const ids = new Set(runs.map((r) => r.run_id).filter(Boolean));
+	const byName = new Map<string, PluginUsed>();
+	for (const p of plugins) {
+		const used = runs.filter((r) => r.plugin_id === p.id);
+		if (!used.length) continue;
+		const at = byName.get(p.name) ?? { name: p.name, version: 0, runs: 0, fresh: false };
+		byName.set(p.name, { name: p.name, version: Math.max(at.version, ...used.map((r) => r.plugin_version ?? p.version)), runs: at.runs + used.length, fresh: at.fresh || (!!p.created_run_id && ids.has(p.created_run_id)) });
+	}
+	return [...byName.values()];
 }
 
 /** The engine reads `loadCoaches` makes, injectable for tests. */
 export type CoachDeps = {
 	personas: () => Promise<EngineResult<PersonaView[]>>;
-	runs: (filter: { goalId?: string }) => Promise<EngineResult<{ personas?: string[] }[]>>;
+	runs: (filter: { goalId?: string }) => Promise<EngineResult<GoalRun[]>>;
 };
 
 /**
  * The persona library and, for goal `goalId`, the coaches that worked on it (`coachesOn` over the
  * snapshot's persona rows and the goal's runs). Offline lists the rows only, with the engine's
- * message as `status`; no goal gives no coaches.
+ * message as `status`; no goal gives no coaches. `runs` are the goal's runs, for `pluginsUsed`.
  */
-export async function loadCoaches(s: Snapshot, goalId: string | null, deps: CoachDeps = engine): Promise<{ views: PersonaView[]; coaches: CoachView[]; status: string | null }> {
+export async function loadCoaches(s: Snapshot, goalId: string | null, deps: CoachDeps = engine): Promise<{ views: PersonaView[]; coaches: CoachView[]; runs: GoalRun[]; status: string | null }> {
 	const [library, runs] = await Promise.all([deps.personas(), goalId ? deps.runs({ goalId }) : null]);
 	const views = library.ok ? library.value : [];
-	const coaches = goalId ? coachesOn(views, s.personas, runs?.ok ? runs.value : [], goalId) : [];
-	return { views, coaches, status: library.ok ? null : library.message };
+	const goalRuns = runs?.ok ? runs.value : [];
+	const coaches = goalId ? coachesOn(views, s.personas, goalRuns, goalId) : [];
+	return { views, coaches, runs: goalRuns, status: library.ok ? null : library.message };
 }
 
 /**
