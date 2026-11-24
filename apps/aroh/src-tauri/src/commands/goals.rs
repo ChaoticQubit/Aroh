@@ -43,14 +43,21 @@ pub async fn attach_file(app: AppHandle, request: tauri::ipc::Request<'_>) -> Re
     let meta: FileMeta = serde_json::from_str(&meta).map_err(|_| "The file details are not valid.".to_string())?;
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("The file bytes are missing.".into()) };
     let bytes = bytes.clone();
-    if bytes.len() > storage::MAX_BYTES {
-        return Err(format!("Files can be up to {} MB.", storage::MAX_BYTES / 1024 / 1024));
-    }
     let mime = if meta.mime.trim().is_empty() { "application/octet-stream".to_string() } else { meta.mime.trim().to_string() };
     let state = app.state::<AppState>();
     let config = supabase(&state)?;
     aroh_domain::rows::check_uuid("goal_id", &meta.goal_id).map_err(|e| e.to_string())?;
-    let user = with_core(&state, |c| Ok(c.user_id.clone()))?;
+    let (user, files, used) = with_core(&state, |c| {
+        let (files, used): (i64, i64) = c.conn.query_row(
+            "SELECT count(*), coalesce(sum(size_bytes), 0) FROM goal_files WHERE user_id = ?1 AND deleted = 0 AND storage_path IS NOT NULL",
+            [&c.user_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok((c.user_id.clone(), files, used))
+    })?;
+    if let Some(refused) = storage::over_limit(bytes.len() as i64, files, used) {
+        return Err(refused.to_string());
+    }
     let (read_mime, read_name, data) = (mime.clone(), meta.name.clone(), bytes.clone());
     let read = tauri::async_runtime::spawn_blocking(move || files::extract(&read_mime, &read_name, &data)).await.map_err(|e| e.to_string())?;
     let file = write::stored_file(&user, &meta.goal_id, &meta.name, &mime, bytes.len() as i64, read);
@@ -59,7 +66,10 @@ pub async fn attach_file(app: AppHandle, request: tauri::ipc::Request<'_>) -> Re
     if session.user_id != user {
         return Err("Sign in with the account that owns this goal.".into());
     }
-    storage::upload(&config, &session.access_token, &session.user_id, &path, &mime, bytes).await.map_err(|e| format!("Could not upload the file: {e}"))?;
+    storage::upload(&config, &session.access_token, &session.user_id, &path, &mime, bytes).await.map_err(|e| match e {
+        aroh_sync::Error::Refused(..) => e.to_string(),
+        e => format!("Could not upload the file: {e}"),
+    })?;
     let stored = with_core(&state, |c| write::add_goal_file(&c.conn, &mut c.clock, file))?;
     sync_if_signed_in(&app);
     Ok(GoalFile { extracted_text: None, ..stored })
@@ -116,6 +126,15 @@ pub fn set_goal_controls(
     run_limit_minutes: Option<i64>,
 ) -> Result<Goal, String> {
     let goal = with_core(&state, |c| write::set_goal_controls(&c.conn, &mut c.clock, &goal_id, reminders, use_calendars, run_limit_minutes))?;
+    after_write(&app);
+    Ok(goal)
+}
+
+/// Sets whether replans keep goal `goal_id`'s sessions in order (Q79).
+/// Output: the stored goal.
+#[tauri::command]
+pub fn set_goal_ordered(app: AppHandle, state: State<'_, AppState>, goal_id: String, ordered: bool) -> Result<Goal, String> {
+    let goal = with_core(&state, |c| write::set_goal_ordered(&c.conn, &mut c.clock, &goal_id, ordered))?;
     after_write(&app);
     Ok(goal)
 }

@@ -30,24 +30,6 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - run: cargo test --locked --workspace --exclude aroh --exclude tauri-plugin-aroh-speech --exclude tauri-plugin-aroh-ios --exclude tauri-plugin-aroh-calendar
 
-  troupekit:
-    name: troupekit tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    defaults:
-      run:
-        working-directory: troupekit
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
-        with:
-          workspaces: troupekit
-      - run: sh scripts/check-boundary.sh
-      - run: cargo test --locked --workspace
-
   server-pg:
     name: server and RLS suites on Postgres
     runs-on: ubuntu-latest
@@ -128,10 +110,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd
         with:
-          command: check advisories bans licenses sources
-      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd
-        with:
-          manifest-path: troupekit/Cargo.toml
           command: check advisories bans licenses sources
       - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998
         with:

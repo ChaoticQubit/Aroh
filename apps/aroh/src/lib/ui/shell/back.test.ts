@@ -28,6 +28,10 @@ describe('parentOf', () => {
 		expect(parentOf('/actions/abc/chat')).toEqual({ path: '/actions/abc', label: 'Session' });
 		expect(parentOf('/actions/abc')).toEqual({ path: '/today', label: 'Today' });
 		expect(parentOf('/settings/places')).toEqual({ path: '/settings', label: 'Settings' });
+		expect(parentOf('/settings/key')).toEqual({ path: '/settings', label: 'Settings' });
+		expect(screenTitle('/settings/key')).toBe('Claude key');
+		expect(screenTitle('/settings/agents')).toBe('Agent defaults');
+		expect(screenTitle('/settings/delete')).toBe('Delete account');
 		expect(parentOf('/settings/location/log')).toEqual({ path: '/settings/location', label: 'Location' });
 		expect(parentOf('/personas?goal=abc')).toEqual({ path: '/goals/abc', label: 'Goal' });
 		expect(parentOf('/personas')).toEqual({ path: '/settings', label: 'Settings' });

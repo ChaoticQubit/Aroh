@@ -341,14 +341,26 @@ fn keeps_fixed(output: &Value, args: &[Value], fixed: &BTreeSet<String>) -> Resu
 /// its path also never overlap a kept device event (busy slots are never
 /// checked against each other), and the `fixed` action ids into `keeps_fixed`.
 pub fn registry_with_busy(busy: Vec<Slot>, fixed: BTreeSet<String>) -> EvalRegistry {
-    registry_for(busy, fixed, Kind::General)
+    registry_for(busy, fixed, Kind::General, crate::sequence::Bounds::default())
+}
+
+/// Runs `sequence::check` on the list of changes at `path` against `bounds`, the
+/// replanned goal's sessions, order switch, daily cap and local now (Q64, Q79).
+/// The error is the repair-round message for the analyst.
+fn keeps_sequence(output: &Value, args: &[Value], bounds: &crate::sequence::Bounds) -> Result<(), String> {
+    let [path] = args else { return Err("takes (path)".to_string()) };
+    let path = path.as_str().ok_or("takes a path to a list of changes")?;
+    let changes: Vec<Value> = lookup(output, path).into_iter().flat_map(|v| v.as_array().cloned().unwrap_or_else(|| vec![v.clone()])).collect();
+    crate::sequence::check(bounds, &changes)
 }
 
 /// Builds the registry of one run like `registry_with_busy`, with
-/// `coach_questions` asking what a coach of goal `kind` needs.
+/// `coach_questions` asking what a coach of goal `kind` needs and
+/// `keeps_sequence` checking replan changes against `sequence`.
 /// Returns the registry.
-pub fn registry_for(busy: Vec<Slot>, fixed: BTreeSet<String>, kind: Kind) -> EvalRegistry {
+pub fn registry_for(busy: Vec<Slot>, fixed: BTreeSet<String>, kind: Kind, sequence: crate::sequence::Bounds) -> EvalRegistry {
     let mut r = EvalRegistry::new();
+    r.register("keeps_sequence", Arc::new(move |output: &Value, args: &[Value]| keeps_sequence(output, args, &sequence))).expect("fresh name");
     r.register("coach_questions", Arc::new(move |output: &Value, args: &[Value]| coach_questions(output, args, kind))).expect("fresh name");
     r.register("notes_filled", Arc::new(notes_filled)).expect("fresh name");
     r.register("cards_filled", Arc::new(crate::cards::cards_filled)).expect("fresh name");

@@ -20,6 +20,16 @@ export function allDayOn(events: AllDayView[], ymd: string, picks: Record<string
 /** Labels of the three kinds as the chips and the choice card show them. */
 export const DAY_KIND_LABEL: Record<DayKind, string> = { reminder: 'Reminder', busy: 'Busy day', away: 'Away' };
 
+/**
+ * Whole days a sideways drag of `dx` px moves an action in column `col` of `cols` columns, each
+ * `width` px wide: rounded to the nearest column and kept inside the shown days.
+ */
+export function dayShift(dx: number, width: number, col: number, cols: number): number {
+	console.assert(width > 0 && col >= 0 && col < cols, 'a drag starts inside a shown day column');
+	const days = Math.round(dx / width);
+	return Math.min(cols - 1 - col, Math.max(-col, days)) || 0;
+}
+
 /** Moves an ISO instant by whole minutes. Returns an ISO string in UTC. */
 export function shiftMinutes(iso: string, minutes: number): string {
 	const at = Date.parse(iso);

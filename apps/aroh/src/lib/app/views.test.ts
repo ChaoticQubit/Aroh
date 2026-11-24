@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Snapshot } from './client';
 import { formatDay } from '$lib/ui/format';
-import { actionViews, busyDayInsights, profileView, categoryList, checkInData, dueCheckIns, goalHeader, goalView, inboxView } from './views';
+import { actionViews, busyDayInsights, profileView, categoryList, checkInData, dueCheckIns, goalHeader, goalProgress, goalView, inboxView } from './views';
+import type { GoalStats } from './dashboard';
 
 const zone = 'UTC';
 const goalId = 'g1';
@@ -15,7 +16,7 @@ function fixture(): Snapshot {
 			{ id: 'c-fit', name: 'Health and Fitness', color: '#4f7a5a', seeded: true },
 			{ id: 'c-own', name: 'Music', color: '#000000', seeded: false }
 		],
-		goals: [{ id: goalId, category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: '2027-02-01', status: 'active', autonomy: 'balanced', created_at: '2026-11-01T00:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null }],
+		goals: [{ id: goalId, category_id: 'c-fit', title: 'Six pack by Feb 1', context: null, deadline: '2027-02-01', status: 'active', autonomy: 'balanced', created_at: '2026-11-01T00:00:00Z', reminders: true, use_calendars: true, run_limit_minutes: null, ordered: false }],
 		actions: [
 			{ id: 'a1', goal_id: goalId, series_id: null, occurrence: null, title: 'Strength session', notes: null, start_at: '2026-11-26T18:00:00Z', end_at: '2026-11-26T19:00:00Z', status: 'planned', locked: false, done_at: null }
 		],
@@ -217,5 +218,48 @@ describe('what Aroh knows about you', () => {
 			{ id: 'k2', text: 'Prefers evening workouts', source: 'From your edits', date: '2026-11-20T06:00:00Z', blockable: false }
 		]);
 		expect(p.blocked).toEqual([{ id: 'k3', label: 'Body weight' }]);
+	});
+});
+
+describe('goal progress on the Goals list', () => {
+	const clock = { now: '2026-11-26T08:00:00Z', zone };
+	const stats = (pace: GoalStats['pace']): GoalStats => ({
+		goal_id: goalId, done: 9, due: 12, missed: 2, skipped: 1, open_ended: false, plan_end: null, finish: null, pace, streak: 0, best_streak: 0,
+		week: { done: 1, due: 2 }, month: { done: 9, due: 12 }, minutes: [], trend: null
+	});
+
+	it('says waiting for you while a proposal waits, with the next session today', () => {
+		const p = goalProgress(fixture(), [stats('on_track')], clock)[goalId];
+		expect(p).toEqual({ tone: 'warn', label: 'Waiting for you', done: 9, due: 12, line: 'Next: Strength session, today 18:00' });
+	});
+
+	it('takes the pace from the dashboard figures once nothing waits', () => {
+		const s = fixture();
+		s.proposals = [];
+		expect(goalProgress(s, [stats('behind')], clock)[goalId]).toMatchObject({ tone: 'missed', label: 'Behind' });
+		expect(goalProgress(s, [stats('ahead')], clock)[goalId]).toMatchObject({ tone: 'done', label: 'Ahead' });
+		expect(goalProgress(s, [stats('on_track')], clock)[goalId]).toMatchObject({ tone: 'done', label: 'On track' });
+		expect(goalProgress(s, null, clock)[goalId]).toEqual({ tone: 'planned', label: 'Active', done: 0, due: 0, line: 'Next: Strength session, today 18:00' });
+	});
+
+	it('labels draft and paused goals and counts missed sessions when nothing is next', () => {
+		const s = fixture();
+		s.proposals = [];
+		s.goals[0].status = 'draft';
+		expect(goalProgress(s, null, clock)[goalId]).toMatchObject({ tone: 'planned', label: 'Planning' });
+		s.goals[0].status = 'paused';
+		expect(goalProgress(s, null, clock)[goalId]).toMatchObject({ tone: 'skipped', label: 'Paused' });
+		s.goals[0].status = 'active';
+		s.actions[0].status = 'missed';
+		s.actions[0].start_at = '2026-11-24T18:00:00Z';
+		expect(goalProgress(s, null, clock)[goalId].line).toBe('1 session missed this week');
+		s.actions = [];
+		expect(goalProgress(s, null, clock)[goalId].line).toBeNull();
+	});
+
+	it('shows a later next session with its day', () => {
+		const s = fixture();
+		s.actions[0].start_at = '2026-11-27T18:00:00Z';
+		expect(goalProgress(s, null, clock)[goalId].line).toBe('Next: Strength session, Fri 27 Nov 18:00');
 	});
 });

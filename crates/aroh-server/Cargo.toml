@@ -15,12 +15,12 @@ path = "src/main.rs"
 [dependencies]
 aroh-domain.workspace = true
 aroh-plugins = { path = "../aroh-plugins" }
-troupekit-core = { path = "../../troupekit/crates/troupekit-core" }
-troupekit-providers = { path = "../../troupekit/crates/troupekit-providers" }
-troupekit-tools = { path = "../../troupekit/crates/troupekit-tools" }
-troupekit-agent = { path = "../../troupekit/crates/troupekit-agent" }
-troupekit-graph = { path = "../../troupekit/crates/troupekit-graph" }
-troupekit-host = { path = "../../troupekit/crates/troupekit-host" }
+troupekit-core = { git = "https://github.com/ChaoticQubit/troupekit", rev = "b6e411b06e6d99efbe799e8b21e5192a0ac5c54a" }
+troupekit-providers = { git = "https://github.com/ChaoticQubit/troupekit", rev = "b6e411b06e6d99efbe799e8b21e5192a0ac5c54a" }
+troupekit-tools = { git = "https://github.com/ChaoticQubit/troupekit", rev = "b6e411b06e6d99efbe799e8b21e5192a0ac5c54a" }
+troupekit-agent = { git = "https://github.com/ChaoticQubit/troupekit", rev = "b6e411b06e6d99efbe799e8b21e5192a0ac5c54a" }
+troupekit-graph = { git = "https://github.com/ChaoticQubit/troupekit", rev = "b6e411b06e6d99efbe799e8b21e5192a0ac5c54a" }
+troupekit-host = { git = "https://github.com/ChaoticQubit/troupekit", rev = "b6e411b06e6d99efbe799e8b21e5192a0ac5c54a" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

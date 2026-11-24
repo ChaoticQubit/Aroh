@@ -135,6 +135,7 @@ dependencies = [
  "tauri-plugin-notification",
  "time",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -6305,6 +6306,7 @@ dependencies = [
 [[package]]
 name = "troupekit-agent"
 version = "0.1.0"
+source = "git+https://github.com/ChaoticQubit/troupekit?rev=b6e411b06e6d99efbe799e8b21e5192a0ac5c54a#b6e411b06e6d99efbe799e8b21e5192a0ac5c54a"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -6320,6 +6322,7 @@ dependencies = [
 [[package]]
 name = "troupekit-core"
 version = "0.1.0"
+source = "git+https://github.com/ChaoticQubit/troupekit?rev=b6e411b06e6d99efbe799e8b21e5192a0ac5c54a#b6e411b06e6d99efbe799e8b21e5192a0ac5c54a"
 dependencies = [
  "async-trait",
  "serde",
@@ -6332,6 +6335,7 @@ dependencies = [
 [[package]]
 name = "troupekit-graph"
 version = "0.1.0"
+source = "git+https://github.com/ChaoticQubit/troupekit?rev=b6e411b06e6d99efbe799e8b21e5192a0ac5c54a#b6e411b06e6d99efbe799e8b21e5192a0ac5c54a"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -6348,6 +6352,7 @@ dependencies = [
 [[package]]
 name = "troupekit-host"
 version = "0.1.0"
+source = "git+https://github.com/ChaoticQubit/troupekit?rev=b6e411b06e6d99efbe799e8b21e5192a0ac5c54a#b6e411b06e6d99efbe799e8b21e5192a0ac5c54a"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -6362,6 +6367,7 @@ dependencies = [
 [[package]]
 name = "troupekit-providers"
 version = "0.1.0"
+source = "git+https://github.com/ChaoticQubit/troupekit?rev=b6e411b06e6d99efbe799e8b21e5192a0ac5c54a#b6e411b06e6d99efbe799e8b21e5192a0ac5c54a"
 dependencies = [
  "async-trait",
  "reqwest 0.13.5",
@@ -6376,6 +6382,7 @@ dependencies = [
 [[package]]
 name = "troupekit-tools"
 version = "0.1.0"
+source = "git+https://github.com/ChaoticQubit/troupekit?rev=b6e411b06e6d99efbe799e8b21e5192a0ac5c54a#b6e411b06e6d99efbe799e8b21e5192a0ac5c54a"
 dependencies = [
  "async-trait",
  "jsonschema",
@@ -6976,7 +6983,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

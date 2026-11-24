@@ -81,6 +81,7 @@ fn seed_goal(c: &mut Core, spec: &LongGoal, rank: i64, now: DateTime<Utc>) -> ar
         created_at: now - Duration::days(spec.past_days + 10 - rank),
         reminders: false,
         use_calendars: false,
+        ordered: false,
         run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,

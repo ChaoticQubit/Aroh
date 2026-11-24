@@ -27,7 +27,7 @@ cargo test --workspace --exclude aroh --exclude tauri-plugin-aroh-speech --exclu
 cd apps/aroh && pnpm check && pnpm test
 ```
 
-The same workspace run in a container: `docker build -f Dockerfile.test -t aroh-test . && docker run --rm aroh-test`. The engine's Postgres tests run with `AROH_TEST_PG` pointing at a Postgres 17 with pgvector (see `crates/aroh-server/tests/compose.yaml`). troupekit has its own workspace and container under `troupekit/`.
+The same workspace run in a container: `docker build -f Dockerfile.test -t aroh-test . && docker run --rm aroh-test`. The engine's Postgres tests run with `AROH_TEST_PG` pointing at a Postgres 17 with pgvector (see `crates/aroh-server/tests/compose.yaml`). troupekit lives in its own repository, https://github.com/ChaoticQubit/troupekit; Aroh pins it by commit in `crates/aroh-server/Cargo.toml`.
 
 GitHub Actions runs the full suite (`.github/workflows/ci.yml`) on every pull request into `master` and `prod` and every night: Rust workspace and troupekit tests, the engine and RLS suites on Postgres, svelte-check, vitest and the web build, cargo-deny, cargo-audit and pnpm audit, a check that `THIRD_PARTY_NOTICES.md` is current, the DCO check, and the self-host stack with a smoke test and a nuclei scan.
 
@@ -58,4 +58,4 @@ This adds `Signed-off-by: Your Name <you@example.com>` with your git name and em
 
 ## Licence
 
-Aroh is licensed under the [Apache License 2.0](LICENSE). By contributing you agree that your contributions are licensed under it. troupekit (`troupekit/`) is licensed under MIT OR Apache-2.0.
+Aroh is licensed under the [Apache License 2.0](LICENSE). By contributing you agree that your contributions are licensed under it. troupekit (https://github.com/ChaoticQubit/troupekit) is licensed under MIT OR Apache-2.0.

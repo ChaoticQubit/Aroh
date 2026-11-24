@@ -18,10 +18,11 @@
 	/**
 	 * Chat of one action card (Q71): owner and coach messages, the applied edit as a diff card with
 	 * Undo, and the composer with the mic. Owner edits apply at once; `onundo` reverts entry `i`,
-	 * `onsend` sends a new message. `coach` names the persona of the goal.
+	 * `onsend` sends a new message. `coach` names the persona of the goal; `keep` keeps the unsent draft.
 	 */
-	let { coach, entries, onsend, onundo }: { coach: string; entries: CardChatEntry[]; onsend?: (text: string) => void; onundo?: (i: number) => void } = $props();
+	let { coach, entries, keep, onsend, onundo }: { coach: string; entries: CardChatEntry[]; keep?: string; onsend?: (text: string) => void; onundo?: (i: number) => void } = $props();
 
+	let draft = $state('');
 	const mark = { add: 'text-status-done', remove: 'text-status-missed', change: 'text-muted' } as const;
 </script>
 
@@ -61,5 +62,5 @@
 			</li>
 		{/each}
 	</ol>
-	<CardComposer placeholder="Ask {coach.toLowerCase()} to change this" {onsend} />
+	<CardComposer placeholder="Ask {coach.toLowerCase()} to change this" {keep} bind:draft onsend={(text) => ((draft = ''), onsend?.(text))} />
 </div>

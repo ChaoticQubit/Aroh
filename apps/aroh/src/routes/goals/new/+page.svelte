@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import NewGoalForm from '$lib/ui/components/goal/NewGoalForm.svelte';
 	import type { Attachment } from '$lib/ui/components/goal/Attachments.svelte';
@@ -16,7 +17,7 @@
 	const GUESS_MS = 400;
 	const clock = getClock();
 	const s = $derived(data.snapshot);
-	let draft = $state(blankDraft(agentDefaults(data.snapshot?.settings.agent_defaults)));
+	let draft = $state({ ...blankDraft(agentDefaults(data.snapshot?.settings.agent_defaults)), title: page.url.searchParams.get('title')?.slice(0, 200) ?? '' });
 	let detected = $state(false);
 	let creating = $state(false);
 	let error = $state<string | null>(null);

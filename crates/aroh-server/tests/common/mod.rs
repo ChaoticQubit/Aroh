@@ -37,8 +37,8 @@ pub async fn pg() -> PgPool {
     PgPoolOptions::new().max_connections(8).connect(&format!("{base}/{name}")).await.expect("test db connects")
 }
 
-/// Inserts a new `auth.users` row and returns its id.
-/// Every synced row references one.
+/// Inserts a new `auth.users` row that has allowed AI use, and returns its id.
+/// Every synced row references one; runs need the consent.
 /// The email is unique per call.
 pub async fn user(pool: &PgPool) -> Uuid {
     let id = Uuid::now_v7();
@@ -48,6 +48,7 @@ pub async fn user(pool: &PgPool) -> Uuid {
         .execute(pool)
         .await
         .expect("user inserted");
+    db::query("insert into public.ai_consents (user_id, granted_at) values ($1, now())").bind(id).execute(pool).await.expect("consent inserted");
     id
 }
 

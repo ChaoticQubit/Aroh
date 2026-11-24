@@ -65,6 +65,7 @@ pub fn routines_goal(user_id: &str) -> Goal {
         created_at: DateTime::<Utc>::UNIX_EPOCH,
         reminders: true,
         use_calendars: true,
+        ordered: false,
         run_limit_minutes: None,
         updated_at: SEED_STAMP.to_string(),
         deleted: false,

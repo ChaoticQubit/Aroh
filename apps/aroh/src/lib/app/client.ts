@@ -17,6 +17,7 @@ export type Goal = {
 	reminders: boolean;
 	use_calendars: boolean;
 	run_limit_minutes: number | null;
+	ordered: boolean;
 };
 
 /** An action row; times are RFC 3339 UTC. */
@@ -67,7 +68,7 @@ export type Preference = {
 };
 
 /** A persona row; only its name and goal are shown. */
-export type Persona = { id: string; goal_id: string | null; name: string };
+export type Persona = { id: string; goal_id: string | null; name: string; created_run_id?: string | null };
 
 /** The chosen model provider. Keys never come back from the store. */
 export type ProviderSetting = { id: string; vendor: string; model: string; is_default: boolean };
@@ -229,6 +230,9 @@ export const deleteGoal = (goalId: string, keepActions: boolean) => invoke<void>
 export const setGoalControls = (goalId: string, reminders: boolean, useCalendars: boolean, runLimitMinutes: number | null) =>
 	invoke<Goal>('set_goal_controls', { goalId, reminders, useCalendars, runLimitMinutes });
 
+/** Sets whether replans keep a goal's sessions in order (Q79, "Keep sessions in order"). */
+export const setGoalOrdered = (goalId: string, ordered: boolean) => invoke<Goal>('set_goal_ordered', { goalId, ordered });
+
 /** Makes a vendor and model the default provider. Never takes a key. */
 export const saveProvider = (vendor: string, model: string) => invoke<ProviderSetting>('app_save_provider', { vendor, model });
 
@@ -251,7 +255,7 @@ export const healthConnect = () => invoke<string>('app_health_connect');
 export const devHealthSeed = () => invoke<null>('app_dev_health_seed');
 
 /** The stored sign-in state, read from the keychain. */
-export type Account = { signed_in: boolean; email: string | null; user_id: string | null };
+export type Account = { signed_in: boolean; email: string | null; user_id: string | null; check_email: boolean };
 
 /** The stored sign-in state, without a network call. */
 export const account = () => invoke<Account>('app_account');
@@ -259,8 +263,17 @@ export const account = () => invoke<Account>('app_account');
 /** Signs in, or with `create` signs up; the device adopts the account and syncs. */
 export const signIn = (email: string, password: string, create: boolean) => ((storage = null), invoke<Account>('app_sign_in', { email, password, create }));
 
+/** Signs in with Apple's native sheet (iPhone only); the device adopts the account and syncs. */
+export const signInApple = () => ((storage = null), invoke<Account>('app_sign_in_apple'));
+
 /** Signs out; local rows stay. */
 export const signOut = () => ((storage = null), invoke<Account>('app_sign_out'));
+
+/**
+ * Asks the server to delete the account (15-day grace, Q76), then signs this device out and
+ * erases its local data, keeping only the server address. Resolves with the purge date.
+ */
+export const deleteAccount = () => ((storage = null), invoke<{ purge_after: string }>('app_delete_account'));
 
 /** Pushes local changes and pulls the account's rows. */
 export const sync = () => invoke<{ pushed: number; pulled: number }>('app_sync');

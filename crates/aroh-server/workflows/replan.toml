@@ -6,6 +6,8 @@ max_steps = 100
 goal = "{id: string, title: string, context: string?, deadline: string?, timezone: string, today: string}"
 calendar = "list<{id: string, title: string, start: string, minutes: int, status: string, locked: bool}>"
 reason = "string"
+ordered = "bool"
+daily_minutes = "int?"
 busy = "list<{title: string, start: string, minutes: int}>"
 away_days = "list<string>"
 places = "list<{name: string, goals: list<string>, routines: list<string>}>"
@@ -21,14 +23,14 @@ id = "adapt"
 kind = "agent"
 persona = "adaptation-analyst"
 prompt = "Propose the smallest plan change that answers the reason."
-reads = ["goal", "calendar", "busy", "away_days", "reason", "profile", "places"]
+reads = ["goal", "calendar", "ordered", "daily_minutes", "busy", "away_days", "reason", "profile", "places"]
 writes = "proposal"
 
 [[nodes]]
 id = "record"
 kind = "tool"
 tool = "record_proposal"
-reads = ["goal", "proposal"]
+reads = ["goal", "proposal", "calendar", "ordered", "daily_minutes"]
 writes = "proposal_record"
 
 [[nodes]]

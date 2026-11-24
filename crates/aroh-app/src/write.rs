@@ -29,8 +29,9 @@ pub enum Logged {
     Queued,
 }
 
-/// Sets an action to planned, done or skipped; `done_at` is `now` only for done.
-/// Errors with `Invalid` for missed (only the tick marks missed) and `NotFound` for a gone row.
+/// Sets an action in any status to planned, done or skipped, so a missed action can be
+/// logged done later (Q78); `done_at` is `now` only for done. Errors with `Invalid` for
+/// missed (only the tick marks missed) and `NotFound` for a gone row.
 pub fn set_action_status(conn: &Connection, clock: &mut Hlc, id: &str, status: ActionStatus, now: DateTime<Utc>) -> Result<Action> {
     if status == ActionStatus::Missed {
         return Err(invalid("status missed is set by the app, not by hand"));
@@ -293,9 +294,10 @@ pub fn allow_topic(conn: &Connection, clock: &mut Hlc, id: &str) -> Result<()> {
     Ok(repo::delete::<Preference>(conn, clock, id)?)
 }
 
-/// Owner edit of action `id`: moves or resizes it to `span` (start, end),
-/// or deletes it when `span` is `None`. The action is locked, so agents
-/// never move it without asking (Q19, Q37). Output: the stored row.
+/// Owner edit of action `id` in any status (Q78): moves or resizes it to `span`
+/// (start, end), or deletes it when `span` is `None`. A moved missed action is
+/// planned again; done and skipped keep their status. The action is locked, so
+/// agents never move it without asking (Q19, Q37). Output: the stored row.
 pub fn edit_action(conn: &Connection, clock: &mut Hlc, id: &str, span: Option<(DateTime<Utc>, DateTime<Utc>)>) -> Result<Action> {
     let mut action: Action = repo::get(conn, id)?;
     if action.deleted {
@@ -307,6 +309,9 @@ pub fn edit_action(conn: &Connection, clock: &mut Hlc, id: &str, span: Option<(D
                 return Err(invalid("an action lasts more than 0 minutes and at most a day"));
             }
             (action.start_at, action.end_at) = (start_at, end_at);
+            if action.status == ActionStatus::Missed {
+                action.status = ActionStatus::Planned;
+            }
         }
         None => action.deleted = true,
     }
@@ -468,6 +473,16 @@ pub fn set_goal_controls(conn: &Connection, clock: &mut Hlc, goal_id: &str, remi
     goal.reminders = reminders;
     goal.use_calendars = use_calendars;
     goal.run_limit_minutes = run_limit_minutes;
+    repo::put(conn, clock, &mut goal)?;
+    Ok(goal)
+}
+
+/// Sets whether replans of goal `goal_id` keep its sessions in sequence (Q79, "Keep
+/// sessions in order"). The next replan reads it from the synced goal row.
+/// Output: the stored goal.
+pub fn set_goal_ordered(conn: &Connection, clock: &mut Hlc, goal_id: &str, ordered: bool) -> Result<Goal> {
+    let mut goal: Goal = repo::get(conn, goal_id)?;
+    goal.ordered = ordered;
     repo::put(conn, clock, &mut goal)?;
     Ok(goal)
 }

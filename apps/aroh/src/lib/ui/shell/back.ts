@@ -5,7 +5,7 @@ export type NavKind = 'enter' | 'form' | 'leave' | 'link' | 'goto' | 'popstate';
 export type Back = { label: string; history: boolean; path: string };
 
 const ROOTS: Record<string, string> = { '/today': 'Today', '/calendar': 'Calendar', '/goals': 'Goals', '/dashboard': 'Dashboard', '/log': 'Log', '/settings': 'Settings', '/inbox': 'Inbox' };
-const SUBS: Record<string, string> = { '/goals/new': 'New goal', '/settings/location': 'Location', '/settings/location/log': 'Location log', '/settings/places': 'Places', '/settings/profile': 'What Aroh knows' };
+const SUBS: Record<string, string> = { '/goals/new': 'New goal', '/settings/location': 'Location', '/settings/location/log': 'Location log', '/settings/places': 'Places', '/settings/profile': 'What Aroh knows', '/settings/key': 'Claude key', '/settings/agents': 'Agent defaults', '/settings/delete': 'Delete account' };
 
 /** Splits "/path?query" into its path and query. */
 function split(url: string): [string, URLSearchParams] {

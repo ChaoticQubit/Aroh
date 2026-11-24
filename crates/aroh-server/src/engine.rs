@@ -3,7 +3,7 @@ use crate::error::ServerError;
 use crate::io::{connect, Deps, RunIo};
 use crate::ledger::{goal_key, user_key, UsageWriter};
 use crate::queue::PgQueue;
-use crate::rows::{get_row, goal_deleted, insert_run, list_rows, prepare_reads, put_row, run_row, run_row_for, utc, RunRow};
+use crate::rows::{active_plugin, get_row, goal_deleted, insert_run, list_rows, prepare_reads, put_row, run_row, run_row_for, utc, RunRow};
 use crate::tools::local_text;
 use crate::vault::{check_vendor, KeyInfo};
 use crate::teams;
@@ -16,7 +16,7 @@ use aroh_domain::rows::{
     Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, DayKind, Goal, GoalStatus, Place, PlaceLink,
     ProviderSetting, SearchSetting, Tracker,
 };
-use aroh_domain::time::MISSED_GRACE_MIN;
+use aroh_domain::time::missed_at;
 use crate::triggers;
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
@@ -36,6 +36,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 const STORE_RETRY_MS: i64 = 1_000;
+const DISABLED_RETRY_MS: i64 = 900_000;
 const DEFAULT_LEASE_MS: i64 = 300_000;
 const PAST_DAYS: i64 = 7;
 const MAX_TEXT: usize = 4_000;
@@ -203,8 +204,8 @@ pub struct RunView {
 
 /// One row of the run list behind the Inbox: ids, workflow, lifecycle
 /// state, times, and the sorted slugs of the personas its snapshot holds
-/// (the coaches that work on the run). `waiting_human` runs need the
-/// owner. Newest first.
+/// (the coaches that work on the run), and the plugin and version it used.
+/// `waiting_human` runs need the owner. Newest first.
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct RunSummary {
     pub run_id: Uuid,
@@ -214,6 +215,8 @@ pub struct RunSummary {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub personas: Vec<String>,
+    pub plugin_id: Option<Uuid>,
+    pub plugin_version: Option<i64>,
 }
 
 /// Result of a key test: whether one 1-token call with the stored key
@@ -358,6 +361,7 @@ pub struct Engine {
     queue: Arc<PgQueue>,
     lease_ms: i64,
     push: Option<Arc<crate::push::Pusher>>,
+    storage: Option<Arc<crate::account::StorageApi>>,
     last_scan: std::sync::Mutex<Option<i64>>,
 }
 
@@ -367,7 +371,7 @@ impl Engine {
     /// Returns the engine.
     pub fn new(deps: Arc<Deps>) -> Engine {
         let queue = Arc::new(PgQueue::new(deps.pool.clone(), deps.clock.clone()));
-        Engine { deps, queue, lease_ms: DEFAULT_LEASE_MS, push: None, last_scan: std::sync::Mutex::new(None) }
+        Engine { deps, queue, lease_ms: DEFAULT_LEASE_MS, push: None, storage: None, last_scan: std::sync::Mutex::new(None) }
     }
 
     /// Sets the lease length; it must be positive and outlast one step.
@@ -385,6 +389,21 @@ impl Engine {
     pub fn with_push(mut self, pusher: Arc<crate::push::Pusher>) -> Engine {
         self.push = Some(pusher);
         self
+    }
+
+    /// Attaches the Storage API the account purge removes files through; without one, a
+    /// due account that still has stored files stays pending and the tick reports it.
+    /// Returns the engine.
+    pub fn with_storage(mut self, storage: crate::account::StorageApi) -> Engine {
+        self.storage = Some(Arc::new(storage));
+        self
+    }
+
+    /// Disables `user`'s account now and schedules its deletion after the grace period
+    /// (Q76); see `account::request_deletion`. Safe to repeat.
+    /// Returns when the purge is due.
+    pub async fn delete_account(&self, user: Uuid) -> Result<crate::account::DeletionScheduled, ServerError> {
+        crate::account::request_deletion(&self.deps.pool, user, self.now()).await
     }
 
     /// The APNs pusher, when push is configured.
@@ -485,12 +504,15 @@ impl Engine {
     /// Returns the new run id, or the setup error.
     async fn launch(&self, user: Uuid, goal: Option<Uuid>, wf: Workflow, input: Map<String, Value>) -> Result<RunId, ServerError> {
         let name = wf.name.clone();
+        crate::account::check_run(&self.deps.pool, user, &name).await?;
         let personas = workflows::snapshot(&self.deps.pool, user, goal, &wf).await?;
         let events = Arc::new(EventBuffer::default());
         let io = RunIo::build(self.deps.clone(), user, goal, None, &personas, events.clone()).await?;
         let limits = self.limits(user, goal).await?;
         let run = GraphRun::new(wf, input, limits, &io).await?.with_time_limit(self.limit_for(user, goal).await?.ms());
-        let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name, personas };
+        let plugin = active_plugin(&self.deps.pool, user, goal).await?;
+        let (plugin_id, plugin_version) = (plugin.map(|p| p.0), plugin.map(|p| p.1));
+        let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name, personas, plugin_id, plugin_version };
         insert_run(&self.deps.pool, &row).await?;
         let runner = self.runner(events, io);
         runner.enqueue(&run).await?;
@@ -503,17 +525,16 @@ impl Engine {
         Runner::new(queue, checkpoints, Arc::new(io)).with_lease_ms(self.lease_ms)
     }
 
-    async fn calendar(&self, user: Uuid, tz: Tz, goal: Option<&str>, from: DateTime<Utc>) -> Result<Vec<Value>, ServerError> {
+    async fn calendar(&self, user: Uuid, tz: Tz, goal: Option<&str>, from: DateTime<Utc>, until: DateTime<Utc>) -> Result<Vec<Value>, ServerError> {
         let filters: Vec<(&str, String)> = goal.map(|g| vec![("goal_id", g.to_string())]).unwrap_or_default();
-        let until = self.now() + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
         let mut actions: Vec<Action> = list_rows::<Action>(&self.deps.pool, user, &filters, false)
             .await?
             .into_iter()
             .filter(|a| a.end_at > from && a.start_at < until)
             .collect();
         actions.sort_by_key(|a| a.start_at);
-        let missed_before = self.now() - Duration::minutes(MISSED_GRACE_MIN);
-        for a in actions.iter_mut().filter(|a| a.status == ActionStatus::Planned && a.end_at < missed_before) {
+        let now = self.now();
+        for a in actions.iter_mut().filter(|a| a.status == ActionStatus::Planned && now >= missed_at(a.start_at, a.end_at, tz)) {
             a.status = ActionStatus::Missed;
         }
         Ok(actions
@@ -561,12 +582,14 @@ impl Engine {
     pub async fn start_goal(&self, user: Uuid, req: StartGoal) -> Result<Started, ServerError> {
         let tz = parse_tz(&req.timezone)?;
         let now = self.now();
+        crate::account::check_run(&self.deps.pool, user, workflows::NEW_GOAL).await?;
         prepare_reads(&self.deps.pool, user, now, DEFAULT_WINDOW_DAYS).await?;
         let id = req.goal_id.unwrap_or_else(|| Uuid::now_v7());
         let goal = match list_rows::<Goal>(&self.deps.pool, user, &[("id", id.to_string())], true).await?.pop() {
             Some(g) if !g.deleted => g,
             Some(_) => return Err(ServerError::NotFound(format!("goal {id}"))),
             None => {
+                crate::account::check_new_goal(&self.deps.pool, user).await?;
                 let inferred = || aroh_domain::category::guess(&req.title, req.context.as_deref()).and_then(|slug| teams::seeded_id(user, slug));
                 let category = req.category_id.map(|c| c.to_string()).or_else(inferred);
                 let mut g = Goal {
@@ -581,6 +604,7 @@ impl Engine {
                     created_at: now,
                     reminders: req.reminders.unwrap_or(true),
                     use_calendars: req.use_calendars.unwrap_or(true),
+                    ordered: false,
                     run_limit_minutes: req.run_limit_minutes,
                     updated_at: String::new(),
                     deleted: false,
@@ -602,7 +626,8 @@ impl Engine {
     async fn planning_input(&self, user: Uuid, goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Result<Map<String, Value>, ServerError> {
         let mut input = Map::new();
         input.insert("goal".into(), Self::goal_input(goal, tz, now));
-        input.insert("calendar".into(), json!(self.calendar(user, tz, None, now).await?));
+        let until = now + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
+        input.insert("calendar".into(), json!(self.calendar(user, tz, None, now, until).await?));
         input.insert("profile".into(), json!(self.profile(user).await?));
         input.insert("files".into(), json!(crate::files::goal_files(&self.deps.pool, user, &goal.id).await?));
         input.insert("places".into(), json!(self.places(user).await?));
@@ -716,8 +741,9 @@ impl Engine {
     }
 
     /// Starts a replan of `user`'s `goal` for `reason` in zone `tz`, for the
-    /// owner and every trigger alike: calendar, profile and autonomy as
-    /// input, then the goal's pending action events are claimed by the run.
+    /// owner and every trigger alike: calendar (all remaining sessions of an
+    /// ordered goal), order switch, daily cap (goal answer, else profile),
+    /// profile and autonomy as input; then the run claims the goal's events.
     pub(crate) async fn replan(&self, user: Uuid, goal: &Goal, reason: &str, tz: Tz) -> Result<RunId, ServerError> {
         let now = self.now();
         let goal_id = Uuid::parse_str(&goal.id).map_err(|_| ServerError::Db("bad goal id".into()))?;
@@ -725,7 +751,15 @@ impl Engine {
         let mut input = Map::new();
         input.insert("goal".into(), Self::goal_input(goal, tz, now));
         let from = now - Duration::days(PAST_DAYS);
-        input.insert("calendar".into(), json!(self.calendar(user, tz, Some(&goal.id), from).await?));
+        let until = if goal.ordered { DateTime::<Utc>::MAX_UTC } else { now + Duration::days(i64::from(DEFAULT_WINDOW_DAYS)) };
+        input.insert("calendar".into(), json!(self.calendar(user, tz, Some(&goal.id), from, until).await?));
+        input.insert("ordered".into(), json!(goal.ordered));
+        let mut caps = Map::new();
+        caps.insert("profile".into(), json!(self.profile(user).await?));
+        if let Some((_, answers)) = self.saved_answers(user, goal_id).await? {
+            caps.insert("answers".into(), answers);
+        }
+        input.insert("daily_minutes".into(), json!(crate::limits::daily_cap(&caps)));
         let (busy, away_days) = self.busy(user, &goal, tz, now).await?;
         input.insert("busy".into(), json!(busy));
         input.insert("away_days".into(), json!(away_days));
@@ -929,9 +963,9 @@ impl Engine {
     /// those in `state` (such as `waiting_human`) and of `goal`. Never
     /// another user's runs. Returns the summaries, newest first.
     pub async fn list_runs(&self, user: Uuid, state: Option<&str>, goal: Option<Uuid>) -> Result<Vec<RunSummary>, ServerError> {
-        let rows: Vec<(Uuid, Option<Uuid>, String, String, DateTime<Utc>, DateTime<Utc>, Vec<String>)> = db::query_as(
+        let rows: Vec<(Uuid, Option<Uuid>, String, String, DateTime<Utc>, DateTime<Utc>, Vec<String>, Option<Uuid>, Option<i64>)> = db::query_as(
             "select id, goal_id, workflow, state, created_at, updated_at,
-                    array(select k from jsonb_object_keys(personas) k order by k) from public.runs
+                    array(select k from jsonb_object_keys(personas) k order by k), plugin_id, plugin_version from public.runs
              where user_id = $1 and ($2::text is null or state = $2) and ($3::uuid is null or goal_id = $3)
              order by created_at desc, id desc limit $4",
         )
@@ -943,7 +977,7 @@ impl Engine {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(run_id, goal_id, workflow, state, created_at, updated_at, personas)| RunSummary {
+            .map(|(run_id, goal_id, workflow, state, created_at, updated_at, personas, plugin_id, plugin_version)| RunSummary {
                 run_id,
                 goal_id,
                 workflow,
@@ -951,6 +985,8 @@ impl Engine {
                 created_at,
                 updated_at,
                 personas,
+                plugin_id,
+                plugin_version,
             })
             .collect())
     }
@@ -1016,6 +1052,10 @@ impl Engine {
             self.queue.fail(lease, "run row is gone").await?;
             return Err(ServerError::NotFound(format!("run {}", lease.run_id)));
         };
+        if crate::account::disabled(&self.deps.pool, row.user_id).await? {
+            self.queue.reschedule(lease, self.deps.clock.now_ms() + DISABLED_RETRY_MS).await?;
+            return Ok(Processed::Lost);
+        }
         if let Some(goal) = row.goal_id {
             if goal_deleted(&self.deps.pool, row.user_id, goal).await? {
                 self.cancel(row.user_id, row.id.0).await?;
@@ -1049,6 +1089,10 @@ impl Engine {
         let mut report = TickReport::default();
         if let Err(e) = self.scan_if_due().await {
             report.errors.push(format!("trigger scan: {e}"));
+        }
+        match crate::account::purge_due(&self.deps.pool, self.storage.as_deref(), self.now()).await {
+            Ok((_, errors)) => report.errors.extend(errors.into_iter().map(|e| format!("account purge: {e}"))),
+            Err(e) => report.errors.push(format!("account purge: {e}")),
         }
         while report.processed < opts.max_jobs && self.deps.clock.now_ms() - start < opts.budget_ms {
             let leases = self.queue.claim_due(opts.max_jobs - report.processed, self.lease_ms).await?;

@@ -1,27 +1,63 @@
-/** One first-launch permission step: what it asks for and the one-line reason shown with it. */
-export type SetupStep = { id: 'notifications' | 'calendar' | 'health' | 'server'; title: string; reason: string; allow: string };
+/** One onboarding screen (Q72): `email` and `server` are sub-screens of sign in. */
+export type OnboardingStep = 'welcome' | 'signin' | 'email' | 'server' | 'key' | 'consent' | 'permissions' | 'goal';
 
-/** The first-launch steps in order. Each can be skipped; sign-in follows the last one. */
-export const SETUP_STEPS: readonly SetupStep[] = [
-	{ id: 'notifications', title: 'Reminders', reason: 'Aroh reminds you when a planned action is due.', allow: 'Allow notifications' },
-	{ id: 'calendar', title: 'Your calendar', reason: 'Aroh plans around the events already on your calendar.', allow: 'Allow calendar access' },
-	{ id: 'health', title: 'Apple Health', reason: 'Aroh reads steps, workouts and weight to track fitness goals.', allow: 'Connect Apple Health' }
+/** A device permission onboarding asks for, with its one-line reason. */
+export type Permission = { id: 'calendar' | 'notifications' | 'location' | 'health'; title: string; why: string };
+
+/** The permissions screen's rows in order; each one is optional. */
+export const PERMISSIONS: readonly Permission[] = [
+	{ id: 'calendar', title: 'Calendar', why: 'Plans go around your meetings. Aroh only reads busy times and never writes to your calendars.' },
+	{ id: 'notifications', title: 'Notifications', why: 'A reminder before each session and a note when a plan changes.' },
+	{ id: 'location', title: 'Location', why: 'Nudges near places you name, like the gym. Visits stay on this phone.' },
+	{ id: 'health', title: 'Apple Health', why: 'Imports weight, workouts and steps so you log less by hand.' }
 ];
 
-/** Whether the first-launch setup still has to show: until `setup_done` is saved as `true`. */
-export function needsSetup(settings: Partial<Record<string, string>>): boolean {
-	return settings.setup_done !== 'true';
-}
+const NUMBERED: Partial<Record<OnboardingStep, number>> = { signin: 1, email: 1, server: 1, key: 2, consent: 2, permissions: 3, goal: 4 };
 
-/** The step a build without server defaults ends on: it opens Settings for the owner's own server. */
-export const SERVER_STEP: SetupStep = { id: 'server', title: 'Your server', reason: 'This build has no server set. Enter your own in Settings.', allow: 'Use my own server' };
+/**
+ * Where onboarding opens, or null when the app shows: Welcome until `setup_done` is `true`;
+ * after that only the consent screen, for a signed-in account the server reports without AI
+ * consent (accounts made before Q75). `only` means finishing that one screen closes onboarding.
+ */
+export function onboardingStart(settings: Partial<Record<string, string>>, account: { signedIn: boolean; consentMissing: boolean }): { step: OnboardingStep; only: boolean } | null {
+	if (settings.setup_done !== 'true') return { step: 'welcome', only: false };
+	if (account.signedIn && account.consentMissing) return { step: 'consent', only: true };
+	return null;
+}
 
 /** Whether no server is set: the Supabase URL, its anon key or the engine URL is missing or empty. */
 export function needsServer(settings: Partial<Record<string, string>>): boolean {
 	return !settings.supabase_url || !settings.supabase_anon_key || !settings.server_url;
 }
 
-/** The first-launch steps for these settings: the permission steps, then the server step when none is set. */
-export function setupSteps(settings: Partial<Record<string, string>>): readonly SetupStep[] {
-	return needsServer(settings) ? [...SETUP_STEPS, SERVER_STEP] : SETUP_STEPS;
+/**
+ * The screen after `step`, or null when onboarding is done. A build without server defaults
+ * (`noServer`) goes from Welcome to the own-server form. Without an account the key and consent
+ * screens are skipped; "Add later" on the key still leads to consent, so no run starts without it.
+ */
+export function nextStep(step: OnboardingStep, at: { signedIn: boolean; only: boolean; noServer?: boolean }): OnboardingStep | null {
+	if (at.only) return null;
+	switch (step) {
+		case 'welcome':
+			return at.noServer ? 'server' : 'signin';
+		case 'server':
+			return 'signin';
+		case 'signin':
+		case 'email':
+			return at.signedIn ? 'key' : 'permissions';
+		case 'key':
+			return 'consent';
+		case 'consent':
+			return 'permissions';
+		case 'permissions':
+			return 'goal';
+		case 'goal':
+			return null;
+	}
+}
+
+/** The "Step n of 4" counter for `step`, or null on Welcome. */
+export function stepCount(step: OnboardingStep): { at: number; of: number } | null {
+	const at = NUMBERED[step];
+	return at === undefined ? null : { at, of: 4 };
 }

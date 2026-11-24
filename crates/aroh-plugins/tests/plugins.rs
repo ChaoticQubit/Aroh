@@ -226,6 +226,7 @@ fn row(id: &str, goal: Option<&str>, version: i64, enabled: bool) -> Plugin {
         version,
         bundle_toml: String::new(),
         enabled,
+        created_run_id: None,
         updated_at: String::new(),
         deleted: false,
     }

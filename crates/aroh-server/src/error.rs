@@ -33,11 +33,30 @@ pub enum ServerError {
     Db(String),
     #[error(transparent)]
     Domain(#[from] aroh_domain::Error),
+    #[error("{message}")]
+    Refused { code: &'static str, message: String },
+}
+
+/// Codes the database raises as `code: message` from its limit triggers and the
+/// account delete function; the engine answers them like its own refusals.
+pub const DB_REFUSALS: [&str; 4] = ["goal_limit", "file_too_large", "storage_full", "files_remain"];
+
+/// Reads a database refusal out of error `message` (`code: text`).
+/// Returns the code and the text, or `None` for any other error.
+/// Only codes in `DB_REFUSALS` count.
+pub fn db_refusal(message: &str) -> Option<(&'static str, String)> {
+    let (code, text) = message.split_once(": ")?;
+    let code = DB_REFUSALS.iter().find(|c| **c == code)?;
+    Some((code, text.to_string()))
 }
 
 impl From<db::Error> for ServerError {
     fn from(e: db::Error) -> Self {
-        ServerError::Db(e.to_string())
+        let refusal = e.as_database_error().and_then(|d| db_refusal(d.message()));
+        match refusal {
+            Some((code, message)) => ServerError::Refused { code, message },
+            None => ServerError::Db(e.to_string()),
+        }
     }
 }
 
@@ -88,9 +107,10 @@ pub struct ErrorBody {
     pub error: ErrorDetail,
 }
 
-/// Code and message of an error response.
-/// Codes: bad_request, unauthorized, forbidden, not_found, conflict,
-/// setup, internal.
+/// Code and message of an error response. Codes: bad_request, unauthorized,
+/// forbidden, not_found, conflict, setup, internal, and the refusals
+/// consent_required, daily_run_limit, goal_limit, file_too_large, storage_full,
+/// files_remain, account_disabled.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorDetail {
     pub code: String,
@@ -112,7 +132,16 @@ impl ServerError {
             ServerError::Config(_) | ServerError::Crypto(_) | ServerError::Db(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal")
             }
+            ServerError::Refused { code, .. } => (refusal_status(code), code),
         }
+    }
+}
+
+fn refusal_status(code: &str) -> StatusCode {
+    match code {
+        "consent_required" | "account_disabled" => StatusCode::FORBIDDEN,
+        "daily_run_limit" => StatusCode::TOO_MANY_REQUESTS,
+        _ => StatusCode::CONFLICT,
     }
 }
 
@@ -127,5 +156,24 @@ impl IntoResponse for ServerError {
         };
         let body = ErrorBody { error: ErrorDetail { code: code.into(), message } };
         (status, Json(body)).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn database_refusals_keep_their_code_and_status() {
+        assert_eq!(db_refusal("goal_limit: You have 5 active goals."), Some(("goal_limit", "You have 5 active goals.".to_string())));
+        assert_eq!(db_refusal("files_remain: try again").map(|r| r.0), Some("files_remain"));
+        assert_eq!(db_refusal("duplicate key: value"), None);
+        assert_eq!(db_refusal("goal_limit"), None);
+        let status = |code| ServerError::Refused { code, message: String::new() }.status();
+        assert_eq!(status("consent_required"), (StatusCode::FORBIDDEN, "consent_required"));
+        assert_eq!(status("daily_run_limit"), (StatusCode::TOO_MANY_REQUESTS, "daily_run_limit"));
+        assert_eq!(status("goal_limit"), (StatusCode::CONFLICT, "goal_limit"));
+        assert_eq!(status("account_disabled").0, StatusCode::FORBIDDEN);
+        assert_eq!(ServerError::Refused { code: "goal_limit", message: "Archive one.".into() }.to_string(), "Archive one.");
     }
 }

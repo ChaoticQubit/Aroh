@@ -17,7 +17,7 @@
 	import { activeVersion, enablePlugin, listPlugins, type PluginVersion } from '$lib/plugins/api';
 	import { parseTree, resolve } from '$lib/plugins/resolve';
 	import type { CoachView } from '$lib/ui/screens/types';
-	import { loadCoaches } from '$lib/app/personas';
+	import { loadCoaches, pluginsUsed, type GoalRun } from '$lib/app/personas';
 	import { goalAttachments, pendingAttachment, uploadFailed } from '$lib/app/files';
 	import type { Attachment } from '$lib/ui/components/goal/Attachments.svelte';
 	import DeleteGoalSheet from '$lib/ui/components/goal/DeleteGoalSheet.svelte';
@@ -39,6 +39,7 @@
 	let places = $state<location.LocationView | null>(null);
 	const routines = $derived(!!goal && !!places && goal.id === places.routines_goal);
 	let coaches = $state<CoachView[]>([]);
+	let goalRuns = $state<GoalRun[]>([]);
 	let settingsLimit = $state(DEFAULT_LIMIT);
 	let now = $state(Date.now());
 	let upload = $state(false);
@@ -100,7 +101,7 @@
 
 	$effect(() => {
 		const id = goal?.id;
-		if (s && id) void loadCoaches(s, id).then((r) => (coaches = r.coaches));
+		if (s && id) void loadCoaches(s, id).then((r) => ((coaches = r.coaches), (goalRuns = r.runs)));
 	});
 
 	$effect(() => {
@@ -147,6 +148,17 @@
 		void data.run(async () => {
 			if (v.autonomy !== g.autonomy) await client.setAutonomy(g.id, v.autonomy);
 			else await client.setGoalControls(g.id, v.reminders, v.useCalendars, v.runLimit);
+			await client.sync().catch(() => null);
+			await data.load();
+		});
+	}
+
+	/** Saves the goal's "Keep sessions in order" switch (Q79) and syncs it for the next replan. */
+	function onordered(on: boolean) {
+		const g = goal;
+		if (!g) return;
+		void data.run(async () => {
+			await client.setGoalOrdered(g.id, on);
 			await client.sync().catch(() => null);
 			await data.load();
 		});
@@ -219,6 +231,7 @@
 			defaultLimit={settingsLimit}
 			{oncontrols}
 			{coaches}
+			plugins={pluginsUsed(plugins, goalRuns)}
 			oncoaches={() => void goto(`/personas?goal=${goal.id}`)}
 			{versions}
 			version={shown?.id ?? DERIVED}
@@ -235,6 +248,8 @@
 			onretryfile={(key) => void retryUpload(key)}
 			onlink={(url) => attaching(() => client.attachLink(goal.id, url))}
 			{planContext}
+			ordered={goal.ordered}
+			{onordered}
 			onremove={(fid) => (retries.has(fid) ? ((retries.delete(fid)), (failed = failed.filter((f) => f.id !== fid))) : attaching(() => client.removeGoalFile(fid)))}
 		/>
 	{/key}

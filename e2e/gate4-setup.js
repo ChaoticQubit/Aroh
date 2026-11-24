@@ -7,18 +7,23 @@
     await sleep(1200);
   };
   try {
-    await until('first-launch setup', () => text().includes('Skip for now'), 120000);
-    for (let step = 1; step <= 4 && text().includes('Skip for now'); step++) {
+    const NEXT = ['Get started', 'Not now', 'Continue', 'Skip, show me the app'];
+    const onboarding = () => text().includes('Goals that plan themselves') || /Step \d of 4/.test(text());
+    await until('onboarding', onboarding, 120000);
+    for (let step = 1; step <= 6 && onboarding(); step++) {
       await theme('light');
-      await mark(`shot light/00-setup-${step}`);
+      await mark(`shot light/00-onboarding-${step}`);
       await theme('dark');
-      await mark(`shot dark/00-setup-${step}`);
-      button('Skip for now').click();
+      await mark(`shot dark/00-onboarding-${step}`);
+      const next = NEXT.find((name) => [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === name && !b.disabled));
+      if (!next && !onboarding()) break;
+      if (!next) throw new Error(`no way on from onboarding step ${step}`);
+      button(next).click();
       await sleep(1200);
     }
     await theme('light');
     await until('app rendered', () => text().includes('Calendar') && text().includes('Dashboard'), 60000);
-    await note(`result setup pass ${text().includes('Skip for now') ? 'still shown' : 'setup steps skipped'}`);
+    await note(`result onboarding pass ${onboarding() ? 'still shown' : 'walked to the app'}`);
     if (!(await invoke('app_dev_seed'))) throw new Error('sample not loaded');
     await sleep(2000);
     await note('done');

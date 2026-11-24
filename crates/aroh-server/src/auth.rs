@@ -46,6 +46,7 @@ pub struct Verifier {
     jwks: Option<Jwks>,
     audience: String,
     clock: Arc<dyn Clock>,
+    disabled: Option<crate::db::PgPool>,
 }
 
 fn unauthorized(m: &str) -> ServerError {
@@ -63,7 +64,27 @@ impl Verifier {
             jwks: jwks.map(|(url, transport)| Jwks { url, transport, cache: RwLock::new((i64::MIN, JwkSet { keys: vec![] })) }),
             audience: audience.to_string(),
             clock,
+            disabled: None,
         }
+    }
+
+    /// Makes `UserId` refuse accounts with a pending deletion (`account_disabled`), read
+    /// from `pool` on every user request. Set once at start.
+    /// Returns the verifier.
+    pub fn with_disabled_check(mut self, pool: crate::db::PgPool) -> Verifier {
+        self.disabled = Some(pool);
+        self
+    }
+
+    async fn refuse_disabled(&self, user: Uuid) -> Result<(), ServerError> {
+        let Some(pool) = &self.disabled else { return Ok(()) };
+        if crate::account::disabled(pool, user).await? {
+            return Err(ServerError::Refused {
+                code: "account_disabled",
+                message: "This account is being deleted. Sign in again within 15 days of the request to keep it.".into(),
+            });
+        }
+        Ok(())
     }
 
     async fn fetch(&self, jwks: &Jwks) -> Result<JwkSet, ServerError> {
@@ -126,14 +147,38 @@ impl Verifier {
     }
 }
 
-async fn caller(parts: &Parts, verifier: &Verifier) -> Result<Caller, ServerError> {
+fn bearer(parts: &Parts) -> Result<&str, ServerError> {
     let value = parts
         .headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| unauthorized("missing bearer token"))?;
-    let token = value.strip_prefix("Bearer ").ok_or_else(|| unauthorized("missing bearer token"))?;
-    verifier.verify(token.trim()).await
+    Ok(value.strip_prefix("Bearer ").ok_or_else(|| unauthorized("missing bearer token"))?.trim())
+}
+
+async fn caller(parts: &Parts, verifier: &Verifier) -> Result<Caller, ServerError> {
+    verifier.verify(bearer(parts)?).await
+}
+
+/// Extractor of a signed-in user's id that admits accounts with a pending deletion, for
+/// the deletion request itself, so repeating it succeeds.
+/// Rejects a missing or bad token with 401 and the service role with 403.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AnyUser(pub Uuid);
+
+impl<S> FromRequestParts<S> for AnyUser
+where
+    Arc<Verifier>: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = ServerError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        match caller(parts, &Arc::<Verifier>::from_ref(state)).await? {
+            Caller::User(id) => Ok(AnyUser(id)),
+            Caller::Service => Err(ServerError::Forbidden("user routes need a user token".into())),
+        }
+    }
 }
 
 /// Extractor of a signed-in user's id from the bearer token.
@@ -150,8 +195,12 @@ where
     type Rejection = ServerError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        match caller(parts, &Arc::<Verifier>::from_ref(state)).await? {
-            Caller::User(id) => Ok(UserId(id)),
+        let verifier = Arc::<Verifier>::from_ref(state);
+        match caller(parts, &verifier).await? {
+            Caller::User(id) => {
+                verifier.refuse_disabled(id).await?;
+                Ok(UserId(id))
+            }
             Caller::Service => Err(ServerError::Forbidden("user routes need a user token".into())),
         }
     }

@@ -6,6 +6,8 @@
 	import * as client from '$lib/app/client';
 	import { editStatus } from '$lib/app/replan.svelte';
 	import ReplanStatus from '$lib/ui/components/ReplanStatus.svelte';
+	import CatchUpBanner from '$lib/ui/components/CatchUpBanner.svelte';
+	import { catchUp } from '$lib/app/catchup.svelte';
 	import { actionViews, categoryList } from '$lib/app/views';
 	import { allDayViews, busyViews, confirmDay, refreshSuggestions } from '$lib/app/calendar';
 
@@ -18,12 +20,19 @@
 {#if editStatus.phase}
 	<div class="px-4 pt-3"><ReplanStatus phase={editStatus.phase} onretry={() => editStatus.retry()} onundo={() => editStatus.undo()} ondismiss={() => editStatus.dismiss()} /></div>
 {/if}
+{#if catchUp.offer || catchUp.note}
+	<div class="px-4 pt-3"><CatchUpBanner offer={catchUp.offer} note={catchUp.note} onremove={() => catchUp.remove()} onkeep={() => catchUp.keep()} /></div>
+{/if}
 {#if s}
 	<CalendarScreen
 		actions={actionViews(s)}
 		categories={categoryList(s)}
 		busy={busyViews(s)}
 		allDay={allDayViews(s, clock.zone)}
+		onstatus={(id, status) => {
+			const action = s.actions.find((a) => a.id === id);
+			if (action) void catchUp.setStatus(action, status);
+		}}
 		onedit={(e) => data.run(() => client.editAction(e.id, e.start, e.end).then(() => editStatus.track(e.id)))}
 		onlock={(id, locked) => data.run(() => client.setLocked(id, locked))}
 		ondelete={(id) => data.run(() => client.deleteAction(id).then(() => editStatus.track(id)))}

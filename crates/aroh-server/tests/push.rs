@@ -53,6 +53,7 @@ async fn goal(pool: &PgPool, hlc: &ServerClock, user: Uuid) -> Goal {
         created_at: now(),
         reminders: true,
         use_calendars: true,
+        ordered: false,
         run_limit_minutes: None,
         updated_at: String::new(),
         deleted: false,

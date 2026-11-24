@@ -22,6 +22,8 @@ insert into public.action_series (id, user_id, goal_id, title, rrule, dtstart_lo
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', 'Core', 'FREQ=DAILY', '2026-11-23T07:00:00', 'Europe/Berlin', 45, '1763683200001-0000-aaaaaaaaaaaaaaaa');
 insert into public.actions (id, user_id, goal_id, title, start_at, end_at, status, locked, updated_at)
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', 'Buy a scale', now(), now() + interval '1 hour', 'planned', false, '1763683200001-0000-aaaaaaaaaaaaaaaa');
+insert into public.action_logs (id, user_id, action_id, goal_id, sets, checked, logged_at, updated_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', gen_random_uuid(), '0190f2a0-0000-7000-8000-000000000091', '[]', '[]', now(), '1763683200001-0000-aaaaaaaaaaaaaaaa');
 insert into public.proposals (id, user_id, goal_id, summary, diff, size, status, created_at, updated_at)
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', '0190f2a0-0000-7000-8000-000000000091', 'Move workout', '[]', 'small', 'proposed', now(), '1763683200001-0000-aaaaaaaaaaaaaaaa');
 insert into public.preferences (id, user_id, fact, source, noted_at, confirmed, updated_at)
@@ -44,6 +46,8 @@ insert into public.place_links (id, user_id, place_id, goal_id, updated_at)
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', gen_random_uuid(), '0190f2a0-0000-7000-8000-000000000091', '1763683200001-0000-aaaaaaaaaaaaaaaa');
 insert into public.run_limits (user_id, minutes, updated_at)
   values ('00000000-0000-0000-0000-00000000000a', 30, now());
+insert into public.ai_consents (user_id, granted_at)
+  values ('00000000-0000-0000-0000-00000000000a', now());
 insert into public.jobs (id, user_id, kind)
   values ('0190f2a0-0000-7000-8000-0000000000a1', '00000000-0000-0000-0000-00000000000a', 'setup');
 insert into public.runs (id, user_id, job_id, goal_id, workflow, state)
@@ -84,8 +88,8 @@ declare
 begin
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p');
-  if n <> 34 then
-    raise exception 'expected 34 public tables, found %', n;
+  if n <> 39 then
+    raise exception 'expected 39 public tables, found %', n;
   end if;
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity;
@@ -93,7 +97,7 @@ begin
     raise exception '% public tables without row level security', n;
   end if;
   for t in select c.relname from pg_class c join pg_namespace s on s.oid = c.relnamespace
-      where s.nspname = 'public' and c.relkind = 'r' and exists (select 1 from information_schema.columns
+      where s.nspname = 'public' and c.relkind = 'r' and c.relname <> 'account_deletions' and exists (select 1 from information_schema.columns
         where table_schema = 'public' and table_name = c.relname and column_name = 'user_id') loop
     execute format('select to_jsonb(x) from public.%I x where user_id = %L', t, '00000000-0000-0000-0000-00000000000a') into r;
     if r is null then
@@ -193,7 +197,7 @@ begin
     end if;
   end loop;
 
-  foreach t in array array['provider_credentials', 'user_keys', 'run_checkpoints', 'knowledge_chunks', 'memory_logs', 'devices', 'push_sent'] loop
+  foreach t in array array['provider_credentials', 'user_keys', 'run_checkpoints', 'knowledge_chunks', 'memory_logs', 'devices', 'push_sent', 'ai_consents', 'signup_settings', 'signup_attempts', 'account_deletions'] loop
     begin
       execute format('select count(*) from public.%I', t) into n;
       raise exception 'A read server-only table %', t;
