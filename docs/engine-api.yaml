@@ -3,8 +3,8 @@ info:
   title: Aroh engine API
   description: 'Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue.'
   license:
-    name: UNLICENSED
-    identifier: UNLICENSED
+    name: Apache-2.0
+    identifier: Apache-2.0
   version: 1.0.0
 paths:
   /healthz:

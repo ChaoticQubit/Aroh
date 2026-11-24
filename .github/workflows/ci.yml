@@ -1,0 +1,209 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [master, prod]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: rust workspace tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - run: cargo test --locked --workspace --exclude aroh --exclude tauri-plugin-aroh-speech --exclude tauri-plugin-aroh-ios --exclude tauri-plugin-aroh-calendar
+
+  troupekit:
+    name: troupekit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: troupekit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: troupekit
+      - run: sh scripts/check-boundary.sh
+      - run: cargo test --locked --workspace
+
+  server-pg:
+    name: server and RLS suites on Postgres
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      pg:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: aroh_template
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aroh_template"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 60
+    env:
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: template database with the migrations
+        run: |
+          set -eu
+          psql -q -v ON_ERROR_STOP=1 -d aroh_template -f supabase/tests/stub_auth.sql
+          for migration in supabase/migrations/*.sql; do
+            psql -q -v ON_ERROR_STOP=1 -d aroh_template -f "$migration"
+          done
+      - name: RLS suite
+        run: |
+          set -eu
+          psql -q -d postgres -c "create database rls"
+          rls() { psql -q -v ON_ERROR_STOP=1 -d rls -f "$1"; }
+          rls supabase/tests/stub_auth.sql
+          for migration in supabase/migrations/*.sql; do rls "$migration"; done
+          rls supabase/tests/rls_rebuild.sql
+          rls supabase/tests/rls_places.sql
+          rls supabase/tests/stub_storage.sql
+          rls supabase/migrations/20261127020000_goal_files_bucket.sql
+          rls supabase/tests/rls_storage.sql
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - run: cargo test --locked -p aroh-server -- --include-ignored --test-threads 4
+        env:
+          AROH_TEST_PG: postgres://postgres:test@localhost:5432
+
+  web:
+    name: svelte-check and vitest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/aroh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 12
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: apps/aroh/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm build
+
+  deps:
+    name: dependency, licence and advisory checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd
+        with:
+          command: check advisories bans licenses sources
+      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd
+        with:
+          manifest-path: troupekit/Cargo.toml
+          command: check advisories bans licenses sources
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
+        with:
+          version: 12
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 26
+      - run: pnpm audit --audit-level high
+        working-directory: apps/aroh
+      - name: third-party notices are current
+        run: |
+          python3 scripts/third_party_notices.py > /tmp/notices.md
+          diff -q THIRD_PARTY_NOTICES.md /tmp/notices.md
+
+  dco:
+    name: DCO sign-off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: every commit carries its author's Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          bad=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            want="Signed-off-by: $(git show -s --format='%an <%ae>' "$c")"
+            if ! git show -s --format=%B "$c" | grep -qxF "$want"; then
+              echo "missing '$want' in $(git show -s --format='%h %s' "$c")"
+              bad=1
+            fi
+          done
+          [ "$bad" = 0 ] || { echo "sign off with git commit -s; see CONTRIBUTING.md"; exit 1; }
+
+  selfhost:
+    name: self-host stack, smoke and nuclei
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: boot the self-host stack
+        run: |
+          set -eu
+          python3 selfhost/setup.py http://localhost:8000
+          echo "MAILER_AUTOCONFIRM=true" >> selfhost/.env
+          docker compose -f selfhost/compose.yaml up -d --build
+          tries=0
+          until curl -sf http://localhost:8000/engine/healthz >/dev/null && curl -sf http://localhost:8000/auth/v1/health >/dev/null; do
+            tries=$((tries + 1))
+            [ "$tries" -le 300 ] || exit 1
+            sleep 2
+          done
+      - name: smoke
+        run: |
+          set -eu
+          anon="$(sed -n 's/^ANON_KEY=//p' selfhost/.env)"
+          echo "::add-mask::$anon"
+          AROH_E2E_ANON_KEY="$anon" AROH_E2E_SUPABASE_URL=http://localhost:8000 AROH_E2E_ENGINE_URL=http://localhost:8000/engine python3 e2e/smoke.py
+      - uses: projectdiscovery/nuclei-action@32a91c0da7be14c07b0ade6c14fa0f6e78d97c9c
+        with:
+          args: -u http://localhost:8000 -u http://localhost:8000/engine -severity medium,high,critical -jsonl -o nuclei.jsonl
+      - name: no medium, high or critical nuclei finding
+        run: |
+          if [ -s nuclei.jsonl ]; then cat nuclei.jsonl; exit 1; fi
+      - name: stack logs on failure
+        if: failure()
+        run: docker compose -f selfhost/compose.yaml logs --tail 80

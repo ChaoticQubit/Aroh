@@ -2,6 +2,18 @@
 
 Aroh is a goal-based calendar. Goals become planned actions on a calendar; agents plan and replan them. Read `docs/decisions.md` before planning: it is the settled stack, product rules and data model.
 
+## Local-only agent records
+
+`docs/agent-decisions.md` (the decision log, Q1 onward) and `docs/backlog.md` are local-only: gitignored, never committed, kept on disk in the main checkout. Agents read them before planning. In a git worktree they are missing, so symlink them in first, from the worktree root:
+
+```sh
+main="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
+ln -s "$main/docs/agent-decisions.md" docs/agent-decisions.md
+ln -s "$main/docs/backlog.md" docs/backlog.md
+```
+
+The other process records (`docs/superpowers/`, `docs/gate/`, `docs/pods/`, `docs/screenshots/`, `docs/demo/`, `docs/open-source.md`, `e2e/pod*.js`, `e2e/pod*.sh`) are local-only the same way. Never `git add` them; `git add -A` is safe since they are ignored.
+
 ## Pod process
 
 - One pod per feature. The pod lead is the project manager (PM): plans, keeps work aligned with the owner, asks the owner only real product decisions.
@@ -47,19 +59,19 @@ Change a file another pod owns only through that pod. Shared row structs live in
 
 ## Running tests
 
-Workspace tests, without the Tauri app crate, in a Kiri container. Agent shells have a sandbox HOME, so plain `kiri` says "Kiri isn't running". Prefix every call with the owner's HOME:
+Workspace tests, without the Tauri app crate, in a Kiri container. Agent shells may have a sandbox HOME, so plain `kiri` says "Kiri isn't running". Set `REAL_HOME` to your real home directory (for example `/Users/<you>`) and prefix every call with it:
 
 ```sh
-HOME=/Users/chaoticqubit kiri build -f Dockerfile.test -t aroh-test .
-HOME=/Users/chaoticqubit kiri run --rm aroh-test
+HOME="$REAL_HOME" kiri build -f Dockerfile.test -t aroh-test .
+HOME="$REAL_HOME" kiri run --rm aroh-test
 ```
 
-Run the app in the iPhone simulator (primary target). Agent shells have an empty `USER`; set it for xcodegen:
+Run the app in the iPhone simulator (primary target). Agent shells may have an empty `USER`; set it for xcodegen:
 
 ```sh
 cd apps/aroh
 pnpm install
-USER=chaoticqubit pnpm tauri ios dev "iPhone 15 Pro"
+USER="$(id -un)" pnpm tauri ios dev "iPhone 15 Pro"
 ```
 
 Run the app on the Mac:

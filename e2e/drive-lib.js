@@ -97,7 +97,7 @@ window.AROH_LIB = (() => {
     for (const [name, value] of Object.entries(local)) if (value) await invoke('app_set_setting', { name, value });
   };
   const skipSetup = async () => {
-    for (let step = 0; step < 3 && text().includes('Skip for now'); step++) {
+    for (let step = 0; step < 4 && text().includes('Skip for now'); step++) {
       button('Skip for now').click();
       await sleep(500);
     }

@@ -218,21 +218,28 @@ mod tests {
         }
     }
 
-    const EC_KEY: &str = "-----BEGIN PRIVATE KEY-----
-MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgGFluezosGFhgpfpd
-fSqvoeIOThpGhbfzt4Be3fed/ZWhRANCAAR0KWwNSdd6coz/DlxA2dQyEiorlWxb
-9rz/No/PDpGSAXOZn7ZOZCC/SCn6ltDmnsq2ljk/aj2Cosk0btHnVGMR
------END PRIVATE KEY-----
-";
+    /// A P-256 key pair made fresh for each test run: the PKCS#8 private key and the public
+    /// JWK coordinates `x` and `y`, base64url without padding, as a JWKS publishes them.
+    fn ec_key() -> (Vec<u8>, String, String) {
+        use base64::Engine as _;
+        use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+        let rng = ring::rand::SystemRandom::new();
+        let der = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
+        let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, der.as_ref(), &rng).unwrap();
+        let point = pair.public_key().as_ref();
+        assert_eq!((point.len(), point[0]), (65, 4), "an uncompressed P-256 point");
+        let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        (der.as_ref().to_vec(), b64.encode(&point[1..33]), b64.encode(&point[33..]))
+    }
 
-    struct JwksServer(std::sync::atomic::AtomicUsize);
+    struct JwksServer(std::sync::atomic::AtomicUsize, String, String);
 
     #[async_trait::async_trait]
     impl Transport for JwksServer {
         async fn send(&self, _req: HttpRequest) -> Result<troupekit_core::http::HttpResponse, troupekit_core::http::HttpError> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let set = json!({"keys": [{"kty": "EC", "crv": "P-256", "alg": "ES256", "use": "sig", "kid": "k1",
-                "x": "dClsDUnXenKM_w5cQNnUMhIqK5VsW_a8_zaPzw6RkgE", "y": "c5mftk5kIL9IKfqW0OaeyraWOT9qPYKiyTRu0edUYxE"}]});
+                "x": self.1, "y": self.2}]});
             Ok(troupekit_core::http::HttpResponse {
                 status: 200,
                 url: "https://project.supabase.co/auth/v1/.well-known/jwks.json".into(),
@@ -243,27 +250,28 @@ fSqvoeIOThpGhbfzt4Be3fed/ZWhRANCAAR0KWwNSdd6coz/DlxA2dQyEiorlWxb
         }
     }
 
-    fn es256(kid: &str, claims: Value) -> String {
+    fn es256(der: &[u8], kid: &str, claims: Value) -> String {
         let mut header = Header::new(Algorithm::ES256);
         header.kid = Some(kid.into());
-        encode(&header, &claims, &EncodingKey::from_ec_pem(EC_KEY.as_bytes()).unwrap()).unwrap()
+        encode(&header, &claims, &EncodingKey::from_ec_der(der)).unwrap()
     }
 
     #[tokio::test]
     async fn verifies_es256_against_the_jwks_and_limits_refetches() {
-        let server = Arc::new(JwksServer(Default::default()));
+        let (der, x, y) = ec_key();
+        let server = Arc::new(JwksServer(Default::default(), x, y));
         let jwks: Arc<dyn Transport> = server.clone();
         let clock = Arc::new(FixedClock::new(1_000_000));
         let v = Verifier::new(None, Some(("https://project.supabase.co/auth/v1/.well-known/jwks.json".into(), jwks)), "authenticated", clock.clone());
         let user = Uuid::now_v7();
         let claims = json!({"sub": user, "role": "authenticated", "aud": "authenticated", "exp": 4_000_000_000u64});
-        assert_eq!(v.verify(&es256("k1", claims.clone())).await.unwrap(), Caller::User(user));
-        assert_eq!(v.verify(&es256("k1", claims.clone())).await.unwrap(), Caller::User(user));
-        assert!(v.verify(&es256("k2", claims.clone())).await.is_err());
-        assert!(v.verify(&es256("k2", claims.clone())).await.is_err());
+        assert_eq!(v.verify(&es256(&der, "k1", claims.clone())).await.unwrap(), Caller::User(user));
+        assert_eq!(v.verify(&es256(&der, "k1", claims.clone())).await.unwrap(), Caller::User(user));
+        assert!(v.verify(&es256(&der, "k2", claims.clone())).await.is_err());
+        assert!(v.verify(&es256(&der, "k2", claims.clone())).await.is_err());
         assert_eq!(server.0.load(std::sync::atomic::Ordering::SeqCst), 1, "one fetch per minute at most");
         clock.advance(JWKS_REFRESH_MS);
-        assert!(v.verify(&es256("k2", claims.clone())).await.is_err());
+        assert!(v.verify(&es256(&der, "k2", claims.clone())).await.is_err());
         assert_eq!(server.0.load(std::sync::atomic::Ordering::SeqCst), 2);
         let hs = token(claims, SECRET);
         assert!(matches!(v.verify(&hs).await, Err(ServerError::Unauthorized(_))), "HS256 needs the secret");

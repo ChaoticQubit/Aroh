@@ -30,14 +30,27 @@ pub const SETTINGS: [&str; 13] = [
     "agent_defaults",
 ];
 
-/// The hosted Supabase project and engine, used while the owner's setting is empty.
-/// The one place these values live; Settings still edits them, and clearing one returns here.
-/// The anon key is a publishable key, safe to ship in the app.
-pub const DEFAULTS: [(&str, &str); 3] = [
-    ("supabase_url", "https://dgxkjlgsxxejpapsdzjd.supabase.co"),
-    ("supabase_anon_key", "sb_publishable_cD0WV69uaKlGDnnRWrGjrQ_cw1civNB"),
-    ("server_url", "https://aroh-ten.vercel.app"),
+/// The server this build connects to while the owner's setting is empty, read at compile time
+/// from `AROH_DEFAULT_SUPABASE_URL`, `AROH_DEFAULT_SUPABASE_ANON_KEY` and `AROH_DEFAULT_SERVER_URL`.
+/// Only the official build sets them, to the hosted project; a source build has none, so first
+/// launch asks for the owner's own server. Settings still edits them; clearing one returns here.
+pub const DEFAULTS: [(&str, Option<&str>); 3] = [
+    ("supabase_url", option_env!("AROH_DEFAULT_SUPABASE_URL")),
+    ("supabase_anon_key", option_env!("AROH_DEFAULT_SUPABASE_ANON_KEY")),
+    ("server_url", option_env!("AROH_DEFAULT_SERVER_URL")),
 ];
+
+/// The default for setting `name` in `defaults`: its value, or `None` when the name has no
+/// entry or its value is unset or blank.
+pub fn default_in(defaults: &[(&str, Option<&str>)], name: &str) -> Option<String> {
+    let value = defaults.iter().find(|(n, _)| *n == name).and_then(|(_, v)| *v)?.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// This build's default for setting `name`, from [`DEFAULTS`]; `None` when it has none.
+pub fn default_value(name: &str) -> Option<String> {
+    default_in(&DEFAULTS, name)
+}
 
 /// Most insight ids `dismissed_insights` holds: the Inbox shows the 30 newest insights.
 pub const MAX_DISMISSED: usize = 30;
@@ -78,7 +91,7 @@ pub fn user_id(conn: &Connection) -> Result<String> {
 pub fn setting(conn: &Connection, name: &str) -> Result<Option<String>> {
     assert!(SETTINGS.contains(&name), "unknown setting {name}");
     let stored = get_state(conn, &key(name))?.filter(|v| !v.is_empty());
-    Ok(stored.or_else(|| DEFAULTS.iter().find(|(n, _)| *n == name).map(|(_, v)| (*v).to_string())))
+    Ok(stored.or_else(|| default_value(name)))
 }
 
 /// Every owner setting that has a value or a default, keyed by name.

@@ -6,7 +6,10 @@ members = ["crates/*"]
 edition = "2021"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/ChaoticQubit/troupekit"
+repository = "https://github.com/<owner>/troupekit"
+readme = "README.md"
+keywords = ["agents", "llm", "workflow", "toml", "ai"]
+categories = ["asynchronous", "development-tools"]
 rust-version = "1.85"
 
 [workspace.dependencies]

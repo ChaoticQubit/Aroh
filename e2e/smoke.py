@@ -6,8 +6,8 @@ import urllib.error
 import urllib.request
 import uuid
 
-SUPABASE = "http://127.0.0.1:" + os.environ.get("AROH_E2E_SUPABASE_PORT", "54321")
-ENGINE = "http://127.0.0.1:" + os.environ.get("AROH_E2E_ENGINE_PORT", "8080")
+SUPABASE = os.environ.get("AROH_E2E_SUPABASE_URL") or "http://127.0.0.1:" + os.environ.get("AROH_E2E_SUPABASE_PORT", "54321")
+ENGINE = os.environ.get("AROH_E2E_ENGINE_URL") or "http://127.0.0.1:" + os.environ.get("AROH_E2E_ENGINE_PORT", "8080")
 
 
 def call(method, url, token=None, body=None, anon=None, prefer=None):

@@ -1,0 +1,181 @@
+name: aroh
+
+services:
+  pg:
+    build:
+      context: ../e2e
+      dockerfile: pg.Dockerfile
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10", "-c", "output_plugin_libraries=wal2json"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: postgres
+    volumes:
+      - ./initdb.sh:/docker-entrypoint-initdb.d/00-roles.sh:ro
+      - pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+
+  auth:
+    image: supabase/gotrue:v2.170.0
+    restart: unless-stopped
+    depends_on:
+      pg:
+        condition: service_healthy
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      PORT: "9999"
+      API_EXTERNAL_URL: ${PUBLIC_URL:?set PUBLIC_URL in .env}/auth/v1
+      GOTRUE_SITE_URL: ${PUBLIC_URL}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${POSTGRES_PASSWORD}@pg:5432/postgres?search_path=auth
+      GOTRUE_DB_NAMESPACE: auth
+      GOTRUE_JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_DISABLE_SIGNUP: ${DISABLE_SIGNUP:-false}
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: ${MAILER_AUTOCONFIRM:-false}
+      GOTRUE_SMTP_HOST: ${SMTP_HOST:-}
+      GOTRUE_SMTP_PORT: ${SMTP_PORT:-587}
+      GOTRUE_SMTP_USER: ${SMTP_USER:-}
+      GOTRUE_SMTP_PASS: ${SMTP_PASS:-}
+      GOTRUE_SMTP_ADMIN_EMAIL: ${SMTP_ADMIN_EMAIL:-}
+      GOTRUE_API_MAX_REQUEST_DURATION: 60s
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:9999/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGRES_PASSWORD}@pg:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${JWT_SECRET}
+      PGRST_JWT_AUD: authenticated
+      PGRST_DB_MAX_ROWS: "1000"
+
+  realtime:
+    image: supabase/realtime:v2.34.47
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PORT: "4000"
+      DB_HOST: pg
+      DB_PORT: "5432"
+      DB_USER: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: SET search_path TO _realtime
+      DB_ENC_KEY: ${REALTIME_DB_ENC_KEY:?set REALTIME_DB_ENC_KEY in .env}
+      API_JWT_SECRET: ${JWT_SECRET}
+      SECRET_KEY_BASE: ${REALTIME_SECRET_KEY_BASE:?set REALTIME_SECRET_KEY_BASE in .env}
+      ERL_AFLAGS: -proto_dist inet_tcp
+      DNS_NODES: "''"
+      RLIMIT_NOFILE: "10000"
+      APP_NAME: realtime
+      SEED_SELF_HOST: "true"
+      RUN_JANITOR: "true"
+
+  storage:
+    image: supabase/storage-api:v1.98.6
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_healthy
+    environment:
+      ANON_KEY: ${ANON_KEY:?set ANON_KEY in .env}
+      SERVICE_KEY: ${SERVICE_ROLE_KEY:?set SERVICE_ROLE_KEY in .env}
+      AUTH_JWT_SECRET: ${JWT_SECRET}
+      AUTH_JWT_ALGORITHM: HS256
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@pg:5432/postgres
+      DB_INSTALL_ROLES: "false"
+      DB_ANON_ROLE: anon
+      DB_SERVICE_ROLE: service_role
+      DB_AUTHENTICATED_ROLE: authenticated
+      POSTGREST_URL: http://rest:3000
+      STORAGE_PUBLIC_URL: ${PUBLIC_URL}
+      REQUEST_ALLOW_X_FORWARDED_PATH: "true"
+      FILE_SIZE_LIMIT: "26214400"
+      STORAGE_BACKEND: file
+      GLOBAL_S3_BUCKET: aroh
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: aroh
+      REGION: local
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+    volumes:
+      - storage:/var/lib/storage
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:5000/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+
+  migrate:
+    image: pgvector/pgvector:pg17
+    depends_on:
+      auth:
+        condition: service_healthy
+      storage:
+        condition: service_healthy
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ../supabase:/aroh/supabase:ro
+      - ./migrate.sh:/aroh/migrate.sh:ro
+    entrypoint: ["sh", "/aroh/migrate.sh"]
+    restart: "no"
+
+  engine:
+    build:
+      context: ..
+      dockerfile: selfhost/engine.Dockerfile
+    command: ["worker"]
+    restart: unless-stopped
+    stop_signal: SIGINT
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@pg:5432/postgres
+      AROH_MASTER_KEY: ${AROH_MASTER_KEY:?set AROH_MASTER_KEY in .env}
+      AROH_JWT_SECRET: ${JWT_SECRET}
+      AROH_BIND: 0.0.0.0:8080
+      AROH_APNS_KEY: ${AROH_APNS_KEY:-}
+      AROH_APNS_KEY_ID: ${AROH_APNS_KEY_ID:-}
+      AROH_APNS_TEAM_ID: ${AROH_APNS_TEAM_ID:-}
+      AROH_APNS_TOPIC: ${AROH_APNS_TOPIC:-}
+      AROH_SEARCH_TOML: ${AROH_SEARCH_TOML:-}
+      AROH_ALLOW_CUSTOM_BASE_URL: ${AROH_ALLOW_CUSTOM_BASE_URL:-}
+
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - auth
+      - rest
+      - realtime
+      - storage
+      - engine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8000}:80"
+
+volumes:
+  pg:
+  storage:

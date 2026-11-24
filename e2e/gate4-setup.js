@@ -8,7 +8,7 @@
   };
   try {
     await until('first-launch setup', () => text().includes('Skip for now'), 120000);
-    for (let step = 1; step <= 3 && text().includes('Skip for now'); step++) {
+    for (let step = 1; step <= 4 && text().includes('Skip for now'); step++) {
       await theme('light');
       await mark(`shot light/00-setup-${step}`);
       await theme('dark');
@@ -18,7 +18,7 @@
     }
     await theme('light');
     await until('app rendered', () => text().includes('Calendar') && text().includes('Dashboard'), 60000);
-    await note(`result setup pass ${text().includes('Skip for now') ? 'still shown' : 'three steps skipped'}`);
+    await note(`result setup pass ${text().includes('Skip for now') ? 'still shown' : 'setup steps skipped'}`);
     if (!(await invoke('app_dev_seed'))) throw new Error('sample not loaded');
     await sleep(2000);
     await note('done');

@@ -11,7 +11,7 @@ case "$mode" in
   *) echo "usage: ios-release.sh [device|simulator|testflight]"; exit 2 ;;
 esac
 if [ "$mode" = testflight ]; then
-  team="${AROH_TEAM_ID:-GK729B5HZQ}"
+  team="${AROH_TEAM_ID:?set AROH_TEAM_ID to the Apple team ID that signs the build}"
   build="${AROH_BUILD_NUMBER:-$(date -u +%Y%m%d%H%M)}"
   case "$build" in
     ''|*[!0-9.]*|.*|*.|*..*) echo "AROH_BUILD_NUMBER must be digits and single dots: $build"; exit 2 ;;

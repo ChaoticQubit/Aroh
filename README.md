@@ -4,6 +4,10 @@ Aroh is a goal-based calendar. You set a goal with a deadline (for example "fini
 
 The iPhone app is the main target. Android builds from the same code, and the Mac app comes second. The UI is Svelte 5 + SvelteKit inside Tauri 2, the core is Rust, agents use Claude through `rig-core`, and data is local SQLite with optional Supabase sync. YAML plugins place fixed components into named slots (see `docs/plugins.md`).
 
+## Your own server
+
+A build from source has no server set. [docs/self-host.md](docs/self-host.md) runs one with Docker compose, or on Supabase cloud and Vercel; then enter it in Settings, or follow the first-launch **Use my own server** step.
+
 ## Layout
 
 - `apps/aroh` - the app: Svelte UI in `src/`, Tauri shell in `src-tauri/`
@@ -12,11 +16,11 @@ The iPhone app is the main target. Android builds from the same code, and the Ma
 
 ## Tests
 
-Workspace tests (all crates except the Tauri app) run in a small Kiri container. Agent shells have a sandbox HOME, so prefix `kiri` with the owner's HOME:
+Workspace tests (all crates except the Tauri app) run in a small Kiri container. Agent shells may have a sandbox HOME; then set `REAL_HOME` to your real home directory and prefix `kiri` with it:
 
 ```sh
-HOME=/Users/chaoticqubit kiri build -f Dockerfile.test -t aroh-test .
-HOME=/Users/chaoticqubit kiri run --rm aroh-test
+HOME="$REAL_HOME" kiri build -f Dockerfile.test -t aroh-test .
+HOME="$REAL_HOME" kiri run --rm aroh-test
 ```
 
 Type check and build of the UI:
@@ -64,10 +68,14 @@ Port 1420 is shared, so run one simulator check at a time.
 - `sh apps/aroh/ios-release.sh` archives for devices with signing off: `target/ios-release/Aroh.xcarchive`. Signing and export stay with the owner: open the archive in Xcode Organizer, or run `xcodebuild -exportArchive` with your team and an export options plist.
 - `sh apps/aroh/ios-release.sh simulator` builds the release app for the simulator, ad-hoc signed: `target/ios-release/dd/Build/Products/release-iphonesimulator/Aroh.app`. Install it with `xcrun simctl install`.
 
-- `sh apps/aroh/ios-testflight.sh` (the same as `ios-release.sh testflight`) archives signed with team `GK729B5HZQ`, stamps `CFBundleVersion` with UTC `yyyymmddHHMM` (or `AROH_BUILD_NUMBER`) in a temp copy of Info.plist, and uploads to App Store Connect for internal TestFlight. Owner steps: `docs/deploy.md` section J. `AROH_UNSIGNED=1` runs the same path unsigned and stops before the upload.
+- `sh apps/aroh/ios-testflight.sh` (the same as `ios-release.sh testflight`) reads `apps/aroh/.env.release` (untracked; copy `apps/aroh/.env.release.example`), which sets `AROH_TEAM_ID` and the official build's server defaults `AROH_DEFAULT_SUPABASE_URL`, `AROH_DEFAULT_SUPABASE_ANON_KEY` and `AROH_DEFAULT_SERVER_URL`, archives signed with that team, stamps `CFBundleVersion` with UTC `yyyymmddHHMM` (or `AROH_BUILD_NUMBER`) in a temp copy of Info.plist, and uploads to App Store Connect for internal TestFlight. Owner steps: `docs/deploy.md` section J. `AROH_UNSIGNED=1` runs the same path unsigned and stops before the upload.
 
 `AROH_IOS_OUT` moves the output folder. Run `git checkout -- apps/aroh/src-tauri/gen/apple` afterwards if Xcode touched the project.
 
 ## Android
 
 Android is not set up on this Mac yet. It needs the Android SDK (platform, build-tools, platform-tools), the NDK, JDK 17 or newer, the four Rust Android targets, and `ANDROID_HOME`, `NDK_HOME` and `JAVA_HOME` set. Then run `pnpm tauri android init` and `pnpm tauri android build --debug`.
+
+## Contributing and licence
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) (commits need a DCO sign-off), [SECURITY.md](SECURITY.md) for private vulnerability reports, and the [Code of Conduct](CODE_OF_CONDUCT.md). Aroh is licensed under the [Apache License 2.0](LICENSE); third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

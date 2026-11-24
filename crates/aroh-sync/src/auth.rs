@@ -204,7 +204,7 @@ mod tests {
 
     #[tokio::test]
     async fn sign_in_sends_the_publishable_key_as_apikey_and_never_as_a_bearer() {
-        let key = "sb_publishable_cD0WV69uaKlGDnnRWrGjrQ_cw1civNB";
+        let key = "sb_publishable_FixtureKeyForTests_0123456789";
         let (url, served) = gotrue_once().await;
         let config = Config::new(&url, key).unwrap();
         let session = password_session(&config, "me@aroh.test", "secret-password").await.unwrap();

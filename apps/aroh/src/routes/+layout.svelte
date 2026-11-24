@@ -11,7 +11,7 @@
 	import SetupScreen from '$lib/ui/screens/SetupScreen.svelte';
 	import { healthConnect, notificationPermission, setSetting } from '$lib/app/client';
 	import { syncCalendars } from '$lib/app/calendar';
-	import { needsSetup, SETUP_STEPS, type SetupStep } from '$lib/app/setup';
+	import { needsSetup, setupSteps, type SetupStep } from '$lib/app/setup';
 	import { fitKeyboard } from '$lib/app/keyboard';
 	import { categoryList, inboxCount } from '$lib/app/views';
 
@@ -67,11 +67,14 @@
 		};
 	});
 
-	/** Asks the OS for one first-launch permission; Calendar access also imports the calendars. */
+	/**
+	 * Asks the OS for one first-launch permission; Calendar access also imports the calendars.
+	 * The server step asks nothing here: setup ends on it and opens Settings for the server.
+	 */
 	async function allow(id: SetupStep['id']) {
 		if (id === 'notifications') await notificationPermission();
 		else if (id === 'calendar') await data.run(async () => (await setSetting('calendars', 'true'), await syncCalendars()));
-		else await healthConnect();
+		else if (id === 'health') await healthConnect();
 	}
 
 	/** Saves that setup ran, so it never shows again, and opens Settings to sign in. */
@@ -96,7 +99,7 @@
 {:else}
 	<div class="fixed inset-x-0 top-0" style="height: var(--app-h, 100%)">
 		{#if setup}
-			<SetupScreen steps={SETUP_STEPS} onallow={allow} ondone={finishSetup} />
+			<SetupScreen steps={setupSteps(data.snapshot?.settings ?? {})} onallow={allow} ondone={finishSetup} />
 		{:else if wide}
 			<DesktopShell {title} {tab} {back} onback={goBack} inboxCount={count} {categories} onnavigate={navigate}>{@render body()}</DesktopShell>
 		{:else}

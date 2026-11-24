@@ -1,5 +1,5 @@
 /.crazyagent/
-/graphify-out/
+/graphify-out
 .env*
 *.pem
 *.key
@@ -56,3 +56,15 @@ yarn-error.log*
 .svelte-kit/
 .local-state/
 .claude/worktrees/
+!.env*.example
+/docs/agent-decisions.md
+/docs/backlog.md
+/docs/open-source.md
+/docs/screenshots
+/docs/demo
+/docs/superpowers
+/docs/gate
+/docs/pods
+/e2e/pod*.js
+/e2e/pod*.sh
+!/e2e/pod33.sh

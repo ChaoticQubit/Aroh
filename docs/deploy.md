@@ -1,13 +1,13 @@
 # Production deploy runbook
 
-This runbook puts the Aroh server engine on Vercel Hobby in step mode, connected to your Supabase project, with push through APNs. Do the steps in order. Each step is one action. Research and design: `docs/superpowers/plans/2026-11-22-pod21-prod-deploy.md`.
+This runbook puts the Aroh server engine on Vercel Hobby in step mode, connected to your Supabase project, with push through APNs. Do the steps in order. Each step is one action.
 
 Rules for the whole runbook:
 
 - Never paste a secret into a file in this repo, a commit, an issue or a chat. Secrets go into the Vercel environment, Supabase Vault or your password manager.
 - Wherever this runbook says "save in your password manager", save the value under the name it gives.
 - `<ref>` is your Supabase project ref, the part before `.supabase.co` in the Project URL.
-- `<engine>` is the Vercel production domain, for example `https://aroh-engine.vercel.app`, with no trailing slash.
+- `<engine>` is the Vercel production domain, for example `https://<project>.vercel.app`, with no trailing slash.
 
 How it fits together: the app talks to Supabase (sign-in, sync, Realtime) and to the engine (`server_url`). In Supabase, `pg_cron` calls `<engine>/v1/tick` and `<engine>/v1/push/tick` every minute. A trigger on `jobs` calls `<engine>/v1/hooks/enqueue` as soon as a run is queued. Each call is one Vercel request, and each request is capped at 300 s.
 
@@ -40,15 +40,15 @@ How it fits together: the app talks to Supabase (sign-in, sync, Realtime) and to
 
 ## C. Supabase: migrations
 
-The repo has no Supabase CLI, so apply each file through the SQL Editor. Apply each file once, in this order, one file per query. Open the file in the repo, copy all of it, paste it into a new query, and click **Run**. Every run must end with "Success". Stop at the first error and report it.
+The migrations are the files in `supabase/migrations/`, applied once each in name order. The first is `20261120000000_init.sql`; new releases add more. The Supabase CLI (https://supabase.com/docs/guides/local-development/cli/getting-started) applies them and records which ran, using `supabase/config.toml` in this repo.
 
-7. `supabase/migrations/20261120000000_init.sql` (fresh project only)
-8. `supabase/migrations/20261121000000_rebuild.sql`
-9. `supabase/migrations/20261122000000_server_engine.sql`
-10. `supabase/migrations/20261123130000_push_devices.sql`
-11. `supabase/migrations/20261123150000_triggers_learning.sql`
-12. `supabase/migrations/20261124000000_day_kind.sql`
-13. `supabase/migrations/20261125000000_step_mode_wake.sql`
+7. In Terminal, at the repo root, run `supabase login` and finish the sign-in in the browser.
+8. Run `supabase link --project-ref <ref>`, where `<ref>` is the part before `.supabase.co` in your project URL. Enter the database password when asked.
+9. Run `supabase db push --dry-run`. On a new project it lists every file in `supabase/migrations/`. On a project where some files were applied by hand in the SQL Editor, mark each of those as applied first, with its 14-digit prefix: `supabase migration repair --status applied 20261120000000`, and so on.
+10. Run `supabase db push` and confirm. Every file must apply; stop at the first error and report it.
+11. Without the CLI: open **SQL Editor** and run each file of `supabase/migrations/` in name order, one file per query, all of it, once. Skip `20261120000000_init.sql` on a project that already has the Aroh tables. Every run must end with "Success".
+12. In the SQL Editor, run `select id, public from storage.buckets where id = 'goal-files';`. It must return one row with `public` false. If it returns none, run `supabase/migrations/20261127020000_goal_files_bucket.sql` again: it creates the attachments bucket only when Storage is set up.
+13. Run `select count(*) from supabase_migrations.schema_migrations;` (CLI route only). It must equal the number of files in `supabase/migrations/`.
 14. Run step 2 again. Every column must now be `true`.
 15. Run this query and check that it lists `aroh-tick` and `aroh-push`, both `* * * * *`:
 
@@ -66,7 +66,7 @@ Later, if you install the Supabase CLI, these files were applied by hand. Mark t
 
 16. Open **Authentication** > **Users**, click **Add user** > **Create new user**, enter your email and a strong password, tick **Auto Confirm User**, and click **Create user**. Save the password in your password manager as "Aroh account".
 17. Open **Authentication** > **Sign In / Providers**, and turn off **Allow new users to sign up**. Vercel Hobby is for non-commercial use, and the engine keeps API keys for every account, so only your account should exist. Click **Save**.
-18. Open **Database** > **Publications**, click `supabase_realtime`, and check that `run_events` is on. If it is off, turn it on. Migration 8 adds it.
+18. Open **Database** > **Publications**, click `supabase_realtime`, and check that `run_events` is on. If it is off, turn it on. `20261121000000_rebuild.sql` adds it.
 19. Open **Project Settings** > **JWT Keys**. Look at the current signing key:
     - **ECC (P-256)** or **RSA**: continue with step 20.
     - **Legacy HS256 (Shared Secret)**: click **Migrate JWT secret**, then **Rotate keys**, so new user tokens are signed with an asymmetric key. The app signs in again by itself when its token expires (at most one hour).
@@ -85,8 +85,8 @@ The topic is the bundle id, `io.aroh.app`. Debug builds register as `sandbox` an
 
 ## F. Vercel: project and environment
 
-27. The leader pushes local master to the GitHub branch `prod` (`git push origin master:prod`). `prod` is the production pipeline branch; GitHub master is protected (pull request, signed commits, linear history) and catches up later.
-28. Open https://vercel.com/new, click **Import** next to `ChaoticQubit/Aroh`, and grant the Vercel GitHub app access to that repo if asked. After import, open **Settings** > **Environments** > **Production** and set the tracked branch to `prod`, then **Deployments** > **Create Deployment** with ref `prod`. The first automatic build from `master` fails because `crates/aroh-vercel` is not on GitHub master yet; ignore it.
+27. Push the code to a GitHub repository you own (a fork of Aroh works). Pick the branch Vercel deploys from; this runbook calls it `prod`.
+28. Open https://vercel.com/new, click **Import** next to your repository, and grant the Vercel GitHub app access to that repo if asked. After import, open **Settings** > **Environments** > **Production** and set the tracked branch to `prod`, then **Deployments** > **Create Deployment** with ref `prod`.
 29. On the configure screen, click **Edit** next to **Root Directory**, choose `crates/aroh-vercel`, and click **Continue**. Leave **Include files outside the root directory in the Build Step** on (the default): the build needs the whole workspace.
 30. Set **Framework Preset** to **Other**. Leave the Build and Output settings empty.
 31. Generate the master key in Terminal with `openssl rand -base64 32`. Save it in your password manager as `AROH_MASTER_KEY`. If you lose or change it, every stored provider key becomes unreadable, and you must enter the keys again in the app.
@@ -186,21 +186,22 @@ To renew the token before it expires, repeat step 40, then run `select vault.upd
 
 ## J. TestFlight: Aroh on your iPhone
 
-Internal testing only (Q57): builds go to your team, with no App Review. Research and design: `docs/superpowers/plans/2026-11-22-pod24-testflight.md`.
+Internal testing only (Q57): builds go to your team, with no App Review.
 
-51. In Xcode, open **Settings** > **Accounts** and check that the Apple Account of team `GK729B5HZQ` is listed. If not, click **+** > **Apple Account** and sign in.
+51. In Xcode, open **Settings** > **Accounts** and check that the Apple Account of your team is listed. If not, click **+** > **Apple Account** and sign in.
 52. Open https://appstoreconnect.apple.com, click **Apps**, then **+** > **New App**. Set **Platforms** to iOS, **Name** to ArohPlan (done 2026-11-22; App Store names are unique; the home-screen name stays "Aroh", from `CFBundleName`, since the App Store name and the name under the icon may differ), **Primary Language** to English, **Bundle ID** to `io.aroh.app`, **SKU** to `aroh-ios`, **User Access** to Full Access. Click **Create**.
-53. In the new app, open the **TestFlight** tab. Click **+** next to **Internal Testing**, name the group `Owner`, tick **Enable automatic distribution**, click **Create**. Click **Invite Testers**, tick yourself, click **Add**.
-54. The leader runs the build and upload from the repo root, with your real HOME so Xcode sees your account and signing keychain:
+53. Copy `apps/aroh/.env.release.example` to `apps/aroh/.env.release` (untracked) and fill in `AROH_TEAM_ID` (your Apple team ID) and the server this build connects to by default: `AROH_DEFAULT_SUPABASE_URL` and `AROH_DEFAULT_SUPABASE_ANON_KEY` (your project's URL and publishable key, step 43) and `AROH_DEFAULT_SERVER_URL` (your engine URL). A build without these starts with no server and asks for one on first launch.
+54. In the new app, open the **TestFlight** tab. Click **+** next to **Internal Testing**, name the group `Owner`, tick **Enable automatic distribution**, click **Create**. Click **Invite Testers**, tick yourself, click **Add**.
+55. The leader runs the build and upload from the repo root, with your real HOME so Xcode sees your account and signing keychain:
 
     ```sh
-    HOME=/Users/chaoticqubit sh apps/aroh/ios-testflight.sh
+    sh apps/aroh/ios-testflight.sh
     ```
 
-    It builds the frontend and the Rust library, archives with team `GK729B5HZQ` and automatic signing, stamps build number UTC `yyyymmddHHMM`, and uploads. Expected last line: `uploaded build <number> of io.aroh.app to App Store Connect`. If macOS asks whether `codesign` may use a key, click **Always Allow**. Without a signed-in account, set an App Store Connect API key instead (never put the `.p8` in the repo): `AROH_ASC_KEY_PATH`, `AROH_ASC_KEY_ID` and `AROH_ASC_ISSUER_ID`, all three.
-55. Wait for the email that the build finished processing (usually minutes). The build then shows under **TestFlight** > **iOS Builds**. Export compliance is already answered in the app (`ITSAppUsesNonExemptEncryption` false), so no questionnaire appears.
-56. On the iPhone, install **TestFlight** from the App Store and sign in with the same Apple Account. Open the invitation email and tap **View in TestFlight**, or open TestFlight directly, then tap **Accept** and **Install**. Open Aroh from the home screen.
-57. For a new build, repeat step 54. With automatic distribution on, TestFlight offers the update on the phone.
+    It builds the frontend and the Rust library, archives with your team and automatic signing, stamps build number UTC `yyyymmddHHMM`, and uploads. Expected last line: `uploaded build <number> of io.aroh.app to App Store Connect`. If macOS asks whether `codesign` may use a key, click **Always Allow**. Without a signed-in account, set an App Store Connect API key instead (never put the `.p8` in the repo): `AROH_ASC_KEY_PATH`, `AROH_ASC_KEY_ID` and `AROH_ASC_ISSUER_ID`, all three.
+56. Wait for the email that the build finished processing (usually minutes). The build then shows under **TestFlight** > **iOS Builds**. Export compliance is already answered in the app (`ITSAppUsesNonExemptEncryption` false), so no questionnaire appears.
+57. On the iPhone, install **TestFlight** from the App Store and sign in with the same Apple Account. Open the invitation email and tap **View in TestFlight**, or open TestFlight directly, then tap **Accept** and **Install**. Open Aroh from the home screen.
+58. For a new build, repeat step 55. With automatic distribution on, TestFlight offers the update on the phone.
 
 ## If something fails
 
@@ -212,8 +213,8 @@ Internal testing only (Q57): builds go to your team, with no App Review. Researc
 | Ticks are 401 in `net._http_response` | The Vault token was minted with a different `AROH_JWT_SECRET` than the one in Vercel. |
 | No push | `AROH_APNS_*` missing (Vercel logs then show no `push on` line at start), or the device never registered: open the app once after sign-in. |
 | Database errors about prepared statements | `DATABASE_URL` uses port 6543 (transaction pooler). Use the session pooler on 5432 (step 33). |
-| Step 54 fails with no account or no signing certificate for the team | Step 51, and run with `HOME=/Users/chaoticqubit` outside the agent sandbox. |
-| Step 54 archive fails with "no devices registered" or no development profile | Register the iPhone on the team once: connect it, open Xcode > **Window** > **Devices and Simulators**, or add its UDID at https://developer.apple.com/account/resources/devices. Run step 54 again. |
-| Step 54 upload fails with no app record for `io.aroh.app` | Step 52 is missing or used another bundle id. |
-| Step 54 upload rejects the build number as used | Run again a minute later, or set `AROH_BUILD_NUMBER` to a higher number. |
+| Step 55 fails with no account or no signing certificate for the team | Steps 51 and 53, and run it from your own terminal, outside any agent sandbox. |
+| Step 55 archive fails with "no devices registered" or no development profile | Register the iPhone on the team once: connect it, open Xcode > **Window** > **Devices and Simulators**, or add its UDID at https://developer.apple.com/account/resources/devices. Run step 55 again. |
+| Step 55 upload fails with no app record for `io.aroh.app` | Step 52 is missing or used another bundle id. |
+| Step 55 upload rejects the build number as used | Run again a minute later, or set `AROH_BUILD_NUMBER` to a higher number. |
 | No push on the TestFlight build | TestFlight builds register as `production` (section E). Check that the engine has the APNs key for Sandbox & Production (step 24). |
