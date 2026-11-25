@@ -222,13 +222,20 @@ fn apply_change(conn: &Connection, clock: &mut Hlc, proposal: &Proposal, change:
 /// in one transaction and stores the replaced rows in `undo`; reject only sets the status.
 /// Errors with `Invalid` for a decided proposal or a bad diff; nothing changes then.
 pub fn decide_proposal(conn: &Connection, clock: &mut Hlc, id: &str, apply: bool) -> Result<Proposal> {
+    decide_proposal_with(conn, clock, id, apply, None)
+}
+
+/// Like [`decide_proposal`], applying `opened` instead of the stored diff: the diff of a
+/// diary run is sealed, so the caller opens it with the diary key first. A sealed diff
+/// with no `opened` fails to parse and nothing changes.
+pub fn decide_proposal_with(conn: &Connection, clock: &mut Hlc, id: &str, apply: bool, opened: Option<Value>) -> Result<Proposal> {
     let mut proposal: Proposal = repo::get(conn, id)?;
     if proposal.status != ProposalStatus::Proposed {
         return Err(invalid("proposal was already decided"));
     }
     let tx = conn.unchecked_transaction()?;
     if apply {
-        let diff: Diff = serde_json::from_value(proposal.diff.clone()).map_err(|e| invalid(format!("proposal diff: {e}")))?;
+        let diff: Diff = serde_json::from_value(opened.unwrap_or_else(|| proposal.diff.clone())).map_err(|e| invalid(format!("proposal diff: {e}")))?;
         let mut undo = Vec::with_capacity(diff.changes.len());
         for change in &diff.changes {
             undo.push(apply_change(&tx, clock, &proposal, change)?);

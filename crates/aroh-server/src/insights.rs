@@ -107,8 +107,8 @@ pub fn run_summary(workflow: &str, state: &Map<String, Value>) -> Option<String>
 /// Reads the latest checkpoint of `run` and returns its summary.
 /// `None` when the run has no checkpoint or no summary yet.
 /// Errors on a store failure or a corrupt checkpoint.
-pub async fn summary_of(pool: &PgPool, run: RunId, workflow: &str) -> Result<Option<String>, ServerError> {
-    let store = PgCheckpoints::new(pool.clone(), Arc::new(EventBuffer::default()));
+pub async fn summary_of(pool: &PgPool, vault: &crate::vault::Vault, run: RunId, workflow: &str) -> Result<Option<String>, ServerError> {
+    let store = PgCheckpoints::new(pool.clone(), vault.clone(), Arc::new(EventBuffer::default()));
     let Some(cp) = store.latest(run).await? else { return Ok(None) };
     Ok(run_summary(workflow, GraphRun::from_checkpoint(&cp)?.state()))
 }
@@ -117,7 +117,7 @@ pub async fn summary_of(pool: &PgPool, run: RunId, workflow: &str) -> Result<Opt
 /// first; card fills (`fill:` windows) are housekeeping, not insights.
 /// A start that failed shows its error instead of a summary.
 /// Never another user's rows.
-pub async fn list(pool: &PgPool, user: Uuid, goal: Option<Uuid>) -> Result<Vec<Insight>, ServerError> {
+pub async fn list(pool: &PgPool, vault: &crate::vault::Vault, user: Uuid, goal: Option<Uuid>) -> Result<Vec<Insight>, ServerError> {
     let rows: Vec<(Uuid, Option<Uuid>, Option<Uuid>, String, String, Option<String>, DateTime<Utc>, Option<String>, Option<String>)> =
         db::query_as(
             "select a.id, a.goal_id, a.run_id, a.source, a.reason, a.error, a.created_at, r.state, r.workflow
@@ -133,7 +133,7 @@ pub async fn list(pool: &PgPool, user: Uuid, goal: Option<Uuid>) -> Result<Vec<I
     let mut out = Vec::with_capacity(rows.len());
     for (id, goal_id, run_id, source, reason, error, created_at, state, workflow) in rows {
         let summary = match (run_id, workflow.as_deref()) {
-            (Some(r), Some(w)) => summary_of(pool, RunId(r), w).await?,
+            (Some(r), Some(w)) => summary_of(pool, vault, RunId(r), w).await?,
             _ => None,
         };
         let tail = match (&error, summary) {

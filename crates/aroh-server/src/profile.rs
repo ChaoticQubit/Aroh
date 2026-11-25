@@ -160,9 +160,12 @@ pub fn fact_id(user: Uuid, topic: &str) -> String {
 
 /// Keeps the run's lasting answers as confirmed profile facts (D6, D7) with topic, source
 /// goal and date; refreshes or updates the facts known questions came from. Blocked topics
-/// and facts are never written. A store error skips the facts instead of failing the run,
-/// since keeping facts never blocks planning. Returns `{kept, refreshed, updated, skipped}`.
+/// and facts are never written, nor anything from a run that read the diary. A store error
+/// skips the facts instead of failing the run. Returns `{kept, refreshed, updated, skipped}`.
 pub async fn save_facts(env: &ToolEnv, args: SaveFactsArgs) -> Result<Value, ToolError> {
+    if env.sealed {
+        return Ok(json!({"kept": 0, "refreshed": 0, "updated": 0, "skipped": args.answers.len()}));
+    }
     let mine: BTreeMap<String, Preference> = match list_rows::<Preference>(&env.pool, env.user, &[], false).await {
         Ok(rows) => rows.into_iter().map(|p| (p.id.clone(), p)).collect(),
         Err(e) => {

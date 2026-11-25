@@ -35,7 +35,7 @@ fn vault(pool: &PgPool) -> Vault {
 
 async fn run_row(pool: &PgPool, user: Uuid) -> RunId {
     let id = RunId::new();
-    let row = RunRow { id, user_id: user, goal_id: None, workflow: "test".into(), personas: BTreeMap::new(), plugin_id: None, plugin_version: None };
+    let row = RunRow { id, user_id: user, goal_id: None, workflow: "test".into(), personas: BTreeMap::new(), plugin_id: None, plugin_version: None, sealed: false };
     insert_run(pool, &row).await.unwrap();
     id
 }
@@ -159,7 +159,7 @@ async fn checkpoint_save_needs_the_next_step_and_writes_events() {
     let u = user(&pool).await;
     let id = run_row(&pool, u).await;
     let buf = Arc::new(EventBuffer::default());
-    let store = PgCheckpoints::new(pool.clone(), buf.clone());
+    let store = PgCheckpoints::new(pool.clone(), vault(&pool), buf.clone());
     let missing = store.save(Checkpoint { run_id: RunId::new(), step: 0, state: state(0, "queued") }).await;
     assert!(matches!(missing, Err(CoreError::NotFound(_))));
     assert!(matches!(
@@ -171,15 +171,15 @@ async fn checkpoint_save_needs_the_next_step_and_writes_events() {
         buf.emit(event(id, seq, "first"));
     }
     store.save(Checkpoint { run_id: id, step: 1, state: state(3, "checkpointed") }).await.unwrap();
-    assert_eq!(events_after(&pool, id, None).await.unwrap().len(), 3);
-    assert_eq!(events_after(&pool, id, Some(0)).await.unwrap().len(), 2);
+    assert_eq!(events_after(&pool, &vault(&pool), id, None).await.unwrap().len(), 3);
+    assert_eq!(events_after(&pool, &vault(&pool), id, Some(0)).await.unwrap().len(), 2);
     assert!(matches!(
         store.save(Checkpoint { run_id: id, step: 1, state: state(3, "checkpointed") }).await,
         Err(CoreError::Conflict { expected: 2, actual: 1 })
     ));
     buf.emit(event(id, 1, "replayed"));
     store.save(Checkpoint { run_id: id, step: 2, state: state(2, "waiting_human") }).await.unwrap();
-    let events = events_after(&pool, id, None).await.unwrap();
+    let events = events_after(&pool, &vault(&pool), id, None).await.unwrap();
     assert_eq!(events.len(), 2, "the stale tail at seq 2 is gone");
     assert_eq!(events[1].body, EventBody::StepStarted { step: "replayed".into(), persona: None });
     let latest = store.latest(id).await.unwrap().unwrap();
@@ -430,7 +430,7 @@ async fn two_runners_on_postgres_never_advance_a_run_twice() {
     let io = echo_io(clock.clone(), keys.clone());
     let queue: Arc<dyn JobQueue> = Arc::new(PgQueue::new(pool.clone(), clock.clone()));
     let runner = || {
-        let cps: Arc<dyn CheckpointStore> = Arc::new(PgCheckpoints::new(pool.clone(), Arc::new(EventBuffer::default())));
+        let cps: Arc<dyn CheckpointStore> = Arc::new(PgCheckpoints::new(pool.clone(), vault(&pool), Arc::new(EventBuffer::default())));
         Arc::new(Runner::new(queue.clone(), cps, io.clone()))
     };
     let mut ids = Vec::new();
@@ -439,7 +439,7 @@ async fn two_runners_on_postgres_never_advance_a_run_twice() {
         let mut input = serde_json::Map::new();
         input.insert("topic".into(), json!(format!("goal {i}")));
         let run = GraphRun::new(wf, input, Default::default(), io.as_ref()).await.unwrap();
-        let row = RunRow { id: run.run_id(), user_id: u, goal_id: None, workflow: "linear".into(), personas: BTreeMap::new(), plugin_id: None, plugin_version: None };
+        let row = RunRow { id: run.run_id(), user_id: u, goal_id: None, workflow: "linear".into(), personas: BTreeMap::new(), plugin_id: None, plugin_version: None, sealed: false };
         insert_run(&pool, &row).await.unwrap();
         runner().enqueue(&run).await.unwrap();
         ids.push(run.run_id());
@@ -453,7 +453,7 @@ async fn two_runners_on_postgres_never_advance_a_run_twice() {
             assert!(report.errors.is_empty(), "{:?}", report.errors);
         }
     }
-    let store = PgCheckpoints::new(pool.clone(), Arc::new(EventBuffer::default()));
+    let store = PgCheckpoints::new(pool.clone(), vault(&pool), Arc::new(EventBuffer::default()));
     let q = PgQueue::new(pool.clone(), clock.clone());
     for id in &ids {
         let status = q.status(*id).await.unwrap().unwrap();

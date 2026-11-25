@@ -18,7 +18,8 @@ use uuid::Uuid;
 
 /// What every Aroh tool of one run writes with: the pool, the server HLC,
 /// the clock and the run's user and goal. Tools take the user and goal
-/// from here, never from model output.
+/// from here, never from model output. `sealed` marks a run that read the
+/// diary; `diary_key` is the key its proposal summaries are sealed with.
 #[derive(Clone)]
 pub struct ToolEnv {
     pub pool: PgPool,
@@ -26,6 +27,8 @@ pub struct ToolEnv {
     pub clock: Arc<dyn Clock>,
     pub user: Uuid,
     pub goal: Option<Uuid>,
+    pub sealed: bool,
+    pub diary_key: Option<Arc<aroh_diary::DiaryKey>>,
 }
 
 impl ToolEnv {
@@ -260,6 +263,27 @@ async fn clear_old_plan(env: &ToolEnv, goal: &str, keep_actions: &[String], keep
     Ok(cleared)
 }
 
+/// Refuses a plan with a one-off item that starts before now (B80), naming the item and the
+/// current local time in `tz`, so nothing is written or cleared. An item whose row a replay of
+/// the same call already wrote passes; series pass, as `materialize` skips their past occurrences.
+/// Returns `InvalidArgs` with the repair message, or a failed row read.
+async fn refuse_past_one_offs(env: &ToolEnv, plan: &Plan, tz: Tz, ctx: &ToolContext) -> Result<(), ToolError> {
+    let now = env.now();
+    for (i, item) in plan.items.iter().enumerate() {
+        if item.rrule.as_deref().is_some_and(|r| !r.trim().is_empty()) {
+            continue;
+        }
+        let start = local_to_utc(&item.start, tz).map_err(ToolError::InvalidArgs)?;
+        let local = parse_local(&item.start).map_err(ToolError::InvalidArgs)?;
+        let Some(message) = crate::evals::past_start(&item.title, local, now.with_timezone(&tz).naive_local()) else { continue };
+        assert!(start < now, "a start before the local minute of now is before now");
+        if !written::<Action>(env, &row_id(ctx, &format!("action:{i}"))?).await? {
+            return Err(ToolError::InvalidArgs(message));
+        }
+    }
+    Ok(())
+}
+
 /// Stores an approved plan as actions, series and trackers, activates a draft
 /// goal with the plan's `ordered` (a later plan keeps the owner's switch) and, when the owner moved the date on the limits card (B41), sets the
 /// goal's deadline to `move_to`. With `replace` it first ends the old plan
@@ -270,6 +294,7 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, replace: 
     let goal = env.live_goal().await?;
     let tz = timezone(&plan.timezone)?;
     let (user, goal_text) = (env.user.to_string(), goal.to_string());
+    refuse_past_one_offs(env, plan, tz, ctx).await?;
     let mut tracker_names: Vec<String> = Vec::new();
     if replace {
         let mut keep_actions = Vec::new();
@@ -531,17 +556,21 @@ async fn record_proposal(env: &ToolEnv, args: RecordArgs, ctx: &ToolContext) -> 
         let record = ProposalRecord { proposal_id: String::new(), summary: args.proposal.summary, size: args.proposal.size, changes };
         return Ok(serde_json::to_value(record).expect("records serialize"));
     }
+    let id = row_id(ctx, "proposal")?;
+    let (summary, sealed_summary) = crate::diary::proposal_summary(env, &id, &args.proposal.summary)?;
+    let diff = crate::diary::proposal_diff(env, &id, json!({ "changes": changes }))?;
     let mut row = Proposal {
-        id: row_id(ctx, "proposal")?,
+        id,
         user_id: env.user.to_string(),
         goal_id: goal.to_string(),
         run_id: ctx.run_id.map(|r| r.to_string()),
-        summary: args.proposal.summary.clone(),
-        diff: json!({ "changes": changes }),
+        summary,
+        diff,
         size,
         status: ProposalStatus::Proposed,
         undo: None,
         created_at: env.now(),
+        sealed_summary,
         updated_at: String::new(),
         deleted: false,
     };
@@ -569,7 +598,10 @@ async fn load_proposal(env: &ToolEnv, id: &str) -> Result<Proposal, ToolError> {
 
 async fn apply_proposal(env: &ToolEnv, record: &ProposalRecord, ctx: &ToolContext) -> Result<Value, ToolError> {
     let mut proposal = load_proposal(env, &record.proposal_id).await?;
-    let stored: Vec<Change> = serde_json::from_value(proposal.diff["changes"].clone()).map_err(failed)?;
+    let stored: Vec<Change> = match proposal.diff.get("changes") {
+        Some(changes) => serde_json::from_value(changes.clone()).map_err(failed)?,
+        None => record.changes.clone(),
+    };
     match proposal.status {
         ProposalStatus::Proposed => {}
         ProposalStatus::Applied => return Ok(outcome("applied", stored.len(), 0)),

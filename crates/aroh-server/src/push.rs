@@ -1,12 +1,14 @@
-//! Server push (Q22): device token registration and APNs delivery of reminders, check-ins
-//! and proposals. The device schedules the next 24 h locally, so a reminder is pushed only
-//! when the device has not seen its row or its fire time lies beyond the local schedule.
+//! Server push (Q22): device token registration and APNs delivery of reminders, check-ins,
+//! proposals and runs waiting for the owner (Q83). The device schedules the next 24 h locally,
+//! so a reminder is pushed only when the device has not seen its row or its fire time lies
+//! beyond the local schedule.
 
 use crate::db::{self, PgPool};
 use crate::error::ServerError;
 use crate::rows::{list_rows, utc};
 use aroh_domain::remind::{self, Planned, PlannedKind};
 use aroh_domain::rows::{Action, Goal, Proposal, Tracker};
+use troupekit_graph::HumanAsk;
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
@@ -16,6 +18,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use troupekit_core::clock::Clock;
 use troupekit_core::http::{read_limited, HttpRequest, Transport};
+use troupekit_core::ids::RunId;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -24,6 +27,12 @@ pub const LOOKBACK_MINUTES: i64 = 5;
 
 /// How long after creation a proposal is still pushed.
 pub const PROPOSAL_HOURS: i64 = 24;
+
+/// How long after a run starts waiting for its owner it is still pushed.
+pub const RUN_HOURS: i64 = 6;
+
+/// Title prefix of a waiting run that has no goal, such as a calendar triage.
+pub const NO_GOAL_NAME: &str = "Calendar";
 
 /// Seconds between dispatch passes in worker mode.
 pub const INTERVAL_SECS: u64 = 30;
@@ -248,11 +257,14 @@ pub async fn unregister(pool: &PgPool, user: Uuid, device_id: Uuid) -> Result<bo
     Ok(done.rows_affected() == 1)
 }
 
-/// What one push announces: a reminder or check-in from the shared planner, or a proposal.
+/// What one push announces: a reminder or check-in from the shared planner, a proposal,
+/// or a run waiting at human node `node` since `waiting_since`. A run's `step` is the
+/// checkpoint step of that wait; its `goal_id` is `None` when the run has no goal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Notice {
     Reminder(Planned),
     Proposal { id: String, goal_id: String, title: String, body: String, created_at: DateTime<Utc> },
+    Run { run_id: Uuid, goal_id: Option<String>, node: String, step: u64, title: String, body: String, waiting_since: DateTime<Utc> },
 }
 
 /// One APNs push ready to send: ledger key, collapse id, expiry and JSON payload.
@@ -266,8 +278,10 @@ pub struct Push {
 }
 
 /// Builds the push for `notice`: `aps` alert with title, body, default sound and the
-/// kind as thread, plus `aroh {kind, id, goal_id}` for the app to route a tap.
-/// Output: the push; reminders expire an hour after their fire time, proposals after a day.
+/// kind as thread, plus `aroh {kind, id, goal_id}` (and `node` for a run) to route a tap.
+/// A run's ledger key names run, node and wait step, so each new wait pushes once; its
+/// collapse id is the run id (64-byte cap).
+/// Output: the push; reminders expire after an hour, runs after `RUN_HOURS`, proposals a day.
 pub fn build(notice: &Notice) -> Push {
     let alert = |kind: &str, title: &str, body: &str, aroh: Value| {
         json!({"aps": {"alert": {"title": title, "body": body}, "sound": "default", "thread-id": kind}, "aroh": aroh})
@@ -291,7 +305,31 @@ pub fn build(notice: &Notice) -> Push {
             expires_at: *created_at + Duration::hours(PROPOSAL_HOURS),
             payload: alert("proposal", title, body, json!({"kind": "proposal", "id": id, "goal_id": goal_id})),
         },
+        Notice::Run { run_id, goal_id, node, step, title, body, waiting_since } => {
+            let push = Push {
+                key: format!("run:{run_id}:{node}:{step}"),
+                collapse_id: run_id.to_string(),
+                expires_at: *waiting_since + Duration::hours(RUN_HOURS),
+                payload: alert("run", title, body, json!({"kind": "run", "id": run_id, "goal_id": goal_id, "node": node})),
+            };
+            assert!((1..=200).contains(&push.key.len()), "push_sent keys are 1 to 200 characters");
+            assert!(push.collapse_id.len() <= 64, "APNs caps the collapse id at 64 bytes");
+            push
+        }
     }
+}
+
+/// Title and body of the push for a run of goal `goal` (`NO_GOAL_NAME` when the run has
+/// none) waiting at `ask`: a plan to approve, or answers to give. Echoes no answers.
+/// Returns `None` for a replan change to approve, whose proposal row pushes instead.
+pub fn run_text(goal: &str, ask: &HumanAsk) -> Option<(String, String)> {
+    let has = |key: &str| ask.data.get(key).is_some_and(|v| !v.is_null());
+    let (what, body) = match ask.node.as_str() {
+        "approve" if has("plan") => ("plan ready to approve", "Tap to review the plan."),
+        "approve" if has("proposal_record") => return None,
+        _ => ("your answers are needed", "Tap to answer in Aroh."),
+    };
+    Some((remind::truncate(format!("{goal}: {what}")), remind::truncate(body.to_string())))
 }
 
 /// The APNs request for `push` to `token` in `env`, authed with provider token `jwt`.
@@ -340,17 +378,19 @@ enum Sent {
 /// passes never send one twice.
 pub struct Pusher {
     pool: PgPool,
+    vault: crate::vault::Vault,
     transport: Arc<dyn Transport>,
     signer: Signer,
     clock: Arc<dyn Clock>,
 }
 
 impl Pusher {
-    /// Builds a pusher over `pool`, sending through `transport` with `signer`.
+    /// Builds a pusher over `pool` (opening sealed run checkpoints with `vault`),
+    /// sending through `transport` with `signer`.
     /// `clock` decides which reminders are due.
     /// Returns the pusher.
-    pub fn new(pool: PgPool, transport: Arc<dyn Transport>, signer: Signer, clock: Arc<dyn Clock>) -> Pusher {
-        Pusher { pool, transport, signer, clock }
+    pub fn new(pool: PgPool, vault: crate::vault::Vault, transport: Arc<dyn Transport>, signer: Signer, clock: Arc<dyn Clock>) -> Pusher {
+        Pusher { pool, vault, transport, signer, clock }
     }
 
     async fn devices(&self) -> Result<Vec<Device>, ServerError> {
@@ -368,6 +408,40 @@ impl Pusher {
         Ok(rows.into_iter().collect())
     }
 
+    /// The run notices of `user` at `now`: one per human node of each run that entered
+    /// `waiting_human` within `RUN_HOURS`, keyed by its checkpoint step, titled from `titles`. Runs of a deleted goal and
+    /// runs whose checkpoint fails to load are skipped, so one bad run never stops a pass.
+    async fn waiting_runs(&self, user: Uuid, titles: &HashMap<&str, &str>, now: DateTime<Utc>) -> Result<Vec<Notice>, ServerError> {
+        let rows: Vec<(Uuid, Option<Uuid>, DateTime<Utc>)> =
+            db::query_as("select id, goal_id, updated_at from public.runs where user_id = $1 and state = 'waiting_human' and updated_at > $2 order by created_at, id")
+                .bind(user)
+                .bind(now - Duration::hours(RUN_HOURS))
+                .fetch_all(&self.pool)
+                .await?;
+        let mut out = Vec::new();
+        for (run_id, goal_id, waiting_since) in rows {
+            let goal = match goal_id {
+                None => NO_GOAL_NAME,
+                Some(g) => match titles.get(g.to_string().as_str()) {
+                    Some(title) => title,
+                    None => continue,
+                },
+            };
+            let run = match crate::engine::latest_run(&self.pool, &self.vault, RunId(run_id)).await {
+                Ok(run) => run,
+                Err(_) => {
+                    eprintln!("aroh-server: push skips run {run_id}, its checkpoint did not load");
+                    continue;
+                }
+            };
+            for ask in run.pending_human() {
+                let Some((title, body)) = run_text(goal, &ask) else { continue };
+                out.push(Notice::Run { run_id, goal_id: goal_id.map(|g| g.to_string()), node: ask.node, step: run.steps(), title, body, waiting_since });
+            }
+        }
+        Ok(out)
+    }
+
     async fn notices(&self, user: Uuid, devices: &[&Device], now: DateTime<Utc>) -> Result<Vec<(Uuid, Notice)>, ServerError> {
         let goals = list_rows::<Goal>(&self.pool, user, &[], false).await?;
         let actions = list_rows::<Action>(&self.pool, user, &[("status", "planned".into())], false).await?;
@@ -375,6 +449,7 @@ impl Pusher {
         let proposals = list_rows::<Proposal>(&self.pool, user, &[("status", "proposed".into())], false).await?;
         let seqs = self.seqs(user).await?;
         let titles: HashMap<&str, &str> = goals.iter().map(|g| (g.id.as_str(), g.title.as_str())).collect();
+        let runs = self.waiting_runs(user, &titles, now).await?;
         let mut out = Vec::new();
         for device in devices {
             let zone: Tz = device.zone.parse().unwrap_or(Tz::UTC);
@@ -396,6 +471,9 @@ impl Pusher {
                         created_at: proposal.created_at,
                     },
                 ));
+            }
+            for run in runs.iter().filter(|r| matches!(r, Notice::Run { waiting_since, .. } if *waiting_since >= device.created_at)) {
+                out.push((device.id, run.clone()));
             }
         }
         Ok(out)
@@ -436,8 +514,9 @@ impl Pusher {
     }
 
     /// One dispatch pass at the clock's now: per device, due reminders the device will not
-    /// show itself and fresh proposals, each claimed then sent. Gone tokens delete the
-    /// device; failures release the claim. Returns the pass's counts.
+    /// show itself, fresh proposals and runs that started waiting for the owner within
+    /// `RUN_HOURS`, each claimed then sent. Gone tokens delete the device; failures release
+    /// the claim. Returns the pass's counts.
     pub async fn dispatch_once(&self) -> Result<PushSummary, ServerError> {
         let now = utc(self.clock.now_ms());
         let mut summary = PushSummary { enabled: true, ..PushSummary::default() };
@@ -569,6 +648,43 @@ mod tests {
         assert_eq!(proposal.payload["aps"]["thread-id"], "proposal");
         let action = Planned { kind: PlannedKind::Action, ..check_in() };
         assert_eq!(build(&Notice::Reminder(action)).payload["aroh"]["kind"], "reminder");
+    }
+
+    fn ask(node: &str, data: Value) -> HumanAsk {
+        HumanAsk { node: node.into(), ask: troupekit_graph::Ask::Approval, prompt: None, data: data.as_object().unwrap().clone() }
+    }
+
+    #[test]
+    fn run_pushes_name_the_run_node_and_goal() {
+        let run_id = Uuid::parse_str("0190f2a0-0000-7000-8000-000000000009").unwrap();
+        let notice = |goal_id: Option<String>| Notice::Run {
+            run_id,
+            goal_id,
+            node: "questions".into(),
+            step: 7,
+            title: "Gym: your answers are needed".into(),
+            body: "Tap to answer in Aroh.".into(),
+            waiting_since: at(9, 0),
+        };
+        let push = build(&notice(Some("g1".into())));
+        assert_eq!(push.key, format!("run:{run_id}:questions:7"));
+        let longest = Notice::Run { run_id, goal_id: None, node: "n".repeat(64), step: u64::MAX, title: String::new(), body: String::new(), waiting_since: at(9, 0) };
+        assert!(build(&longest).key.len() <= 200);
+        assert_eq!(push.collapse_id, run_id.to_string());
+        assert!(push.collapse_id.len() <= 64);
+        assert_eq!(push.expires_at, at(15, 0));
+        assert_eq!(push.payload["aroh"], json!({"kind": "run", "id": run_id.to_string(), "goal_id": "g1", "node": "questions"}));
+        assert_eq!(push.payload["aps"]["thread-id"], "run");
+        assert_eq!(push.payload["aps"]["alert"], json!({"title": "Gym: your answers are needed", "body": "Tap to answer in Aroh."}));
+        assert_eq!(build(&notice(None)).payload["aroh"]["goal_id"], Value::Null);
+
+        let plan = run_text("Gym", &ask("approve", json!({"plan": {"summary": "Three runs"}}))).unwrap();
+        assert_eq!(plan, ("Gym: plan ready to approve".to_string(), "Tap to review the plan.".to_string()));
+        assert_eq!(run_text("Gym", &ask("approve", json!({"proposal_record": {"summary": "Move it"}}))), None);
+        let questions = run_text(NO_GOAL_NAME, &ask("questions", json!({"intake": {"questions": []}}))).unwrap();
+        assert_eq!(questions.0, "Calendar: your answers are needed");
+        assert_eq!(run_text("Gym", &ask("limit_choice", json!({"limits": {}}))).unwrap().0, "Gym: your answers are needed");
+        assert!(run_text(&"x".repeat(300), &ask("change", json!({}))).unwrap().0.chars().count() <= 120);
     }
 
     #[test]

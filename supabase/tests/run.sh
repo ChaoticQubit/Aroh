@@ -23,6 +23,7 @@ for migration in "$here"/../migrations/*.sql; do
 done
 psql < "$here/rls_rebuild.sql"
 psql < "$here/rls_places.sql"
+psql < "$here/rls_diary.sql"
 psql < "$here/rls_storage.sql"
 cat "$here/consent_backfill_setup.sql" "$here/../migrations/20261202020000_ai_consent_backfill.sql" "$here/consent_backfill_check.sql" | psql
 psql < "$here/public_accounts.sql"

@@ -11,7 +11,7 @@
 	const clock = getClock();
 	const s = $derived(data.snapshot);
 	let stats = $state<GoalStats[] | null>(null);
-	let waitingRuns = $state<string[]>([]);
+	let waitingRuns = $state<string[]>((engine.cachedRuns({ state: 'waiting_human' }) ?? []).flatMap((run) => (run.goal_id ? [run.goal_id] : [])));
 	let offline = $state(false);
 
 	/** Reads which goals have a run waiting for the owner; a failed read sets `offline`. */

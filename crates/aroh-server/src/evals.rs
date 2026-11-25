@@ -1,6 +1,6 @@
 use aroh_domain::recur;
 use aroh_domain::rows::ActionSeries;
-use chrono::{Duration, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{Duration, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -12,6 +12,10 @@ use crate::teams::Kind;
 /// Matches the materialized window of the app engine.
 /// The planner's later occurrences repeat the same pattern.
 pub const EVAL_WINDOW_DAYS: u32 = 14;
+
+/// Longest horizon, in days, the overlap check expands plans and reads busy time over (B89).
+/// Matches the materializer's largest window.
+pub const MAX_HORIZON_DAYS: u32 = 366;
 
 const MAX_MINUTES: i64 = 24 * 60;
 const PLACEHOLDER_ID: &str = "00000000-0000-7000-8000-000000000000";
@@ -83,16 +87,21 @@ pub fn slots_within(item: &Value, days: u32) -> Result<Vec<Slot>, String> {
 }
 
 fn path_slots(output: &Value, args: &[Value]) -> Result<Vec<Slot>, String> {
+    path_slots_within(output, args, EVAL_WINDOW_DAYS)
+}
+
+/// The slots of the items at the path in `args[0]`, each series expanded over its first `days`.
+fn path_slots_within(output: &Value, args: &[Value], days: u32) -> Result<Vec<Slot>, String> {
     let path = args.first().and_then(Value::as_str).ok_or("takes a path to a list of items first")?;
     let mut out = Vec::new();
     for found in lookup(output, path) {
         match found {
             Value::Array(items) => {
                 for item in items {
-                    out.extend(slots(item)?);
+                    out.extend(slots_within(item, days)?);
                 }
             }
-            item => out.extend(slots(item)?),
+            item => out.extend(slots_within(item, days)?),
         }
     }
     Ok(out)
@@ -121,6 +130,34 @@ pub fn no_overlap(output: &Value, args: &[Value]) -> Result<(), String> {
         return Err("takes (path)".into());
     }
     clash(path_slots(output, args)?, &[])
+}
+
+/// The repair message for a one-off item `title` starting at local `start`, before the local
+/// `now` of its plan's timezone, or none when it starts at or after now. Both times are
+/// compared and shown to the minute, as the planner reads `now`.
+pub fn past_start(title: &str, start: NaiveDateTime, now: NaiveDateTime) -> Option<String> {
+    let now = now.with_second(0).and_then(|t| t.with_nanosecond(0)).expect("second 0 and nanosecond 0 exist");
+    (start < now).then(|| {
+        let minute = "%Y-%m-%dT%H:%M";
+        format!("`{title}` starts at {}, before now ({} local); plan it at or after now", start.format(minute), now.format(minute))
+    })
+}
+
+/// Eval `starts_after_now(path)`: no one-off item at `path` starts before `now`, the
+/// goal's local time the run read. Series may start in the past; only their later
+/// occurrences are written. Returns the first item that starts too early.
+fn starts_after_now(output: &Value, args: &[Value], now: NaiveDateTime) -> Result<(), String> {
+    let [path] = args else { return Err("takes (path)".to_string()) };
+    let path = path.as_str().ok_or("takes a path to a list of items")?;
+    for item in lookup(output, path).into_iter().flat_map(|v| v.as_array().cloned().unwrap_or_else(|| vec![v.clone()])) {
+        let series = item.get("rrule").and_then(Value::as_str).is_some_and(|r| !r.trim().is_empty());
+        let Some(start) = item.get("start").and_then(Value::as_str).filter(|_| !series) else { continue };
+        let title = item.get("title").and_then(Value::as_str).unwrap_or("item");
+        if let Some(message) = past_start(title, parse_local(start)?, now) {
+            return Err(message);
+        }
+    }
+    Ok(())
 }
 
 /// Reads a run's `busy` state value, a list of `{title, start, minutes}` in
@@ -313,7 +350,7 @@ pub fn notes_filled(output: &Value, args: &[Value]) -> Result<(), String> {
 }
 
 /// Builds the eval registry every Aroh run uses: the built-in `min_items`
-/// plus the domain evals `no_overlap`, `within_availability`, `valid_plugin`,
+/// plus the domain evals `starts_after_now`, `no_overlap`, `within_availability`, `valid_plugin`,
 /// `keeps_fixed`, `public_sources`, `owner_terms`, `coach_questions` and `notes_filled`.
 /// Returns the registry, with no busy time, fixed action or goal kind bound.
 pub fn registry() -> EvalRegistry {
@@ -341,7 +378,7 @@ fn keeps_fixed(output: &Value, args: &[Value], fixed: &BTreeSet<String>) -> Resu
 /// its path also never overlap a kept device event (busy slots are never
 /// checked against each other), and the `fixed` action ids into `keeps_fixed`.
 pub fn registry_with_busy(busy: Vec<Slot>, fixed: BTreeSet<String>) -> EvalRegistry {
-    registry_for(busy, fixed, Kind::General, crate::sequence::Bounds::default())
+    registry_for(busy, fixed, Kind::General, crate::sequence::Bounds::default(), MAX_HORIZON_DAYS)
 }
 
 /// Runs `sequence::check` on the list of changes at `path` against `bounds`, the
@@ -358,8 +395,11 @@ fn keeps_sequence(output: &Value, args: &[Value], bounds: &crate::sequence::Boun
 /// `coach_questions` asking what a coach of goal `kind` needs and
 /// `keeps_sequence` checking replan changes against `sequence`.
 /// Returns the registry.
-pub fn registry_for(busy: Vec<Slot>, fixed: BTreeSet<String>, kind: Kind, sequence: crate::sequence::Bounds) -> EvalRegistry {
+pub fn registry_for(busy: Vec<Slot>, fixed: BTreeSet<String>, kind: Kind, sequence: crate::sequence::Bounds, horizon: u32) -> EvalRegistry {
+    assert!((1..=MAX_HORIZON_DAYS).contains(&horizon), "the overlap horizon is 1 to {MAX_HORIZON_DAYS} days");
     let mut r = EvalRegistry::new();
+    let now = sequence.now;
+    r.register("starts_after_now", Arc::new(move |output: &Value, args: &[Value]| starts_after_now(output, args, now))).expect("fresh name");
     r.register("keeps_sequence", Arc::new(move |output: &Value, args: &[Value]| keeps_sequence(output, args, &sequence))).expect("fresh name");
     r.register("coach_questions", Arc::new(move |output: &Value, args: &[Value]| coach_questions(output, args, kind))).expect("fresh name");
     r.register("notes_filled", Arc::new(notes_filled)).expect("fresh name");
@@ -371,7 +411,7 @@ pub fn registry_for(busy: Vec<Slot>, fixed: BTreeSet<String>, kind: Kind, sequen
         if args.len() != 1 {
             return Err("takes (path)".to_string());
         }
-        clash(path_slots(output, args)?, &busy)
+        clash(path_slots_within(output, args, horizon)?, &busy)
     };
     r.register("no_overlap", Arc::new(overlap)).expect("fresh name");
     r.register("within_availability", Arc::new(within_availability)).expect("fresh name");
@@ -619,5 +659,36 @@ mod tests {
         let deletion = json!({"items": [{"title": "Old", "start": null, "minutes": null, "rrule": null, "notes": null}]});
         assert_eq!(notes_filled(&deletion, &args), Ok(()), "a deletion has no session");
         assert!(notes_filled(&ok, &[]).is_err());
+    }
+
+    #[test]
+    fn b80_starts_after_now_refuses_a_one_off_before_the_local_now() {
+        let now = parse_local("2026-11-24T19:20:00").unwrap();
+        let bound = registry_for(vec![], BTreeSet::new(), Kind::General, crate::sequence::Bounds { now, ..Default::default() }, MAX_HORIZON_DAYS);
+        let check = bound.get("starts_after_now").unwrap();
+        let args = [json!("items")];
+        let item = |title: &str, start: &str, rrule: Value| json!({"title": title, "start": start, "minutes": 45, "rrule": rrule, "notes": "x"});
+        let past = plan(json!([item("Run", "2026-11-25T07:00:00", json!(null)), item("Core workout", "2026-11-24T14:00:00", json!(null))]));
+        assert_eq!(check(&past, &args).unwrap_err(), "`Core workout` starts at 2026-11-24T14:00, before now (2026-11-24T19:20 local); plan it at or after now");
+        let at_now = plan(json!([item("Core workout", "2026-11-24T19:20", json!(null))]));
+        assert_eq!(check(&at_now, &args), Ok(()), "a start at now is accepted");
+        let series = plan(json!([item("Plank", "2026-11-20T07:00:00", json!("FREQ=DAILY"))]));
+        assert_eq!(check(&series, &args), Ok(()), "a series may start in the past");
+        let deletion = plan(json!([{"title": "Old", "start": null, "minutes": null, "rrule": null, "notes": null}]));
+        assert_eq!(check(&deletion, &args), Ok(()));
+        assert!(check(&past, &[]).is_err(), "takes (path)");
+        assert_eq!(registry().get("starts_after_now").unwrap()(&past, &args), Ok(()), "no run bounds, no now to check against");
+    }
+
+    #[test]
+    fn b89_a_weekly_series_is_checked_over_the_plan_horizon_not_two_weeks() {
+        let exam = Slot { title: "Exam".into(), start: parse_local("2026-12-21T07:00:00").unwrap(), end: parse_local("2026-12-21T08:00:00").unwrap() };
+        let plan = json!({"items": [{"title": "Long run", "start": "2026-11-23T07:00:00", "minutes": 45, "rrule": "FREQ=WEEKLY", "notes": "Easy pace"}]});
+        let args = [json!("items")];
+        let year = registry_for(vec![exam.clone()], BTreeSet::new(), Kind::General, Default::default(), MAX_HORIZON_DAYS);
+        let err = year.get("no_overlap").unwrap()(&plan, &args).unwrap_err();
+        assert!(err.contains("`Long run` overlaps busy `Exam` at 2026-12-21 07:00:00"), "{err}");
+        let short = registry_for(vec![exam], BTreeSet::new(), Kind::General, Default::default(), 21);
+        assert_eq!(short.get("no_overlap").unwrap()(&plan, &args), Ok(()), "a deadline three weeks out ends the check before the fifth week");
     }
 }

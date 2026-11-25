@@ -3,8 +3,9 @@ start = "slots"
 max_steps = 20
 
 [state]
-goal = "{id: string, title: string, context: string?, deadline: string?, timezone: string, today: string}"
+goal = "{id: string, title: string, context: string?, deadline: string?, timezone: string, today: string, now: string}"
 profile = "list<{id: string, fact: string, topic: string?, source: string, date: string}>"
+diary = "list<{day: string, summary: string, mood: int, energy: int, notes_for_tomorrow: string?}>?"
 card_work = "{slots: list<{action_id: string, series_id: string?, title: string, start: string, minutes: int, notes: string?, outline: string?, planned: list<string>}>, history: list<{title: string, start: string, status: string, planned: list<string>, logged: list<string>, effort: string?, note: string?}>}"
 cards = "{cards: list<{action_id: string, card: {why: string, blocks: list<{kind: enum(workout, steps, checklist), title: string?, exercises: list<{name: string, unit: string?, rest_s: int, cue: string?, sets: list<{reps: int, weight: number?}>}>?, items: list<{text: string, minutes: int?}>?}>}}>, outlines: list<{series_id: string, outline: string}>}"
 cards_written = "{written: int, kept: int, missing: int}"
@@ -26,7 +27,7 @@ id = "cards"
 kind = "agent"
 persona = "card-writer"
 prompt = "Write the full card of every slot and the outline of each series."
-reads = ["goal", "profile", "card_work"]
+reads = ["goal", "profile", "card_work", "diary"]
 writes = "cards"
 
 [[nodes]]

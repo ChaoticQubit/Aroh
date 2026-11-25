@@ -473,6 +473,7 @@ synced! {
         status: ProposalStatus => Text,
         undo: Option<Value> => Json,
         created_at: DateTime<Utc> => Time,
+        sealed_summary: Option<Value> => Json,
     }
 }
 
@@ -585,6 +586,32 @@ synced! {
         place_id: String => Text,
         goal_id: String => Text,
         series_id: Option<String> => Text,
+    }
+}
+
+synced! {
+    /// One diary entry (Q85): the owner's words sealed on the device with the
+    /// diary key (AES-256-GCM, base64 nonce and ciphertext). Immutable: only a
+    /// key rotation rewrites the ciphertext of the same plaintext. `day` and
+    /// `at` stay plain for the day lookup.
+    DiaryEntry, DIARY_ENTRIES, "diary_entries" {
+        day: String => Text,
+        at: DateTime<Utc> => Time,
+        key_version: i64 => Int,
+        nonce: String => Text,
+        ciphertext: String => Text,
+    }
+}
+
+synced! {
+    /// One day's sealed diary card (Q85), derived from the day's entries and
+    /// rebuilt when an entry is not covered. The id is a uuid v5 of the
+    /// account and the day, so devices converge on one row.
+    DiaryDay, DIARY_DAYS, "diary_days" {
+        day: String => Text,
+        key_version: i64 => Int,
+        nonce: String => Text,
+        ciphertext: String => Text,
     }
 }
 
@@ -933,7 +960,59 @@ impl Proposal {
         if !(self.diff.is_object() || self.diff.is_array()) {
             return Err(invalid("proposals.diff", "must be a JSON object or array"));
         }
+        if let Some(sealed) = &self.sealed_summary {
+            let fields = sealed.as_object().ok_or_else(|| invalid("proposals.sealed_summary", "must be an object"))?;
+            if fields.len() != 3 {
+                return Err(invalid("proposals.sealed_summary", "must hold key_version, nonce and ciphertext"));
+            }
+            let version = fields.get("key_version").and_then(Value::as_i64).ok_or_else(|| invalid("proposals.sealed_summary", "no key_version"))?;
+            let nonce = fields.get("nonce").and_then(Value::as_str).ok_or_else(|| invalid("proposals.sealed_summary", "no nonce"))?;
+            let ciphertext = fields.get("ciphertext").and_then(Value::as_str).ok_or_else(|| invalid("proposals.sealed_summary", "no ciphertext"))?;
+            check_sealed("proposals.sealed_summary", version, nonce, ciphertext, DIARY_CARD_MAX)?;
+        }
         Ok(())
+    }
+}
+
+const DIARY_ENTRY_MAX: usize = 16 * 1024;
+const DIARY_CARD_MAX: usize = 96 * 1024;
+
+/// Checks the stored shape of a diary-sealed value: key version 1 to
+/// 1000000, a base64 12-byte nonce (16 characters) and a non-empty base64
+/// ciphertext of at most `max` characters. Errors with `Invalid` naming `field`.
+fn check_sealed(field: &'static str, version: i64, nonce: &str, ciphertext: &str, max: usize) -> Result<()> {
+    let base64 = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=');
+    if !(1..=1_000_000).contains(&version) {
+        return Err(invalid(field, "key_version outside 1..=1000000"));
+    }
+    if nonce.len() != 16 || !base64(nonce) {
+        return Err(invalid(field, "nonce must be 12 bytes of base64"));
+    }
+    if ciphertext.is_empty() || ciphertext.len() > max || ciphertext.len() % 4 != 0 || !base64(ciphertext) {
+        return Err(invalid(field, "ciphertext must be base64 within the size cap"));
+    }
+    Ok(())
+}
+
+/// Checks that `day` is a `YYYY-MM-DD` calendar date.
+fn check_day(field: &'static str, day: &str) -> Result<()> {
+    match NaiveDate::parse_from_str(day, "%Y-%m-%d") {
+        Ok(d) if d.format("%Y-%m-%d").to_string() == day => Ok(()),
+        _ => Err(invalid(field, "not a YYYY-MM-DD date")),
+    }
+}
+
+impl DiaryEntry {
+    fn check_fields(&self) -> Result<()> {
+        check_day("diary_entries.day", &self.day)?;
+        check_sealed("diary_entries.ciphertext", self.key_version, &self.nonce, &self.ciphertext, DIARY_ENTRY_MAX)
+    }
+}
+
+impl DiaryDay {
+    fn check_fields(&self) -> Result<()> {
+        check_day("diary_days.day", &self.day)?;
+        check_sealed("diary_days.ciphertext", self.key_version, &self.nonce, &self.ciphertext, DIARY_CARD_MAX)
     }
 }
 
@@ -1202,7 +1281,7 @@ pub mod samples {
             to(series()),
             to(action()),
             to(ActionLog { id: crate::card::log_id(&id(10)), user_id: user(), action_id: id(10), goal_id: goal_id(), sets: vec![crate::card::SetLog { block: 0, row: 0, set: 0, reps: 8, weight: Some(60.0), done: true }], checked: vec![], effort: Some(crate::card::Effort::Ok), note: None, logged_at: at(10), updated_at: stamp(), deleted: false }),
-            to(Proposal { id: id(11), user_id: user(), goal_id: goal_id(), run_id: Some(id(12)), summary: "Move Friday workout".into(), diff: serde_json::json!([{"action_id": id(10), "op": "move"}]), size: ProposalSize::Small, status: ProposalStatus::Proposed, undo: None, created_at: at(8), updated_at: stamp(), deleted: false }),
+            to(Proposal { id: id(11), user_id: user(), goal_id: goal_id(), run_id: Some(id(12)), summary: "Move Friday workout".into(), diff: serde_json::json!([{"action_id": id(10), "op": "move"}]), size: ProposalSize::Small, status: ProposalStatus::Proposed, undo: None, created_at: at(8), sealed_summary: None, updated_at: stamp(), deleted: false }),
             to(preference()),
             to(BusyBlock { id: id(14), user_id: user(), calendar_id: "work".into(), event_id: "evt-1".into(), title: "Standup".into(), start_at: at(9), end_at: at(10), all_day: true, group_name: Some("Work".into()), day_kind: Some(DayKind::Busy), updated_at: stamp(), deleted: false }),
             to(CalendarRule { id: id(15), user_id: user(), calendar_id: Some("work".into()), series_key: None, pattern: None, group_name: "Work".into(), decision: RuleDecision::Keep, day_kind: None, updated_at: stamp(), deleted: false }),
@@ -1212,6 +1291,8 @@ pub mod samples {
             to(Usage { id: id(19), user_id: user(), goal_id: Some(goal_id()), run_id: Some(id(12)), vendor: "anthropic".into(), model: "claude-opus".into(), input_tokens: 1200, output_tokens: 300, cost_usd_micros: 4200, occurred_at: at(8), updated_at: stamp(), deleted: false }),
             to(place()),
             to(PlaceLink { id: id(21), user_id: user(), place_id: id(20), goal_id: goal_id(), series_id: Some(id(9)), updated_at: stamp(), deleted: false }),
+            to(DiaryEntry { id: id(22), user_id: user(), day: "2026-11-23".into(), at: at(8), key_version: 1, nonce: "AAAAAAAAAAAAAAAA".into(), ciphertext: "c2VhbGVkIGVudHJ5".into(), updated_at: stamp(), deleted: false }),
+            to(DiaryDay { id: id(23), user_id: user(), day: "2026-11-23".into(), key_version: 1, nonce: "AAAAAAAAAAAAAAAA".into(), ciphertext: "c2VhbGVkIGNhcmQh".into(), updated_at: stamp(), deleted: false }),
         ];
         assert_eq!(rows.len(), crate::schema::SYNCED.len());
         rows

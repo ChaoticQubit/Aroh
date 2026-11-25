@@ -3,6 +3,7 @@
 	import Bell from '@lucide/svelte/icons/bell';
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import Settings from '@lucide/svelte/icons/settings';
+	import Logo from '../brand/Logo.svelte';
 	import type { CategorySlot } from '$lib/ui/contract';
 	import { tabs, type Place } from './nav';
 	import type { Back } from './back';
@@ -41,7 +42,7 @@
 
 <div class="flex h-full min-h-0 bg-bg text-fg">
 	<aside class="flex w-(--sidebar) shrink-0 flex-col gap-6 border-r border-border bg-bg p-2">
-		<p class="px-3 pt-2 text-sm font-semibold">Aroh</p>
+		<p class="flex items-center gap-2 px-3 pt-2 text-sm font-semibold"><Logo size={20} label="" />Aroh</p>
 		<nav aria-label="Main" class="flex flex-col gap-0.5">
 			{#each tabs as t (t.id)}
 				<button type="button" aria-current={tab === t.id ? 'page' : undefined} class="{item} {tab === t.id ? 'bg-surface-2 font-medium text-fg before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:bg-accent' : 'text-muted hover:bg-surface-2 hover:text-fg'}" onclick={() => onnavigate?.(t.id)}>

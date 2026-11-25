@@ -11,6 +11,7 @@
 	import { getClock } from '$lib/ui/clock';
 	import { daysBetween, formatDate, formatYmd, mondayOf, shiftDay, shiftMonth } from '$lib/ui/format';
 	import { stepAnchor, swipe } from '$lib/ui/swipe';
+	import type { Snippet } from 'svelte';
 	import type { ActionView } from '$lib/ui/contract';
 	import type { ActionEdit, AllDayView, BusyView, CategoryView, DayKind, DayPick } from './types';
 
@@ -24,6 +25,7 @@
 	 * month like the arrows. Tapping an action opens the edit
 	 * sheet; `onstatus`, `onedit`, `onlock`, `ondelete` and `onchoose` report the changes. `initialView`, `day`, `editing`,
 	 * `confirming`, `selected` and `inline` (sheet drawn in place for mockups) set the opening state.
+	 * `dayTop` renders above the day grid with the shown day, for the diary card.
 	 */
 	let {
 		actions,
@@ -40,7 +42,8 @@
 		onedit,
 		onlock,
 		ondelete,
-		onchoose
+		onchoose,
+		dayTop
 	}: {
 		actions: ActionView[];
 		categories: CategoryView[];
@@ -57,6 +60,7 @@
 		onlock?: (id: string, locked: boolean) => void;
 		ondelete?: (id: string) => void;
 		onchoose?: (pick: DayPick) => void;
+		dayTop?: Snippet<[string]>;
 	} = $props();
 
 	const { now, zone } = getClock();
@@ -188,6 +192,7 @@
 		<div class="hidden @3xl:block"><CalendarGrid days={week} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} /></div>
 		<div class="@3xl:hidden"><CalendarGrid compact days={week} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} /></div>
 	{:else}
+		{#if dayTop}{@render dayTop(anchor)}{/if}
 		<CalendarGrid days={[anchor]} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} />
 	{/if}
 	</div>

@@ -1,13 +1,14 @@
 import type { ChatMessage } from '$lib/ui/contract';
 import type { LimitsCard } from '$lib/ui/plan/limits';
 import * as client from './client';
-import { ACTIVE, chatFromRun, engine, fixedActionIds, NEEDS_ENGINE, questionsOf, type PlanItem, type RunAnswer, type RunEvent, type RunView } from './engine';
-import { fillNext, groupMessage, submissionOf, withAnswer, withSkip, type QuestionGroup } from './questions';
+import { ACTIVE, chatFromRun, engine, fixedActionIds, NEEDS_ENGINE, questionsOf, type EngineResult, type PlanItem, type RunAnswer, type RunEvent, type RunSummary, type RunView } from './engine';
+import { fillNext, groupMessage, knownValues, submissionOf, withAnswer, withSkip, type QuestionGroup } from './questions';
 import { connectWakeups, wakeups } from './realtime';
 import { blankDraft, startBody } from './newgoal';
 import { deviceZone } from '$lib/ui/clock';
 import { originRun, pickRun } from './goalcard';
 import { deviceKeep, readSent, rememberSent, type Keep } from './chatkeep';
+import { bubbleOf, runWorking, type FailedSend } from './working';
 
 const POLL_MAX = 400;
 
@@ -26,6 +27,7 @@ export async function follow(runId: string, onview: (v: RunView) => void = () =>
 	let last: RunView | null = null;
 	const events: RunEvent[] = [];
 	let seq = afterSeq;
+	const ticket = engine.ticket();
 	await connectWakeups();
 	for (let i = 0; i < POLL_MAX; i++) {
 		const r = await engine.run(runId, seq < 0 ? undefined : seq);
@@ -37,6 +39,7 @@ export async function follow(runId: string, onview: (v: RunView) => void = () =>
 		if (!ACTIVE.includes(last.status.status)) break;
 		await wakeups.wait(runId);
 	}
+	if (last && afterSeq < 0) engine.keepRun(ticket, last);
 	await client.sync().catch(() => null);
 	return last;
 }
@@ -55,6 +58,11 @@ export class GoalChat {
 	view = $state<RunView | null>(null);
 	origin = $state<RunView | null>(null);
 	unreachable = $state(false);
+	known = $state(false);
+	busy = $state(0);
+	following = $state(0);
+	private read = $state(false);
+	failed = $state<FailedSend | null>(null);
 	private approvedKeys = $state<string[]>([]);
 	private originId: string | null = null;
 	goalId: string | null;
@@ -70,6 +78,23 @@ export class GoalChat {
 		this.store = store;
 		const kept: ChatMessage[] = goalId ? readSent(store, goalId).map((m) => ({ type: 'message', from: 'owner', name: 'You', text: m.text })) : [];
 		this.log = [{ type: 'message', from: 'persona', name: 'Aroh', text: greeting }, ...kept];
+		if (goalId) this.seed(goalId);
+	}
+
+	/**
+	 * Shows the goal's run state last read on this device at once (B87): the picked and origin
+	 * run views from the engine cache, display only. `open` reads the engine and replaces them.
+	 */
+	private seed(goalId: string) {
+		const runs = engine.cachedRuns({ goalId });
+		if (!runs) return;
+		const id = pickRun(runs);
+		const view = id ? engine.cachedRun(id) : undefined;
+		if (id && !view) return;
+		const originId = originRun(runs);
+		this.view = view ?? null;
+		this.origin = (originId ? engine.cachedRun(originId) : undefined) ?? null;
+		this.known = true;
 	}
 
 	/**
@@ -84,9 +109,25 @@ export class GoalChat {
 		return [...shown, ...(this.group ? [groupMessage(this.group)] : [])];
 	}
 
-	/** The thread without run state lines (progress, working, stopped), which the goal card's status header shows instead. */
+	/**
+	 * The thread without run state lines (progress, working, stopped), which the goal card's status
+	 * header shows instead, ending in the working bubble or a failed send's error (Q87).
+	 */
 	get thread(): ChatMessage[] {
-		return this.messages.filter((m) => m.type !== 'progress' && m.type !== 'working' && m.type !== 'stopped');
+		const working = this.busy > 0 || runWorking(this.following, this.read, this.view?.status.status ?? null);
+		const tail = bubbleOf(working, this.live, this.failed);
+		const rows = this.messages.filter((m) => m.type !== 'progress' && m.type !== 'working' && m.type !== 'stopped');
+		return tail ? [...rows, tail] : rows;
+	}
+
+	/** Runs `work`, the engine calls of a send before its run is followed, with the working bubble up. */
+	private async working(work: () => Promise<void>) {
+		this.busy++;
+		try {
+			await work();
+		} finally {
+			this.busy = Math.max(0, this.busy - 1);
+		}
 	}
 
 	/**
@@ -94,22 +135,26 @@ export class GoalChat {
 	 * the newest run. A waiting or moving run is followed in the thread; a finished or stopped
 	 * one only sets `view`, so the card's status reads it and Retry works. `origin` is the newest
 	 * new-goal run, whose research and answers the card keeps showing after later replans.
+	 * `read` is the goal's runs read the page already started, so it is not read twice (B87);
+	 * the origin and picked run views are read at the same time.
 	 */
-	async open() {
+	async open(read?: Promise<EngineResult<RunSummary[]>>) {
 		if (!this.goalId) return;
-		const runs = await engine.runs({ goalId: this.goalId });
+		const runs = await (read ?? engine.runs({ goalId: this.goalId }));
 		this.unreachable = !runs.ok;
 		const id = runs.ok ? pickRun(runs.value) : null;
 		const picked = runs.ok ? runs.value.find((r) => r.run_id === id) : undefined;
+		if (!picked) this.known = true;
 		this.originId = runs.ok ? originRun(runs.value) : null;
-		if (this.originId && this.originId !== id) {
-			const first = await engine.run(this.originId);
-			if (first.ok) this.origin = first.value;
-		}
-		if (!id || !picked) return;
-		if (picked.state === 'waiting_human' || ACTIVE.includes(picked.state)) return this.watch(id);
-		const r = await engine.run(id);
+		const originId = this.originId;
+		if (!runs.ok || !originId) this.origin = null;
+		if (!runs.ok || !picked) this.view = null;
+		const origin = originId && originId !== id ? engine.run(originId).then((first) => void (first.ok && this.originId === originId && (this.origin = first.value))) : Promise.resolve();
+		if (!id || !picked) return origin;
+		if (picked.state === 'waiting_human' || ACTIVE.includes(picked.state)) return void (await Promise.all([origin, this.watch(id)]));
+		const [r] = await Promise.all([engine.run(id), origin]);
 		this.unreachable = !r.ok;
+		this.known = true;
 		if (!r.ok) return;
 		this.runId = id;
 		this.view = r.value;
@@ -140,6 +185,7 @@ export class GoalChat {
 	/** Renders a run view when it moved, and opens its question group when it waits at questions. */
 	private show(v: RunView) {
 		this.view = v;
+		this.known = true;
 		if (v.run_id === this.originId) this.origin = v;
 		const top = Math.max(this.seq, ...v.events.map((e) => e.seq));
 		const key = `${v.status.status}:${v.waiting[0]?.node ?? ''}:${top}`;
@@ -153,7 +199,7 @@ export class GoalChat {
 		else if (this.group?.runId !== v.run_id || this.group.node !== v.waiting[0].node) {
 			const w = v.waiting[0];
 			const card = w.node === 'limit_choice' ? (((w.data.limits as { card?: LimitsCard | null } | undefined)?.card ?? null) as LimitsCard | null) : undefined;
-			this.group = { runId: v.run_id, node: w.node, prompt: w.prompt ?? 'Answer these so the plan fits you.', questions, values: {}, skipped: [], sending: false, error: null, card };
+			this.group = { runId: v.run_id, node: w.node, prompt: w.prompt ?? 'Answer these so the plan fits you.', questions, values: knownValues(questions), skipped: [], sending: false, error: null, card };
 		}
 	}
 
@@ -164,8 +210,23 @@ export class GoalChat {
 			this.shown = '';
 		}
 		this.runId = runId;
-		const last = await follow(runId, (v) => this.show(v), this.seq);
+		this.following++;
+		this.read = false;
+		let last: RunView | null;
+		try {
+			last = await follow(
+				runId,
+				(v) => {
+					this.read = true;
+					this.show(v);
+				},
+				this.seq
+			);
+		} finally {
+			this.following = Math.max(0, this.following - 1);
+		}
 		this.unreachable = !last && !this.view;
+		this.known = true;
 		if (!last) return this.say(NEEDS_ENGINE);
 		this.seq = Math.max(this.seq, ...last.events.map((e) => e.seq));
 		if (last.waiting[0]?.node === 'change' && this.change !== null) {
@@ -185,19 +246,46 @@ export class GoalChat {
 	async send(text: string) {
 		if (this.group) return this.fill(text);
 		this.freeze();
+		this.failed = null;
 		this.log.push({ type: 'message', from: 'owner', name: 'You', text });
-		if (!this.goalId) {
-			const started = await engine.startGoal(startBody({ ...blankDraft(), title: text.trim().slice(0, 200), description: text }, deviceZone()));
-			if (!started.ok) return this.say(started.message);
-			this.goalId = started.value.goal_id;
-			return this.watch(started.value.run_id);
-		}
-		rememberSent(this.store, this.goalId, text, Date.now());
-		const sent = await engine.sendChat(this.goalId, text);
-		if (!sent.ok) return this.say(sent.message);
-		this.change = sent.value.change ?? null;
-		if (sent.value.run_id) await this.watch(sent.value.run_id);
-		if (sent.value.questions) this.fill(text);
+		if (this.goalId) rememberSent(this.store, this.goalId, text, Date.now());
+		await this.deliver(text);
+	}
+
+	/** Sends the failed text again, once, without a second owner line. */
+	async resend() {
+		const f = this.failed;
+		if (!f) return;
+		this.failed = null;
+		await this.deliver(f.text);
+	}
+
+	/** Hands owner text already in the thread to the engine; a refusal becomes the failed send with Retry. */
+	private async deliver(text: string): Promise<void> {
+		let run: string | null = null;
+		let questions = false;
+		await this.working(async () => {
+			if (!this.goalId) {
+				const started = await engine.startGoal(startBody({ ...blankDraft(), title: text.trim().slice(0, 200), description: text }, deviceZone()));
+				if (!started.ok) {
+					this.failed = { text, message: started.message };
+					return;
+				}
+				this.goalId = started.value.goal_id;
+				run = started.value.run_id;
+				return;
+			}
+			const sent = await engine.sendChat(this.goalId, text);
+			if (!sent.ok) {
+				this.failed = { text, message: sent.message };
+				return;
+			}
+			this.change = sent.value.change ?? null;
+			run = sent.value.run_id;
+			questions = sent.value.questions === true;
+		});
+		if (run) await this.watch(run);
+		if (questions) this.fill(text);
 	}
 
 	/** Puts typed text into the first open question of the group, or says every question has an answer. */
@@ -257,12 +345,13 @@ export class GoalChat {
 		await this.watch(r.value.run_id);
 	}
 
-	/** Hands a PersonaChat event (send, answer, skip, submit, approve with its fixed items, change, stop or retry) to the chat. */
+	/** Hands a PersonaChat event (send, resend, answer, skip, submit, approve with its fixed items, change, stop or retry) to the chat. */
 	handle(event: unknown) {
 		if ((event as { type?: string }).type === 'stop') void this.stop();
 		if ((event as { type?: string }).type === 'retry') void this.retry();
 		const e = event as { type: string; text?: string; id?: string; value?: unknown; skipped?: boolean; fixed?: number[] };
 		if (e.type === 'send' && e.text?.trim()) void this.send(e.text.trim());
+		if (e.type === 'resend') void this.resend();
 		if (e.type === 'answer' && this.group && e.id) this.group = withAnswer(this.group, e.id, e.value);
 		if (e.type === 'skip' && this.group && e.id) this.group = withSkip(this.group, e.id, e.skipped ?? true);
 		if (e.type === 'submit') void this.submit();

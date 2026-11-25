@@ -5,10 +5,11 @@
 
 	/**
 	 * A profile fact the intake already knows, asked as "Still true?" instead of asked again:
-	 * the question, the known value and where it came from, with Yes (`onyes`) and Edit. Edit
-	 * swaps the row for `children`, the same input the question would have used.
+	 * the question, the known value and where it came from, with Yes (`onyes`) and Edit. With
+	 * `accepted` the value already counts as the answer, so only Edit shows (B82). Edit swaps
+	 * the row for `children`, the same input the question would have used.
 	 */
-	let { label, value, source, onyes, children }: { label: string; value: string; source: string; onyes?: () => void; children: Snippet } = $props();
+	let { label, value, source, accepted = false, onyes, children }: { label: string; value: string; source: string; accepted?: boolean; onyes?: () => void; children: Snippet } = $props();
 
 	let mode = $state<'ask' | 'yes' | 'edit'>('ask');
 
@@ -28,11 +29,15 @@
 	<div class="flex flex-col gap-2 rounded-sm border border-border bg-bg p-3">
 		<div class="flex items-baseline justify-between gap-3">
 			<span class="text-sm font-medium">{label}</span>
-			<span class="text-xs text-muted">Still true?</span>
+			<span class="text-xs text-muted">{accepted ? 'Remembered' : 'Still true?'}</span>
 		</div>
 		<p class="text-lg font-semibold">{value}</p>
 		<p class="text-xs text-muted">{source}</p>
-		{#if mode === 'yes'}
+		{#if accepted}
+			<div class="flex gap-2">
+				<Button variant="ghost" size="touch" onclick={() => (mode = 'edit')}>Edit</Button>
+			</div>
+		{:else if mode === 'yes'}
 			<p class="flex items-center gap-2 text-sm text-status-done" role="status"><Check class="size-4" aria-hidden="true" />Still true</p>
 		{:else}
 			<div class="flex gap-2">

@@ -5,7 +5,7 @@ export type NavKind = 'enter' | 'form' | 'leave' | 'link' | 'goto' | 'popstate';
 export type Back = { label: string; history: boolean; path: string };
 
 const ROOTS: Record<string, string> = { '/today': 'Today', '/calendar': 'Calendar', '/goals': 'Goals', '/dashboard': 'Dashboard', '/log': 'Log', '/settings': 'Settings', '/inbox': 'Inbox' };
-const SUBS: Record<string, string> = { '/goals/new': 'New goal', '/settings/location': 'Location', '/settings/location/log': 'Location log', '/settings/places': 'Places', '/settings/profile': 'What Aroh knows', '/settings/key': 'Claude key', '/settings/agents': 'Agent defaults', '/settings/delete': 'Delete account' };
+const SUBS: Record<string, string> = { '/goals/new': 'New goal', '/settings/location': 'Location', '/settings/location/log': 'Location log', '/settings/places': 'Places', '/settings/profile': 'What Aroh knows', '/settings/key': 'Claude key', '/settings/agents': 'Agent defaults', '/settings/delete': 'Delete account', '/settings/diary': 'Diary' };
 
 /** Splits "/path?query" into its path and query. */
 function split(url: string): [string, URLSearchParams] {
@@ -23,6 +23,7 @@ export function screenTitle(url: string): string {
 	if (/^\/actions\/[^/]+\/chat$/.test(path)) return 'Card chat';
 	if (/^\/actions\/[^/]+$/.test(path)) return 'Session';
 	if (/^\/goals\/[^/]+$/.test(path)) return 'Goal';
+	if (/^\/log\/diary\/[^/]+$/.test(path)) return 'Diary';
 	return 'Aroh';
 }
 
@@ -40,6 +41,7 @@ export function parentOf(url: string): { path: string; label: string } | null {
 	const chat = /^(\/(?:goals|actions)\/[^/]+)\/chat$/.exec(path);
 	if (chat) return up(chat[1]);
 	if (path.startsWith('/goals/')) return up('/goals');
+	if (path.startsWith('/log/')) return up('/log');
 	return up('/today');
 }
 

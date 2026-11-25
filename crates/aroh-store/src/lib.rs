@@ -21,6 +21,8 @@ pub enum Error {
     SchemaTooNew(i64),
     #[error("remote: {0}")]
     Remote(String),
+    #[error("sync stopped: {0}")]
+    SyncStopped(&'static str),
 }
 
 /// Result alias for aroh-store.

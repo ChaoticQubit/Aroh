@@ -134,7 +134,7 @@ pub async fn app_location_setting(app: AppHandle, name: String, value: bool) -> 
 }
 
 /// Reads every location row the screens show.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_location_view(state: State<'_, AppState>) -> Result<LocationView, String> {
     with_core(&state, |c| location::view(&c.conn, &c.user_id, Utc::now(), crate::zone()))
 }
@@ -158,7 +158,7 @@ pub async fn app_location_decide_prompt(app: AppHandle, id: String, decision: Pl
 }
 
 /// Stops ignoring spot `id`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_location_unignore(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     with_core(&state, |c| location::unignore(&c.conn, &id))?;
     after_write(&app);
@@ -223,7 +223,7 @@ pub async fn app_location_decide_pattern(app: AppHandle, id: String, apply: bool
 }
 
 /// Clears the location history on this phone.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_location_clear(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     with_core(&state, |c| location::clear_history(&c.conn))?;
     after_write(&app);

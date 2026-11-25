@@ -488,6 +488,48 @@ CREATE TABLE goals_next (
 INSERT INTO goals_next SELECT id, user_id, category_id, title, context, deadline, status, autonomy, created_at, reminders, use_calendars, run_limit_minutes, 0, updated_at, deleted FROM goals;
 DROP TABLE goals;
 ALTER TABLE goals_next RENAME TO goals;
+"#, r#"
+CREATE TABLE proposals_next (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    goal_id TEXT NOT NULL,
+    run_id TEXT,
+    summary TEXT NOT NULL,
+    diff TEXT NOT NULL,
+    size TEXT NOT NULL,
+    status TEXT NOT NULL,
+    undo TEXT,
+    created_at TEXT NOT NULL,
+    sealed_summary TEXT,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+INSERT INTO proposals_next SELECT id, user_id, goal_id, run_id, summary, diff, size, status, undo, created_at, NULL, updated_at, deleted FROM proposals;
+DROP TABLE proposals;
+ALTER TABLE proposals_next RENAME TO proposals;
+CREATE TABLE diary_entries (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    at TEXT NOT NULL,
+    key_version INTEGER NOT NULL CHECK (key_version BETWEEN 1 AND 1000000),
+    nonce TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+CREATE INDEX diary_entries_day ON diary_entries (day, at);
+CREATE TABLE diary_days (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    key_version INTEGER NOT NULL CHECK (key_version BETWEEN 1 AND 1000000),
+    nonce TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+CREATE INDEX diary_days_day ON diary_days (day);
 "#];
 
 /// Schema version after every migration ran.

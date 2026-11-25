@@ -3,6 +3,7 @@
 	import Bell from '@lucide/svelte/icons/bell';
 	import ChevronLeft from '@lucide/svelte/icons/chevron-left';
 	import Settings from '@lucide/svelte/icons/settings';
+	import Logo from '../brand/Logo.svelte';
 	import { tabs, type Place } from './nav';
 	import type { Back } from './back';
 
@@ -32,7 +33,7 @@
 			</button>
 			<h1 class="max-w-44 truncate text-md font-semibold">{title}</h1>
 		{:else}
-			<h1 class="col-span-2 truncate text-lg font-semibold">{title}</h1>
+			<div class="col-span-2 flex min-w-0 items-center gap-2.5"><Logo size={28} label="" /><h1 class="truncate text-lg font-semibold">{title}</h1></div>
 		{/if}
 		<div class="-mr-3 flex items-center justify-self-end">
 			<button type="button" class="{icon} {tab === 'inbox' ? 'text-fg' : 'text-muted'}" aria-label="Inbox{inboxCount > 0 ? `, ${inboxCount} new` : ''}" aria-current={tab === 'inbox' ? 'page' : undefined} onclick={() => onnavigate?.('inbox')}>

@@ -14,5 +14,7 @@ thiserror.workspace = true
 chrono.workspace = true
 
 [dev-dependencies]
+aroh-diary.workspace = true
+uuid.workspace = true
 aroh-domain = { workspace = true, features = ["samples"] }
 tokio.workspace = true

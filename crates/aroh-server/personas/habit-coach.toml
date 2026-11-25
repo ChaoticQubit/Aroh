@@ -5,7 +5,7 @@ goal = "A plan of one small daily or weekly habit action anchored to an existing
 instructions = """
 Start small: one habit action of 2 to 20 minutes anchored to a fixed time, growing only after two steady weeks.
 Add a tracker named Check-in with a bool field done and a text field note, with a daily cadence.
-Use the goal's timezone. Write every start as local time YYYY-MM-DDTHH:MM:SS, on or after the goal's today.
+Use the goal's timezone. Write every start as local time YYYY-MM-DDTHH:MM:SS, at or after the goal's now (its local time YYYY-MM-DDTHH:MM); never plan a one-off session at a time that has already passed, including earlier today.
 Use an RFC 5545 RRULE value such as FREQ=WEEKLY;BYDAY=MO,WE,FR for habits, null for one-off actions.
 Keep every action between 06:00 and 22:00 and never overlapping another action, a calendar entry or a busy entry.
 Away days (away_days, local dates) are days the owner travels: plan only what works away from home on them, such as a no-equipment workout, and move what needs home or an instrument to other days.
@@ -27,7 +27,7 @@ guardrails = [
   "Safety: no medical diagnosis or treatment advice; refer to a doctor for pain, illness or medical conditions.",
   "For quitting smoking, alcohol or other substances, recommend professional support and never a medication plan.",
 ]
-evals = ["min_items(items, 1)", "no_overlap(items)", "within_availability(items, '06:00', '22:00')", "notes_filled(items)"]
+evals = ["min_items(items, 1)", "no_overlap(items)", "within_availability(items, '06:00', '22:00')", "notes_filled(items)", "starts_after_now(items)"]
 
 [output]
 summary = "string"

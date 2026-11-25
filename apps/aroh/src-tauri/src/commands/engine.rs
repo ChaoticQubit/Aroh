@@ -3,7 +3,7 @@
 //! Tokens and provider keys stay in Rust and are never logged or returned.
 
 use super::with_core;
-use crate::{notify, AppState};
+use crate::{notify, AppState, Core};
 use aroh_app::local::{self, PendingLog};
 use aroh_domain::rows::ProviderSetting;
 use aroh_store::repo;
@@ -48,17 +48,24 @@ fn account_of(session: Option<&auth::Session>) -> Account {
     Account { signed_in: session.is_some(), email: session.and_then(|s| s.email.clone()), user_id: session.map(|s| s.user_id.clone()), check_email: false }
 }
 
-/// Runs one sync on a blocking thread that holds the core lock for its whole
-/// length, then ticks and reschedules reminders. Errors are UI-safe strings.
+impl aroh_store::sync::Parts for Core {
+    fn parts(&mut self) -> (&mut rusqlite::Connection, &mut aroh_domain::hlc::Hlc, &str) {
+        (&mut self.conn, &mut self.clock, &self.user_id)
+    }
+}
+
+/// Runs one sync on a blocking thread, then ticks and reschedules reminders. The sync
+/// lock keeps two syncs apart for the whole run; the core lock is taken only per local
+/// step, never across a network call. Errors are UI-safe strings.
 fn sync_blocking(app: &AppHandle, config: Config, token: String) -> Result<Synced, String> {
     let state = app.state::<AppState>();
-    let moved = with_core(&state, |c| {
-        let mut remote = aroh_sync::rest::PgRest::new(config, token);
-        let user = c.user_id.clone();
-        let moved = tauri::async_runtime::block_on(aroh_store::sync::sync_all(&mut c.conn, &mut remote, &user, &mut c.clock))?;
-        aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone())?;
-        Ok(moved)
-    })?;
+    let syncing = state.syncing.lock().map_err(|_| "sync lock poisoned".to_string())?;
+    let user = with_core(&state, |c| Ok(c.user_id.clone()))?;
+    let mut remote = aroh_sync::rest::PgRest::new(config, token);
+    let mut store = aroh_store::sync::Locked::new(&state.core, user.clone());
+    let moved = tauri::async_runtime::block_on(aroh_store::sync::sync_with(&mut store, &mut remote, &user)).map_err(text)?;
+    drop(syncing);
+    with_core(&state, |c| aroh_app::tick::tick(&c.conn, &mut c.clock, &c.user_id, Utc::now(), crate::zone()))?;
     if let Err(e) = notify::sync(app) {
         eprintln!("aroh: reminders not scheduled: {e}");
     }
@@ -198,7 +205,7 @@ async fn signed_in(app: &AppHandle, state: &State<'_, AppState>, config: Config,
 }
 
 /// Signs out: revokes the session when the server is reachable, removes it from the
-/// keychain and clears the scheduled and delivered reminders. Local rows stay, owned by the
+/// keychain with the device copy of the Claude key, and clears the scheduled and delivered reminders. Local rows stay, owned by the
 /// account; no reminders are planned for them until the account signs in again.
 #[tauri::command]
 pub async fn app_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<Account, String> {
@@ -207,12 +214,14 @@ pub async fn app_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<
     }
     let config = supabase(&state).ok();
     auth::sign_out(config.as_ref()).await.map_err(text)?;
+    super::diary::forget_claude_key();
     notify::clear(&app).await;
     crate::realtime::restart(&app);
     Ok(account_of(None))
 }
 
 fn wipe_device(state: &State<'_, AppState>) -> Result<(), String> {
+    super::diary::forget_claude_key();
     with_core(state, |c| {
         local::wipe(&mut c.conn)?;
         c.user_id = local::user_id(&c.conn)?;
@@ -259,9 +268,16 @@ pub async fn app_wipe_local(app: AppHandle, state: State<'_, AppState>) -> Resul
 }
 
 /// The stored sign-in state, read from the keychain without a network call.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_account() -> Result<Account, String> {
     Ok(account_of(auth::stored().map_err(text)?.as_ref()))
+}
+
+/// Runs one sync now and waits for it; the diary uses it before creating a key and
+/// while rotating. Errors are UI-safe strings.
+pub(crate) async fn sync_now(app: &AppHandle, state: &State<'_, AppState>) -> Result<(), String> {
+    let config = supabase(state)?;
+    run_sync(app, config).await.map(|_| ())
 }
 
 /// Pushes local changes and pulls the account's rows (LWW), then reloads the screens.
@@ -290,8 +306,8 @@ pub async fn app_engine(state: State<'_, AppState>, method: String, path: String
 }
 
 /// Hands a provider key to the engine for the vendor's provider row (`PUT /v1/keys/{row id}`
-/// with vendor, model and label). The key is dropped after the call and never logged,
-/// stored or echoed. Returns the engine's answer (`last4` only).
+/// with vendor, model and label). An accepted Anthropic key also keeps a device copy for
+/// the diary (Q85); it is never logged or echoed. Returns the engine's answer (`last4` only).
 #[tauri::command]
 pub async fn app_save_key(state: State<'_, AppState>, vendor: String, key: String) -> Result<Answer, String> {
     if key.trim().len() < 8 || key.len() > 512 {
@@ -302,12 +318,16 @@ pub async fn app_save_key(state: State<'_, AppState>, vendor: String, key: Strin
         rows.into_iter().next().ok_or_else(|| aroh_app::Error::Invalid("pick this provider first".into()))
     })?;
     let body = json!({"vendor": row.vendor, "key": key.trim(), "model": row.model, "label": row.label, "is_default": row.is_default});
-    engine_call(&state, "PUT", &format!("/v1/keys/{}", row.id), Some(&body)).await
+    let answer = engine_call(&state, "PUT", &format!("/v1/keys/{}", row.id), Some(&body)).await?;
+    if answer.status == 200 && row.vendor == "anthropic" {
+        super::diary::keep_claude_key(&key);
+    }
+    Ok(answer)
 }
 
 /// Removes the free-text logs the engine accepted from the local queue; logs queued
 /// meanwhile stay. Returns how many were removed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_logs_sent(app: AppHandle, state: State<'_, AppState>, sent: Vec<PendingLog>) -> Result<usize, String> {
     let removed = with_core(&state, |c| local::remove_sent(&c.conn, &sent))?;
     if let Err(e) = notify::sync(&app) {

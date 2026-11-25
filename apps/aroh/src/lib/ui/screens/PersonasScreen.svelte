@@ -3,17 +3,21 @@
 	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import { Badge } from '$lib/ui/primitives/badge';
 	import type { CoachGroup, CoachView } from './types';
+	import type { PluginRow } from '$lib/plugins/describe';
 
 	/**
 	 * Coach library: with `goalTitle`, the coaches working on that goal first, then one hairline list
 	 * per team with its category dot, each row the coach's name, style line and a "Your copy" badge.
 	 * `onopen` gets the coach's slug, `onback` returns to where the owner came from. `status` shows above.
+	 * A Plugins group lists every live plugin from `plugins`, each linking to its page; null while loading.
 	 */
 	let {
 		groups,
 		coaches = [],
 		goalTitle = null,
 		status = null,
+		plugins = [],
+		pluginStatus = null,
 		backLabel = 'Settings',
 		onopen,
 		onback
@@ -22,6 +26,8 @@
 		coaches?: CoachView[];
 		goalTitle?: string | null;
 		status?: string | null;
+		plugins?: PluginRow[] | null;
+		pluginStatus?: string | null;
 		backLabel?: string;
 		onopen?: (name: string) => void;
 		onback?: () => void;
@@ -74,4 +80,30 @@
 			{@render rows(g.personas, `${g.title} coaches`)}
 		</section>
 	{/each}
+	<section class="flex flex-col gap-2" aria-labelledby="plugins-head">
+		<h2 id="plugins-head" class="flex items-center gap-2 text-sm font-semibold text-fg">
+			Plugins
+			{#if plugins?.length}<span class="text-xs font-normal text-muted tabular-nums">{plugins.length}</span>{/if}
+		</h2>
+		{#if pluginStatus}<p class="text-sm text-muted" role="status">{pluginStatus}</p>{/if}
+		{#if plugins === null}
+			<p class="text-sm text-muted" role="status">Loading plugins.</p>
+		{:else if plugins.length}
+			<ul class="divide-y divide-border overflow-hidden rounded-md border border-border bg-bg" aria-label="Plugins">
+				{#each plugins as p (p.id)}
+					<li>
+						<a href={p.href} class="flex min-h-14 w-full items-center gap-3 px-4 py-2 text-left text-fg no-underline outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset">
+							<span class="flex min-w-0 flex-1 flex-col">
+								<span class="truncate text-sm font-medium">{p.title}</span>
+								<span class="line-clamp-2 text-xs text-muted">{p.note}</span>
+							</span>
+							<ChevronRight class="size-4 shrink-0 text-muted" aria-hidden="true" />
+						</a>
+					</li>
+				{/each}
+			</ul>
+		{:else if !pluginStatus}
+			<p class="text-sm text-muted">No plugins yet. An agent writes one when it plans a goal that needs its own dashboard.</p>
+		{/if}
+	</section>
 </div>

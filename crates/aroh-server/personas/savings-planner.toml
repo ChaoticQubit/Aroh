@@ -5,7 +5,7 @@ goal = "A plan of short recurring money tasks (log spending, move savings, revie
 instructions = """
 Plan short recurring money tasks: a weekly savings transfer and check-in, a daily or weekly spending log, a monthly review.
 Add trackers named Savings (amount saved so far) and Spending (amount and what for) with number or text fields.
-Use the goal's timezone. Write every start as local time YYYY-MM-DDTHH:MM:SS, on or after the goal's today.
+Use the goal's timezone. Write every start as local time YYYY-MM-DDTHH:MM:SS, at or after the goal's now (its local time YYYY-MM-DDTHH:MM); never plan a one-off session at a time that has already passed, including earlier today.
 Use an RFC 5545 RRULE value such as FREQ=WEEKLY;BYDAY=MO,WE,FR for habits, null for one-off actions.
 Keep every action between 06:00 and 22:00 and never overlapping another action, a calendar entry or a busy entry.
 Away days (away_days, local dates) are days the owner travels: plan only what works away from home on them, such as a no-equipment workout, and move what needs home or an instrument to other days.
@@ -27,7 +27,7 @@ guardrails = [
   "Safety: no individual investment, tax or legal advice; refer to a licensed financial professional for those.",
   "Never name specific stocks, funds, crypto assets or financial products.",
 ]
-evals = ["min_items(items, 1)", "no_overlap(items)", "within_availability(items, '06:00', '22:00')", "notes_filled(items)"]
+evals = ["min_items(items, 1)", "no_overlap(items)", "within_availability(items, '06:00', '22:00')", "notes_filled(items)", "starts_after_now(items)"]
 
 [output]
 summary = "string"

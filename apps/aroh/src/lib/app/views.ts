@@ -50,13 +50,19 @@ export function categoryList(s: Snapshot): CategoryView[] {
 }
 
 /**
- * A goal's "YYYY-MM-DD" deadline as the instant the screens format: local noon of that date in
- * `zone`, so the shown day never shifts, whatever the zone's UTC offset.
+ * A goal's "YYYY-MM-DD" deadline as the instant the screens use: the last second of that date in
+ * `zone` (23:59:59 local), so a goal due today is not passed until the day is over.
  */
 export function deadlineAt(ymd: string, zone: string): string {
-	const noonUtc = `${ymd}T12:00:00Z`;
-	const offsetMin = daysBetween(ymd, formatYmd(noonUtc, zone)) * 1440 + minuteOfDay(noonUtc, zone) - 720;
-	const at = new Date(Date.parse(noonUtc) - offsetMin * 60_000).toISOString();
+	const wall = Date.parse(`${ymd}T23:59:59Z`);
+	const midnight = Date.parse(`${ymd}T00:00:00Z`);
+	const offsetMs = (t: number) => {
+		const iso = new Date(t).toISOString();
+		const local = daysBetween(ymd, formatYmd(iso, zone)) * 1440 + minuteOfDay(iso, zone);
+		return (local - Math.floor((t - midnight) / 60_000)) * 60_000;
+	};
+	const guess = wall - offsetMs(wall);
+	const at = new Date(wall - offsetMs(guess)).toISOString();
 	if (formatYmd(at, zone) !== ymd) throw new RangeError(`deadline ${ymd} moved in ${zone}`);
 	return at;
 }

@@ -194,11 +194,11 @@ async fn missed_action_produces_a_proposal_without_an_owner_message() {
 
     let report = engine.tick(TickOptions::default()).await.unwrap();
     assert_eq!(report.processed, 0, "the scan slot of this process is taken for 30 s");
-    let insights = insights::list(&w.pool, w.user, Some(goal)).await.unwrap();
+    let insights = insights::list(&w.pool, &w.engine.deps().vault, w.user, Some(goal)).await.unwrap();
     assert_eq!(insights.len(), 1);
     assert_eq!(insights[0].body, "Missed: Core workout (Sat 10:00). Move the missed workout to Monday evening. Applied 1 of 1 changes.");
     assert_eq!(insights[0].state.as_deref(), Some("done"));
-    assert!(insights::list(&w.pool, user(&w.pool).await, None).await.unwrap().is_empty());
+    assert!(insights::list(&w.pool, &w.engine.deps().vault, user(&w.pool).await, None).await.unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -238,7 +238,7 @@ async fn away_days_start_one_adaptation_per_goal_that_always_asks() {
     assert_eq!(kept, workout.start_at);
     let analyst = w.seen.lock().unwrap().iter().find(|b| b.contains("You are Adaptation analyst")).cloned().unwrap();
     assert!(analyst.contains("2026-11-27") && analyst.contains("away_days"), "the planner sees the away days");
-    let insight = insights::list(&w.pool, w.user, Some(goal)).await.unwrap().remove(0);
+    let insight = insights::list(&w.pool, &w.engine.deps().vault, w.user, Some(goal)).await.unwrap().remove(0);
     assert_eq!((insight.source.as_str(), insight.title.as_str()), ("calendar", "Away days"));
 
     w.later(31_000);
@@ -298,7 +298,7 @@ async fn scheduled_review_runs_from_tick() {
     assert_eq!(state, "done", "no change ends the run even under Ask");
     assert_eq!(w.engine.review(w.user, goal).await.unwrap().next_at.to_rfc3339(), "2026-11-29T12:10:00+00:00");
     assert_eq!(w.count("select count(*) from public.proposals where user_id = $1").await, 0);
-    let insight = insights::list(&w.pool, w.user, Some(goal)).await.unwrap().remove(0);
+    let insight = insights::list(&w.pool, &w.engine.deps().vault, w.user, Some(goal)).await.unwrap().remove(0);
     assert_eq!(insight.source, "review");
     assert!(insight.body.starts_with("Weekly review of the last 7 days: 0 done, 0 missed, 0 skipped"), "{}", insight.body);
     assert!(insight.body.ends_with("No change needed. On track, keep the plan."), "{}", insight.body);
@@ -377,7 +377,7 @@ async fn three_similar_edits_produce_a_preference_proposal() {
         .unwrap();
     assert_eq!(prefs, vec![(FACT.to_string(), "Preference analyst".to_string(), false)]);
     assert_eq!(w.count("select count(*) from public.action_events where user_id = $1 and not handled").await, 0);
-    let insight = insights::list(&w.pool, w.user, None).await.unwrap().remove(0);
+    let insight = insights::list(&w.pool, &w.engine.deps().vault, w.user, None).await.unwrap().remove(0);
     assert_eq!(insight.source, "edits");
     assert_eq!(insight.body, format!("3 similar edits: moved actions from the morning to the evening. Proposed preference: {FACT}"));
 
@@ -610,7 +610,7 @@ async fn cards_backfill_once_then_fill_with_each_weekly_review() {
     assert_eq!(w.count("select count(*) from public.runs where user_id = $1 and workflow = 'fill-cards' and state = 'done'").await, 2);
     let writer = w.seen.lock().unwrap().iter().filter(|b| b.contains("You are Card writer")).count();
     assert_eq!(writer, 2);
-    let shown = insights::list(&w.pool, w.user, Some(goal)).await.unwrap();
+    let shown = insights::list(&w.pool, &w.engine.deps().vault, w.user, Some(goal)).await.unwrap();
     assert!(shown.iter().all(|i| !i.body.contains("cards")), "card fills never reach the Inbox");
     assert_eq!(shown.len(), 1, "the weekly review only");
 }

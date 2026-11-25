@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sliderRange, typedNumber } from '$lib/ui/format';
-import { answerText, FALLBACK_BOUNDS, groupMessage, inputFor, scrollFor, submissionOf, withAnswer, type QuestionGroup } from './questions';
+import { answerText, FALLBACK_BOUNDS, groupMessage, inputFor, knownValues, scrollFor, submissionOf, withAnswer, type QuestionGroup } from './questions';
+import type { Question } from './engine';
 
 describe('question inputs', () => {
 	it('a number question shows its unit and its own slider bounds', () => {
@@ -35,16 +36,23 @@ describe('question inputs', () => {
 });
 
 describe('still true checks', () => {
-	it('a question the profile answers shows its known value and source, and Yes sends that value', () => {
+	it('a question the profile answers shows its known value and source, and counts as answered with it', () => {
 		const known = { fact_id: 'f1', value: '30 min', source: 'your answer on Run a 5k' };
-		const g: QuestionGroup = { runId: 'r1', node: 'questions', prompt: 'Answer these.', questions: [{ id: 'minutes', text: 'Minutes a day?', kind: 'text', choices: [], known }, { id: 'old', text: 'Old?', kind: 'text', choices: [] }], values: {}, skipped: [], sending: false, error: null };
+		const questions = [{ id: 'minutes', text: 'Minutes a day?', kind: 'text' as const, choices: [], known }, { id: 'old', text: 'Old?', kind: 'text' as const, choices: [] }];
+		const g: QuestionGroup = { runId: 'r1', node: 'questions', prompt: 'Answer these.', questions, values: knownValues(questions), skipped: [], sending: false, error: null };
 		const m = groupMessage(g);
 		expect(m.items[0].known).toEqual({ value: '30 min', source: 'From your answer on Run a 5k' });
 		expect(m.items[1].known).toBeUndefined();
-		expect(m.status).toBe('0 of 2 answered. 2 still open, 1 to confirm.');
-		const yes = groupMessage(withAnswer(g, 'minutes', '30 min'));
-		expect(yes.missing).toEqual(['old']);
-		expect(yes.status).toBe('1 of 2 answered. 1 still open.');
+		expect(m.missing).toEqual(['old']);
+		expect(m.status).toBe('1 of 2 answered. 1 still open.');
+		const cleared = groupMessage(withAnswer(g, 'minutes', ''));
+		expect(cleared.missing).toEqual(['minutes', 'old']);
+		expect(cleared.status).toBe('0 of 2 answered. 2 still open.');
+	});
+
+	it('a blank or absent remembered value seeds no answer', () => {
+		const q = (id: string, known: Question['known']): Question => ({ id, text: id, kind: 'text', choices: [], known });
+		expect(knownValues([q('a', { fact_id: 'f', value: '  ', source: 's' }), q('b', null), q('c', undefined), q('d', { fact_id: 'g', value: 'Mon', source: 's' })])).toEqual({ d: 'Mon' });
 	});
 });
 

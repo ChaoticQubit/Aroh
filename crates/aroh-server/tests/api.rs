@@ -12,7 +12,7 @@ use common::{deps, offline, pg, user, T0};
 use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
-use troupekit_core::clock::FixedClock;
+use troupekit_core::clock::{Clock, FixedClock};
 use troupekit_core::http::{read_limited, HttpRequest, Method, Transport};
 use troupekit_providers::reqwest_transport::ReqwestTransport;
 use uuid::Uuid;
@@ -296,6 +296,10 @@ fn goal_models_with(builder: impl Fn(&str) -> Reply + Send + Sync + 'static) -> 
         if body.contains("You are Card writer") {
             return sse_text(&common::card_writer_reply(&body));
         }
+        if body.contains("You are Card coach") && body.contains(DIARY_SENTINEL) {
+            return sse_text(&json!({"reply": format!("Shorter, since you wrote {DIARY_SENTINEL}."), "minutes": 30, "card": {"why": format!("Easy day, {DIARY_SENTINEL}."), "blocks": [{"kind": "workout", "title": null, "items": null,
+                "exercises": [{"name": "Split squat", "unit": "kg", "rest_s": 90, "cue": null, "sets": [{"reps": 10, "weight": 20}]}]}]}}).to_string());
+        }
         if body.contains("You are Card coach") {
             return sse_text(&json!({"reply": "Swapped lunges for split squats and cut to 45 min.", "minutes": 45, "card": {"why": "Legs.", "blocks": [{"kind": "workout", "title": null, "items": null,
                 "exercises": [{"name": "Split squat", "unit": "kg", "rest_s": 90, "cue": null, "sets": [{"reps": 10, "weight": 20}]}]}]}}).to_string());
@@ -423,6 +427,38 @@ async fn new_goal_to_written_actions() {
     let (status, _) = api.call(Method::Post, &format!("/v1/actions/{}/chat", Uuid::now_v7()), Some(&t), Some(json!({"scope": "this", "text": "x"}))).await;
     assert_eq!(status, 404);
 
+    let key = aroh_diary::DiaryKey::generate(1).unwrap();
+    let today = utc(api.clock.now_ms()).date_naive().format("%Y-%m-%d").to_string();
+    api.diary_day(u, &key, &today).await;
+    let (status, _) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str()}))).await;
+    assert_eq!(status, 200);
+    let (status, chat) = api.call(Method::Post, &format!("/v1/actions/{series_action}/chat"), Some(&t), Some(json!({"scope": "this", "text": format!("shorter today, {DIARY_SENTINEL}")}))).await;
+    assert_eq!(status, 202, "{chat}");
+    api.tick().await;
+    let sealed_chat = chat["run_id"].as_str().unwrap();
+    let chat_view = api.run(&t, sealed_chat).await;
+    assert_eq!(chat_view["status"]["status"], "done", "a sealed card chat still finishes: {chat_view}");
+    assert!(chat_view["summary"].as_str().unwrap().contains(DIARY_SENTINEL), "the owner reads the sealed run: {chat_view}");
+    let coach = models.sent().iter().rev().map(body_text).find(|b| b.contains("You are Card coach")).unwrap();
+    assert!(coach.contains(DIARY_SENTINEL), "the card coach read the diary");
+    assert_eq!(api.count("select count(*) from public.runs where id::text = $1 and sealed", sealed_chat).await, 1);
+    let summary: String = db::query_scalar("select summary from public.proposals where run_id::text = $1").bind(sealed_chat).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(summary, aroh_server::diary::NEUTRAL_SUMMARY);
+    let request: Value = db::query_scalar("select diff->'request' from public.proposals where run_id::text = $1").bind(sealed_chat).fetch_one(&api.pool).await.unwrap();
+    assert!(request.get("sealed").is_some(), "the card-chat request is sealed: {request}");
+    for (table, sql) in [
+        ("proposals", "select coalesce(string_agg(to_jsonb(p)::text, ' '), '') from public.proposals p"),
+        ("run_checkpoints", "select coalesce(string_agg(to_jsonb(c)::text, ' '), '') from public.run_checkpoints c"),
+        ("run_events", "select coalesce(string_agg(to_jsonb(e)::text, ' '), '') from public.run_events e"),
+        ("preferences", "select coalesce(string_agg(to_jsonb(f)::text, ' '), '') from public.preferences f"),
+    ] {
+        let text: String = db::query_scalar(sql).fetch_one(&api.pool).await.unwrap();
+        assert!(!text.contains(DIARY_SENTINEL), "{table} holds diary text in plaintext");
+    }
+    let card_kept = api.count("select count(*) from public.actions where id::text = $1 and card->>'why' like '%DIARY-SENTINEL%'", &series_action).await;
+    assert_eq!(card_kept, 1, "the applied card stays plaintext like any session, by decision");
+    assert!(!api.every_row_text().await.contains(key.to_base64().as_str()), "no key bytes rest in any table");
+
     let setting = keys.as_array().unwrap().iter().find(|k| k["vendor"] == "anthropic").unwrap()["setting_id"].as_str().unwrap().to_string();
     let (status, test) = api.call(Method::Post, &format!("/v1/keys/{setting}/test"), Some(&t), None).await;
     assert_eq!((status, test["ok"].as_bool()), (200, Some(true)), "{test}");
@@ -460,13 +496,13 @@ async fn users_never_see_each_other_and_roles_are_enforced() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs AROH_TEST_PG"]
 async fn replan_applies_small_changes_and_asks_when_it_must() {
-    let missed_id = Arc::new(Mutex::new(String::new()));
+    let missed_id = Arc::new(Mutex::new((String::new(), "2026-11-23T18:00:00")));
     let id = missed_id.clone();
     let models = FnTransport::new(move |req| {
         let body = body_text(req);
-        let target = id.lock().unwrap().clone();
+        let (target, start) = id.lock().unwrap().clone();
         if body.contains("You are Adaptation analyst") {
-            let change = json!([{"op": "move", "action_id": target, "title": "Easy run", "start": "2026-11-23T18:00:00", "minutes": 30}]);
+            let change = json!([{"op": "move", "action_id": target, "title": "Easy run", "start": start, "minutes": 30}]);
             return sse_text(&json!({"summary": "Move the missed run to Monday evening.", "size": "small", "changes": change}).to_string());
         }
         json_reply(400, json!({}))
@@ -475,7 +511,7 @@ async fn replan_applies_small_changes_and_asks_when_it_must() {
     let (u, t) = api.signed_up().await;
     let balanced = api.goal(u, Autonomy::Balanced).await;
     let missed = api.action(u, balanced, "2026-11-21T07:00:00Z", false).await;
-    *missed_id.lock().unwrap() = missed.id.clone();
+    *missed_id.lock().unwrap() = (missed.id.clone(), "2026-11-23T18:00:00");
     let reason = json!({"reason": "I missed Saturday's run.", "timezone": "Europe/Berlin"});
     let (status, started) = api.call(Method::Post, &format!("/v1/goals/{balanced}/replan"), Some(&t), Some(reason.clone())).await;
     assert_eq!(status, 202, "{started}");
@@ -494,7 +530,7 @@ async fn replan_applies_small_changes_and_asks_when_it_must() {
 
     let asks = api.goal(u, Autonomy::Ask).await;
     let other = api.action(u, asks, "2026-11-21T08:00:00Z", false).await;
-    *missed_id.lock().unwrap() = other.id.clone();
+    *missed_id.lock().unwrap() = (other.id.clone(), "2026-11-23T19:00:00");
     let (_, started) = api.call(Method::Post, &format!("/v1/goals/{asks}/replan"), Some(&t), Some(reason)).await;
     let run = started["run_id"].as_str().unwrap();
     api.tick().await;
@@ -502,7 +538,7 @@ async fn replan_applies_small_changes_and_asks_when_it_must() {
     assert_eq!(view["waiting"][0]["node"], "approve", "{view}");
     let record = &view["waiting"][0]["data"]["proposal_record"];
     assert_eq!(record["changes"][0]["before"]["start_at"], "2026-11-21T08:00:00Z");
-    assert_eq!(record["changes"][0]["after"]["start_at"], "2026-11-23T17:00:00Z");
+    assert_eq!(record["changes"][0]["after"]["start_at"], "2026-11-23T18:00:00Z", "the first goal's moved run at 18:00 is busy for this goal (B89)");
     api.answer(&t, run, "approve", json!(false)).await;
     api.tick().await;
     assert_eq!(api.run(&t, run).await["status"]["status"], "done");
@@ -792,6 +828,147 @@ async fn planner_repairs_a_plan_over_busy_time() {
     api.tick().await;
     let start: DateTime<Utc> = db::query_scalar("select start_at from public.actions where goal_id::text = $1").bind(&goal).fetch_one(&api.pool).await.unwrap();
     assert_eq!(start.to_rfc3339(), "2026-11-23T06:00:00+00:00");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b89_planner_repairs_a_plan_over_another_goals_flexible_session() {
+    let models = FnTransport::new(|req| {
+        let body = body_text(req);
+        if body.contains("You are Intake interviewer") {
+            return sse_text(&coach_intake().to_string());
+        }
+        if body.contains("You are Goal researcher") {
+            return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
+        }
+        if body.contains("You are Goal planner") {
+            let start = if body.contains("overlaps busy") { "2026-11-23T11:00:00" } else { "2026-11-23T09:15:00" };
+            let plan = json!({"summary": "One run.", "timezone": "UTC", "trackers": [], "daily_minutes": null, "needed_minutes": null, "ordered": false, "ordered_why": "Runs stand in for each other.",
+                "items": [{"title": "Easy run", "start": start, "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
+            return sse_text(&plan.to_string());
+        }
+        json_reply(400, json!({}))
+    });
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let other = api.goal(u, Autonomy::Balanced).await;
+    let mut lecture = api.action(u, other, "2026-11-23T09:00:00Z", false).await;
+    lecture.title = "ML lecture".into();
+    lecture.end_at = lecture.start_at + chrono::Duration::minutes(60);
+    put_row(&api.pool, &api.hlc, u, &mut lecture).await.unwrap();
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "UTC"}))).await;
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "approve", "{view}");
+    assert_eq!(view["waiting"][0]["data"]["plan"]["items"][0]["start"], "2026-11-23T11:00:00", "the plan shown never overlaps the other goal's session");
+    let planner: Vec<String> = models.sent().iter().map(body_text).filter(|b| b.contains("You are Goal planner")).collect();
+    assert_eq!(planner.len(), 2, "one repair round");
+    assert!(planner[1].contains("overlaps busy `ML lecture`"), "{}", planner[1]);
+}
+
+/// A fake goal planner for the Run a 5k flow that plans one run at `first`, and at
+/// `repaired` once the repair round names the busy entry `clash`.
+fn planner_around(clash: &'static str, first: &'static str, repaired: &'static str) -> Arc<FnTransport> {
+    FnTransport::new(move |req| {
+        let body = body_text(req);
+        if body.contains("You are Intake interviewer") {
+            return sse_text(&coach_intake().to_string());
+        }
+        if body.contains("You are Goal researcher") {
+            return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
+        }
+        if body.contains("You are Goal planner") {
+            let start = if body.contains(&format!("overlaps busy `{clash}`")) { repaired } else { first };
+            let plan = json!({"summary": "One run.", "timezone": "UTC", "trackers": [], "daily_minutes": null, "needed_minutes": null, "ordered": false, "ordered_why": "Runs stand in for each other.",
+                "items": [{"title": "Easy run", "start": start, "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
+            return sse_text(&plan.to_string());
+        }
+        json_reply(400, json!({}))
+    })
+}
+
+/// Adds a one-hour unlocked session `title` at UTC `start` to a new other goal of `user`.
+async fn other_goal_session(api: &Api, user: Uuid, title: &str, start: &str) {
+    let other = api.goal(user, Autonomy::Balanced).await;
+    let mut a = api.action(user, other, start, false).await;
+    a.title = title.into();
+    a.end_at = a.start_at + chrono::Duration::minutes(60);
+    put_row(&api.pool, &api.hlc, user, &mut a).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b89_a_change_request_plans_around_a_session_added_since_the_run_started() {
+    let models = planner_around("Late meeting", "2026-11-23T11:00:00", "2026-11-23T13:00:00");
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "UTC"}))).await;
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["data"]["plan"]["items"][0]["start"], "2026-11-23T11:00:00", "{view}");
+    other_goal_session(&api, u, "Late meeting", "2026-11-23T11:00:00Z").await;
+    api.answer(&t, &run, "approve", json!(false)).await;
+    api.tick().await;
+    api.answer(&t, &run, "change", json!("Make it a little longer.")).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "approve", "{view}");
+    assert_eq!(view["waiting"][0]["data"]["plan"]["items"][0]["start"], "2026-11-23T13:00:00", "the revised plan avoids the session added after the run started");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b89_a_session_a_month_out_is_checked_against_other_goals() {
+    let models = planner_around("Exam", "2026-12-22T09:15:00", "2026-12-22T11:00:00");
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    other_goal_session(&api, u, "Exam", "2026-12-22T09:00:00Z").await;
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "UTC"}))).await;
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "approve", "{view}");
+    assert_eq!(view["waiting"][0]["data"]["plan"]["items"][0]["start"], "2026-12-22T11:00:00", "a session 30 days out never overlaps another goal's session");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b89_a_series_occurrence_a_month_out_is_busy_though_not_materialized() {
+    let models = planner_around("Yoga", "2026-12-22T06:00:00", "2026-12-22T11:00:00");
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let other = api.goal(u, Autonomy::Balanced).await;
+    let mut yoga = aroh_domain::rows::ActionSeries {
+        id: Uuid::now_v7().to_string(),
+        user_id: u.to_string(),
+        goal_id: other.to_string(),
+        title: "Yoga".into(),
+        notes: None,
+        rrule: "FREQ=DAILY".into(),
+        dtstart_local: "2026-11-23T06:00:00".into(),
+        timezone: "UTC".into(),
+        duration_minutes: 30,
+        card: None,
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&api.pool, &api.hlc, u, &mut yoga).await.unwrap();
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "UTC"}))).await;
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "approve", "{view}");
+    assert_eq!(view["waiting"][0]["data"]["plan"]["items"][0]["start"], "2026-12-22T11:00:00", "the daily Yoga at 06:00 a month out is busy");
 }
 
 fn triage_event(id: &str, title: &str, start: &str, rrule: Option<&str>) -> Value {
@@ -1362,7 +1539,7 @@ fn profile_models() -> Arc<FnTransport> {
         }
         if body.contains("You are Goal planner") {
             let plan = json!({"summary": "One run.", "timezone": "UTC", "trackers": [], "daily_minutes": null, "needed_minutes": null, "ordered": false, "ordered_why": "Runs stand in for each other.",
-                "items": [{"title": "Easy run", "start": "2026-11-23T09:15:00", "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
+                "items": [{"title": "Easy run", "start": "2026-11-25T09:15:00", "minutes": 30, "rrule": null, "notes": "Run 1 min, walk 2 min, eight rounds"}]});
             return sse_text(&plan.to_string());
         }
         json_reply(400, json!({}))
@@ -1748,4 +1925,193 @@ async fn run_again_keeps_done_actions_changes_nothing_before_approval_and_carrie
     let view = api.run(&t, started["run_id"].as_str().unwrap()).await;
     let carried = view["answers"].as_array().unwrap().iter().find(|a| a["id"] == "weekly_runs").unwrap()["answer"].clone();
     assert_eq!(carried, json!("4"), "Keep takes the newest run's answers: {view}");
+}
+
+const DIARY_SENTINEL: &str = "DIARY-SENTINEL-4b1e";
+
+impl Api {
+    /// Seals one structured diary day for `user` on `day` whose summary and
+    /// notes carry the sentinel, under `key`. Returns nothing; the row is stored.
+    async fn diary_day(&self, user: Uuid, key: &aroh_diary::DiaryKey, day: &str) {
+        let card = aroh_diary::Card {
+            v: 1,
+            day: day.into(),
+            entry_ids: vec![],
+            summary: format!("Tired after a long week, {DIARY_SENTINEL}."),
+            mood: 2,
+            energy: 1,
+            highlights: vec![],
+            food: None,
+            water: None,
+            workout: None,
+            notes_for_tomorrow: Some(format!("Go easy, {DIARY_SENTINEL}.")),
+            structured_at: utc(T0),
+        };
+        let id = aroh_diary::day_id(&user.to_string(), day);
+        let sealed = aroh_diary::seal(key, &user.to_string(), aroh_diary::Table::Days, &id, &card.to_bytes()).unwrap();
+        let mut row = aroh_domain::rows::DiaryDay { id, user_id: user.to_string(), day: day.into(), key_version: sealed.key_version, nonce: sealed.nonce, ciphertext: sealed.ciphertext, updated_at: String::new(), deleted: false };
+        put_row(&self.pool, &self.hlc, user, &mut row).await.unwrap();
+    }
+
+    /// Every public table's rows as JSON text, for the plaintext sweep.
+    async fn every_row_text(&self) -> String {
+        let tables: Vec<String> = db::query_scalar("select tablename::text from pg_tables where schemaname = 'public' order by tablename").fetch_all(&self.pool).await.unwrap();
+        assert!(tables.len() > 30, "{tables:?}");
+        let mut all = String::new();
+        for t in tables {
+            let text: Option<String> = db::query_scalar(&format!("select string_agg(to_jsonb(x)::text, ' ') from public.{t} x")).fetch_one(&self.pool).await.unwrap();
+            all.push_str(&text.unwrap_or_default());
+        }
+        all
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn diary_reaches_runs_only_while_shared_and_never_rests_in_plaintext() {
+    let saw = Arc::new(Mutex::new(Vec::<(usize, bool)>::new()));
+    let seen = saw.clone();
+    let targets = Arc::new(Mutex::new(Vec::<String>::new()));
+    let ids = targets.clone();
+    let models = FnTransport::new(move |req| {
+        let body = body_text(req);
+        if !body.contains("You are Adaptation analyst") {
+            return json_reply(400, json!({}));
+        }
+        let with_diary = body.contains(DIARY_SENTINEL);
+        let ids = ids.lock().unwrap();
+        seen.lock().unwrap().push((ids.len(), with_diary));
+        let target = ids.last().cloned().unwrap_or_default();
+        let summary = if with_diary { format!("Lighter week because you wrote {DIARY_SENTINEL}.") } else { "Move the run.".to_string() };
+        let title = if with_diary { format!("Easy run, {DIARY_SENTINEL}") } else { "Easy run".to_string() };
+        let change = json!([{"op": "move", "action_id": target, "title": title, "start": "2026-11-24T18:00:00", "minutes": 30}]);
+        sse_text(&json!({"summary": summary, "size": "small", "changes": change}).to_string())
+    });
+    let api = api(models, offline()).await;
+    let (u, t) = api.signed_up().await;
+    let today = utc(T0).with_timezone(&chrono_tz::Europe::Berlin).date_naive().format("%Y-%m-%d").to_string();
+    let key = aroh_diary::DiaryKey::generate(1).unwrap();
+    api.diary_day(u, &key, &today).await;
+    let reason = json!({"reason": "I missed Saturday's run.", "timezone": "Europe/Berlin"});
+    let replan = |label: &'static str| {
+        let (api, t, reason, targets) = (&api, t.clone(), reason.clone(), targets.clone());
+        async move {
+            let goal = api.goal(u, Autonomy::Ask).await;
+            let a = api.action(u, goal, "2026-11-21T07:00:00Z", false).await;
+            targets.lock().unwrap().push(a.id.clone());
+            let (status, started) = api.call(Method::Post, &format!("/v1/goals/{goal}/replan"), Some(&t), Some(reason)).await;
+            assert_eq!(status, 202, "{label}: {started}");
+            api.tick().await;
+            let run = started["run_id"].as_str().unwrap().to_string();
+            let view = api.run(&t, &run).await;
+            assert_eq!(view["waiting"][0]["node"], "approve", "{label}: {view}");
+            (run, view)
+        }
+    };
+
+    let (status, off) = api.call(Method::Get, "/v1/diary/key", Some(&t), None).await;
+    assert_eq!((status, off["on"].clone()), (200, json!(false)));
+    let (first, _) = replan("before sharing").await;
+
+    let b64 = |bytes: &[u8]| { use base64::Engine as _; base64::engine::general_purpose::STANDARD.encode(bytes) };
+    for bad in [json!({"version": 1, "key": b64(&[1u8; 16])}), json!({"version": 0, "key": key.to_base64().as_str()}), json!({"version": 1, "key": "not base64!"}), json!({"version": 1})] {
+        let (status, body) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(bad)).await;
+        assert_eq!(status, 400, "{body}");
+        assert!(!body.to_string().contains(key.to_base64().as_str()));
+    }
+    let (status, on) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str()}))).await;
+    assert_eq!(status, 200, "{on}");
+    assert_eq!(on, json!({"on": true, "version": 1}));
+    let (shared, view) = replan("while sharing").await;
+    let record = &view["waiting"][0]["data"]["proposal_record"];
+    assert!(record["summary"].as_str().unwrap().contains(DIARY_SENTINEL), "the owner reads the run through the API: {view}");
+    api.answer(&t, &shared, "approve", json!(true)).await;
+    api.tick().await;
+    assert_eq!(api.run(&t, &shared).await["status"]["status"], "done", "a sealed run applies and finishes");
+    let status: String = db::query_scalar("select status from public.proposals where run_id::text = $1").bind(&shared).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(status, "applied");
+
+    let (status, _) = api.call(Method::Delete, "/v1/diary/key", Some(&t), None).await;
+    assert_eq!(status, 204);
+    let (status, _) = api.call(Method::Delete, "/v1/diary/key", Some(&t), None).await;
+    assert_eq!(status, 404);
+    let (after, _) = replan("after unsharing").await;
+
+    let saw = saw.lock().unwrap().clone();
+    for run in 1..=3 {
+        let calls: Vec<bool> = saw.iter().filter(|(r, _)| *r == run).map(|(_, d)| *d).collect();
+        assert!(!calls.is_empty(), "run {run} called the analyst");
+        assert!(calls.iter().all(|d| *d == (run == 2)), "the model saw the diary only while it was shared: {saw:?}");
+    }
+    let sealed: Vec<(String, bool)> = db::query_as("select id::text, sealed from public.runs where id::text = any($1) order by created_at")
+        .bind(vec![first.clone(), shared.clone(), after.clone()])
+        .fetch_all(&api.pool)
+        .await
+        .unwrap();
+    assert_eq!(sealed.iter().map(|(_, s)| *s).collect::<Vec<_>>(), vec![false, true, false]);
+
+    let (summary, stored): (String, Value) =
+        db::query_as("select summary, sealed_summary from public.proposals where run_id::text = $1").bind(&shared).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(summary, aroh_server::diary::NEUTRAL_SUMMARY);
+    let stored: aroh_diary::Sealed = serde_json::from_value(stored).unwrap();
+    let pid: String = db::query_scalar("select id::text from public.proposals where run_id::text = $1").bind(&shared).fetch_one(&api.pool).await.unwrap();
+    let opened = aroh_diary::open(&key, &u.to_string(), aroh_diary::Table::Proposals, &pid, &stored).unwrap();
+    assert!(String::from_utf8(opened.to_vec()).unwrap().contains(DIARY_SENTINEL), "the device opens the real summary");
+    let plain: Option<Value> = db::query_scalar("select sealed_summary from public.proposals where run_id::text = $1").bind(&first).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(plain, None);
+    let diff: Value = db::query_scalar("select diff from public.proposals where run_id::text = $1").bind(&shared).fetch_one(&api.pool).await.unwrap();
+    assert!(diff.get("changes").is_none(), "a diary run's diff is sealed: {diff}");
+    let sealed_diff: aroh_diary::Sealed = serde_json::from_value(diff["sealed"].clone()).unwrap();
+    let opened = aroh_diary::open(&key, &u.to_string(), aroh_diary::Table::ProposalDiffs, &pid, &sealed_diff).unwrap();
+    assert!(String::from_utf8(opened.to_vec()).unwrap().contains(DIARY_SENTINEL), "the device opens the diff titles");
+    let plain_diff: Value = db::query_scalar("select diff from public.proposals where run_id::text = $1").bind(&first).fetch_one(&api.pool).await.unwrap();
+    assert!(plain_diff.get("changes").is_some(), "an ordinary run's diff stays readable");
+
+    let rest = api.every_row_text().await;
+    assert!(!rest.contains(DIARY_SENTINEL), "diary text rests in plaintext somewhere");
+    assert!(!rest.contains(key.to_base64().as_str()), "the diary key rests in plaintext");
+    let facts: i64 = db::query_scalar("select count(*) from public.preferences where user_id = $1").bind(u).fetch_one(&api.pool).await.unwrap();
+    assert_eq!(facts, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn diary_key_version_must_match_the_diary_rows() {
+    let saw = Arc::new(Mutex::new(Vec::<bool>::new()));
+    let seen = saw.clone();
+    let models = FnTransport::new(move |req| {
+        let body = body_text(req);
+        if !body.contains("You are Adaptation analyst") {
+            return json_reply(400, json!({}));
+        }
+        seen.lock().unwrap().push(body.contains(DIARY_SENTINEL));
+        sse_text(&json!({"summary": "On track.", "size": "small", "changes": []}).to_string())
+    });
+    let api = api(models, offline()).await;
+    let (u, t) = api.signed_up().await;
+    let today = utc(T0).with_timezone(&chrono_tz::Europe::Berlin).date_naive();
+    let v2 = aroh_diary::DiaryKey::generate(2).unwrap();
+    api.diary_day(u, &v2, &today.format("%Y-%m-%d").to_string()).await;
+    let stale = aroh_diary::DiaryKey::generate(1).unwrap();
+    let (status, body) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": stale.to_base64().as_str()}))).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(!body.to_string().contains(stale.to_base64().as_str()));
+    let (_, off) = api.call(Method::Get, "/v1/diary/key", Some(&t), None).await;
+    assert_eq!(off["on"], false, "a refused key is not stored");
+    let (status, _) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 2, "key": v2.to_base64().as_str()}))).await;
+    assert_eq!(status, 200);
+
+    let replan = || async {
+        let goal = api.goal(u, Autonomy::Ask).await;
+        let (status, started) = api.call(Method::Post, &format!("/v1/goals/{goal}/replan"), Some(&t), Some(json!({"reason": "Busy", "timezone": "Europe/Berlin"}))).await;
+        assert_eq!(status, 202, "{started}");
+        api.tick().await;
+        started["run_id"].as_str().unwrap().to_string()
+    };
+    replan().await;
+    let v3 = aroh_diary::DiaryKey::generate(3).unwrap();
+    api.diary_day(u, &v3, &(today - chrono::Duration::days(1)).format("%Y-%m-%d").to_string()).await;
+    let run = replan().await;
+    assert_eq!(*saw.lock().unwrap(), vec![true, false], "a run gets no diary once the rows moved to another key version");
+    assert_eq!(api.count("select count(*) from public.runs where id::text = $1 and not sealed", &run).await, 1);
 }

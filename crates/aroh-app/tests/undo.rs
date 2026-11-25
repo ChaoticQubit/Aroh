@@ -19,6 +19,7 @@ fn proposal(id: &str, status: ProposalStatus, undo: serde_json::Value) -> Propos
         status,
         undo: Some(undo),
         created_at: Utc.with_ymd_and_hms(2026, 11, 23, 6, 0, 0).unwrap(),
+        sealed_summary: None,
         updated_at: String::new(),
         deleted: false,
     }

@@ -10,3 +10,4 @@ apps/aroh/.svelte-kit
 .claude
 graphify-out
 apps/aroh/src-tauri/gen
+e2e/.local-state

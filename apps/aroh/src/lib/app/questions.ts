@@ -42,6 +42,16 @@ export function inputFor(q: Question, value: string | undefined): ComponentSpec 
 	return { kind: 'note', label: 'Your answer', placeholder: 'Type your answer', value: value ?? '' };
 }
 
+/**
+ * The starting answers of a new group: each remembered (`known`) value, so it counts as
+ * answered until the owner edits, clears or skips it (B82). Blank remembered values give none.
+ */
+export function knownValues(questions: Question[]): Record<string, string> {
+	const values: Record<string, string> = {};
+	for (const q of questions) if (q.known && answerText(q.known.value)) values[q.id] = q.known.value;
+	return values;
+}
+
 /** The ids of the questions with neither an answer nor a skip, in question order. */
 export function missingOf(g: QuestionGroup): string[] {
 	return g.questions.filter((q) => !g.values[q.id] && !g.skipped.includes(q.id)).map((q) => q.id);
@@ -54,9 +64,8 @@ export function statusOf(g: QuestionGroup): string {
 	const answered = g.questions.length - missing - skipped;
 	const parts = [`${answered} of ${g.questions.length} answered`];
 	if (skipped) parts.push(`${skipped} skipped`);
-	const checks = g.questions.filter((q) => q.known && missingOf(g).includes(q.id)).length;
 	if (!missing) return `${parts.join(', ')}. Ready to send.`;
-	return checks ? `${parts.join(', ')}. ${missing} still open, ${checks} to confirm.` : `${parts.join(', ')}. ${missing} still open.`;
+	return `${parts.join(', ')}. ${missing} still open.`;
 }
 
 /** The `questions` answer to post: every question in order, a skip as `answer: null`. Null while any is open. */

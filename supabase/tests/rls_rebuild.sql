@@ -44,6 +44,12 @@ insert into public.places (id, user_id, name, address, lat_e6, lon_e6, radius_m,
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', 'Gym', '1 Main St', 37776000, -122417000, 150, 'prompt', '1763683200001-0000-aaaaaaaaaaaaaaaa');
 insert into public.place_links (id, user_id, place_id, goal_id, updated_at)
   values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', gen_random_uuid(), '0190f2a0-0000-7000-8000-000000000091', '1763683200001-0000-aaaaaaaaaaaaaaaa');
+insert into public.diary_entries (id, user_id, day, at, key_version, nonce, ciphertext, updated_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', '2026-11-23', now(), 1, 'AAAAAAAAAAAAAAAA', 'c2VhbGVk', '1763683200001-0000-aaaaaaaaaaaaaaaa');
+insert into public.diary_days (id, user_id, day, key_version, nonce, ciphertext, updated_at)
+  values (gen_random_uuid(), '00000000-0000-0000-0000-00000000000a', '2026-11-23', 1, 'AAAAAAAAAAAAAAAA', 'c2VhbGVk', '1763683200001-0000-aaaaaaaaaaaaaaaa');
+insert into public.diary_keys (user_id, key_version, sealed, nonce)
+  values ('00000000-0000-0000-0000-00000000000a', 1, '\x00ff', '\x000000000000000000000000');
 insert into public.run_limits (user_id, minutes, updated_at)
   values ('00000000-0000-0000-0000-00000000000a', 30, now());
 insert into public.ai_consents (user_id, granted_at)
@@ -88,8 +94,8 @@ declare
 begin
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p');
-  if n <> 39 then
-    raise exception 'expected 39 public tables, found %', n;
+  if n <> 42 then
+    raise exception 'expected 42 public tables, found %', n;
   end if;
   select count(*) into n from pg_class c join pg_namespace s on s.oid = c.relnamespace
     where s.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity;
@@ -190,14 +196,14 @@ declare
 begin
   foreach t in array array['categories', 'goals', 'goal_links', 'goal_files', 'personas', 'plugins', 'trackers',
     'tracker_entries', 'action_series', 'actions', 'proposals', 'preferences', 'busy_blocks', 'calendar_rules',
-    'provider_settings', 'search_settings', 'budgets', 'usage', 'jobs', 'runs', 'run_events', 'places', 'place_links'] loop
+    'provider_settings', 'search_settings', 'budgets', 'usage', 'jobs', 'runs', 'run_events', 'places', 'place_links', 'diary_entries', 'diary_days'] loop
     execute format('select count(*) from public.%I', t) into n;
     if n <> 1 then
       raise exception 'A must see its one row of %, saw %', t, n;
     end if;
   end loop;
 
-  foreach t in array array['provider_credentials', 'user_keys', 'run_checkpoints', 'knowledge_chunks', 'memory_logs', 'devices', 'push_sent', 'ai_consents', 'signup_settings', 'signup_attempts', 'account_deletions'] loop
+  foreach t in array array['provider_credentials', 'user_keys', 'diary_keys', 'run_checkpoints', 'knowledge_chunks', 'memory_logs', 'devices', 'push_sent', 'ai_consents', 'signup_settings', 'signup_attempts', 'account_deletions'] loop
     begin
       execute format('select count(*) from public.%I', t) into n;
       raise exception 'A read server-only table %', t;

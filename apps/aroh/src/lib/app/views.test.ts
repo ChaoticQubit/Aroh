@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Snapshot } from './client';
 import { formatDay } from '$lib/ui/format';
-import { actionViews, busyDayInsights, profileView, categoryList, checkInData, dueCheckIns, goalHeader, goalProgress, goalView, inboxView } from './views';
+import { actionViews, busyDayInsights, deadlineAt, profileView, categoryList, checkInData, dueCheckIns, goalHeader, goalProgress, goalView, inboxView } from './views';
 import type { GoalStats } from './dashboard';
 
 const zone = 'UTC';
@@ -268,5 +268,16 @@ describe('goal progress on the Goals list', () => {
 		const s = fixture();
 		s.actions[0].start_at = '2026-11-27T18:00:00Z';
 		expect(goalProgress(s, null, clock)[goalId].line).toBe('Next: Strength session, Fri 27 Nov 18:00');
+	});
+});
+
+describe('deadlineAt (B83)', () => {
+	it('puts a deadline at the end of its local day, whatever the zone or a DST change', () => {
+		expect(deadlineAt('2026-11-24', 'America/New_York')).toBe('2026-11-25T04:59:59.000Z');
+		expect(deadlineAt('2026-11-24', 'Asia/Kolkata')).toBe('2026-11-24T18:29:59.000Z');
+		expect(deadlineAt('2026-11-24', 'Pacific/Kiritimati')).toBe('2026-11-24T09:59:59.000Z');
+		expect(deadlineAt('2026-03-08', 'America/New_York')).toBe('2026-03-09T03:59:59.000Z');
+		expect(deadlineAt('2026-11-01', 'America/New_York')).toBe('2026-11-02T04:59:59.000Z');
+		expect(formatDay(deadlineAt('2026-11-24', 'America/New_York'), 'America/New_York')).toBe(formatDay('2026-11-24T17:00:00Z', 'America/New_York'));
 	});
 });

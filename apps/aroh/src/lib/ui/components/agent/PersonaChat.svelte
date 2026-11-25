@@ -20,6 +20,10 @@
 	import { untrack } from 'svelte';
 	import { deviceKeep, readDraft, writeDraft } from '$lib/app/chatkeep';
 	import { grow } from '$lib/ui/grow';
+	import { atEnd } from '$lib/ui/atend';
+	import { followOf, splitTail } from '$lib/app/working';
+	import ChatTail from './ChatTail.svelte';
+	import LatestPill from './LatestPill.svelte';
 
 	/**
 	 * Owner and persona thread with inline cards, a question group, research progress and a plan
@@ -31,7 +35,9 @@
 	 * to the bottom of the screen (the goal card); only a new question group scrolls into view.
 	 * A plan with its items renders as the week strip (Q65) on `planContext`, in category `slot`; the
 	 * limits question group renders as the can't-fit card (Q64). With `keep` the unsent draft is
-	 * kept under that key until sent (B60); inline, a sent message scrolls into view (B62).
+	 * kept under that key until sent (B60); inline, a sent message scrolls into view (B62). A trailing
+	 * `typing` or `failed` entry renders as the working bubble or the failed send with Retry, which
+	 * emits `{ type: 'resend' }`; the chat follows it unless the owner scrolled up, then a pill jumps to it (Q87).
 	 */
 	let {
 		messages,
@@ -55,20 +61,37 @@
 	let approved = $state(false);
 	const dictation = $derived(voice ? new Dictation(voice, () => draft, (text) => (draft = text)) : null);
 	let fixed = $state<number[]>([]);
-	const thread = $derived([...messages, ...sent]);
+	const split = $derived(splitTail(messages));
+	const thread = $derived([...split.body, ...sent]);
+	const tail = $derived(split.tail);
 	let list = $state<HTMLOListElement>();
+	let tailEl = $state<HTMLElement>();
+	let end = $state(true);
+	let inset = $state(0);
+	const pill = $derived(followOf(tail, end, false) === 'pill');
+	const heard = $derived(tail?.type === 'typing' ? 'Working' : tail?.type === 'failed' ? `Not sent. ${tail.text}` : '');
+
+	/** The last thread entry rendered in the list, without the bubble and the end sentinel. */
+	const lastEntry = () => (list ? ([...list.querySelectorAll(':scope > [data-entry]')].at(-1) as HTMLElement | undefined) : undefined);
+
+	/** Scrolls the working bubble or failed send to the bottom of the view, above a sticky composer. */
+	const jump = () => tailEl?.scrollIntoView({ block: 'end', behavior: 'smooth' });
 
 	let seenGroup: string | null = null;
 
 	$effect(() => {
 		const next = scrollFor(thread, seenGroup);
 		seenGroup = next.seen;
+		const t = tail;
+		void (t?.type === 'typing' ? t.step : t?.text);
 		if (!thread.length || !list) return;
 		const sentNow = follow;
 		follow = false;
-		if (next.to === 'bottom' && inline && sentNow) (list.lastElementChild as HTMLElement | null)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-		else if (next.to === 'bottom' && !inline) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
-		else if (next.to === 'group') (list.lastElementChild as HTMLElement | null)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+		const seen = untrack(() => end);
+		if (next.to !== 'group' && followOf(t, seen, sentNow) === 'scroll') queueMicrotask(jump);
+		else if (next.to === 'bottom' && inline && sentNow) lastEntry()?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+		else if (next.to === 'bottom' && !inline && (sentNow || seen)) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+		else if (next.to === 'group') lastEntry()?.scrollIntoView({ block: 'start', behavior: 'smooth' });
 	});
 
 	/** Sends a card's answer like typed text; an empty answer is ignored. */
@@ -93,7 +116,7 @@
 <div class="flex flex-col {inline ? '' : 'h-full min-h-0'}">
 	<ol bind:this={list} class="flex flex-col gap-3 {inline ? 'py-2' : 'min-h-0 flex-1 overflow-y-auto p-4'}" aria-label="Conversation">
 		{#each thread as m, i (i)}
-			<li class="flex flex-col {m.type === 'message' && m.from === 'owner' ? 'items-end' : 'items-stretch'}">
+			<li data-entry class="flex flex-col {m.type === 'message' && m.from === 'owner' ? 'items-end' : 'items-stretch'}">
 				{#if m.type === 'message'}
 					{#if m.from === 'owner'}
 						<p class="max-w-[85%] rounded-sm border border-border bg-surface-2 px-3 py-2 text-sm text-fg">{m.text}</p>
@@ -184,8 +207,16 @@
 				{/if}
 			</li>
 		{/each}
+		{#if tail}
+			<li bind:this={tailEl} class="flex flex-col" style="scroll-margin-bottom: {inline ? inset + 12 : 0}px">
+				<ChatTail {tail} onretry={() => onchange?.({ type: 'resend' })} />
+			</li>
+		{/if}
+		<li aria-hidden="true" class="-mt-3 h-px shrink-0" use:atEnd={{ own: !inline, inset: inline ? inset : 0, onchange: (v) => (end = v) }}></li>
 	</ol>
-	<div data-composer class={inline ? 'sticky bottom-0 z-10 -mx-4 @3xl:-mx-6' : ''}>
+	<p class="sr-only" aria-live="polite">{heard}</p>
+	<div data-composer class={inline ? 'sticky bottom-0 z-10 -mx-4 @3xl:-mx-6' : 'relative'} bind:clientHeight={inset}>
+		{#if pill}<LatestPill onjump={jump} />{/if}
 		{#if dictation}<DictationNotice {dictation} />{/if}
 		<form
 			class="flex items-end gap-1 border-t border-border bg-bg p-2"

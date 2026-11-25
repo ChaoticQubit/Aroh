@@ -82,6 +82,14 @@ export function goalStatus(view: RunView | null, limitMin: number, now: number, 
 	return { ...idle, detail: `Last run ${cost}.` };
 }
 
+/**
+ * Whether the settled run mark `mark` (`run_id:status`, see `settledMark`) is already in `runs`,
+ * the goal's runs as read at open, so coaches need no second read for it (B87). Null runs: none read.
+ */
+export function markRead(mark: string, runs: { run_id?: string; state?: string }[] | null): boolean {
+	return runs?.some((r) => `${r.run_id}:${r.state}` === mark) ?? false;
+}
+
 /** True while the followed run `view` waits for the owner to approve or decline a plan; Run again is blocked then. */
 export function planWaits(view: RunView | null): boolean {
 	return view?.status.status === 'waiting_human' && view.waiting.some((w) => w.node === 'approve' && !!w.data.plan);

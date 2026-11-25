@@ -86,6 +86,7 @@ fn a_chat_edit_undoes_once_and_logs_keep_one_row_per_session() {
         status: ProposalStatus::Applied,
         undo: Some(serde_json::to_value(&undo).unwrap()),
         created_at: now(),
+        sealed_summary: None,
         updated_at: String::new(),
         deleted: false,
     };

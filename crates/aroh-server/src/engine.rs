@@ -266,10 +266,11 @@ fn legacy_skips(answer: &Answer) -> Option<Value> {
 }
 
 /// The plan input over `[from, until)` in `tz`: `busy` holds timed blocks, one full local day
-/// per Busy all-day day and every live planned locked action of `fixed` (Q53), in start order;
-/// the second list holds the local `YYYY-MM-DD` dates of Away days. Reminders, unchosen
-/// all-day events and deleted rows change nothing.
-pub fn day_inputs(blocks: &[BusyBlock], fixed: &[Action], tz: Tz, from: DateTime<Utc>, until: DateTime<Utc>) -> (Vec<Value>, Vec<String>) {
+/// per day an all-day entry covers unless it is marked Reminder or Away, and every live planned
+/// action of `actions` (one-offs and series occurrences) except the flexible ones of goal
+/// `own_goal`, which the run may move (Q53, B89), in start order. The second list holds the
+/// local `YYYY-MM-DD` dates of Away days. Reminders and deleted rows change nothing.
+pub fn day_inputs(blocks: &[BusyBlock], actions: &[Action], own_goal: &str, tz: Tz, from: DateTime<Utc>, until: DateTime<Utc>) -> (Vec<Value>, Vec<String>) {
     let mut busy: Vec<(String, Value)> = Vec::new();
     let mut away = std::collections::BTreeSet::new();
     let today = from.with_timezone(&tz).date_naive();
@@ -282,22 +283,32 @@ pub fn day_inputs(blocks: &[BusyBlock], fixed: &[Action], tz: Tz, from: DateTime
         }
         let days = local_days(b.start_at, b.end_at, tz).into_iter().filter(|d| *d >= today && *d <= last);
         match b.day_kind {
-            Some(DayKind::Busy) => {
+            Some(DayKind::Busy) | None => {
                 for d in days {
                     let start = local_text(d.and_hms_opt(0, 0, 0).expect("midnight exists"));
                     busy.push((start.clone(), json!({"title": b.title, "start": start, "minutes": 24 * 60})));
                 }
             }
             Some(DayKind::Away) => away.extend(days.map(|d| d.to_string())),
-            Some(DayKind::Reminder) | None => {}
+            Some(DayKind::Reminder) => {}
         }
     }
-    for a in fixed.iter().filter(|a| a.locked && !a.deleted && a.status == ActionStatus::Planned && a.end_at > from && a.start_at < until) {
+    let blocking = |a: &&Action| (a.locked || a.goal_id != own_goal) && !a.deleted && a.status == ActionStatus::Planned;
+    for a in actions.iter().filter(blocking).filter(|a| a.end_at > from && a.start_at < until) {
         let start = local_text(a.start_at.with_timezone(&tz).naive_local());
         busy.push((start.clone(), json!({"title": a.title, "start": start, "minutes": (a.end_at - a.start_at).num_minutes().clamp(1, 24 * 60)})));
     }
     busy.sort_by(|a, b| a.0.cmp(&b.0));
     (busy.into_iter().map(|(_, v)| v).collect(), away.into_iter().collect())
+}
+
+/// Loads run `id` from its latest checkpoint in `pool`.
+/// Callers check run ownership first.
+/// Returns `NotFound` before the first checkpoint, or the parse error.
+pub(crate) async fn latest_run(pool: &db::PgPool, vault: &crate::vault::Vault, id: RunId) -> Result<GraphRun, ServerError> {
+    let store = PgCheckpoints::new(pool.clone(), vault.clone(), Arc::new(EventBuffer::default()));
+    let cp = store.latest(id).await?.ok_or_else(|| ServerError::NotFound(format!("run {id}")))?;
+    Ok(GraphRun::from_checkpoint(&cp)?)
 }
 
 pub(crate) fn parse_tz(name: &str) -> Result<Tz, ServerError> {
@@ -504,6 +515,7 @@ impl Engine {
     /// Returns the new run id, or the setup error.
     async fn launch(&self, user: Uuid, goal: Option<Uuid>, wf: Workflow, input: Map<String, Value>) -> Result<RunId, ServerError> {
         let name = wf.name.clone();
+        let sealed = input.get("diary").is_some_and(|d| !d.is_null());
         crate::account::check_run(&self.deps.pool, user, &name).await?;
         let personas = workflows::snapshot(&self.deps.pool, user, goal, &wf).await?;
         let events = Arc::new(EventBuffer::default());
@@ -512,7 +524,7 @@ impl Engine {
         let run = GraphRun::new(wf, input, limits, &io).await?.with_time_limit(self.limit_for(user, goal).await?.ms());
         let plugin = active_plugin(&self.deps.pool, user, goal).await?;
         let (plugin_id, plugin_version) = (plugin.map(|p| p.0), plugin.map(|p| p.1));
-        let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name, personas, plugin_id, plugin_version };
+        let row = RunRow { id: run.run_id(), user_id: user, goal_id: goal, workflow: name, personas, plugin_id, plugin_version, sealed };
         insert_run(&self.deps.pool, &row).await?;
         let runner = self.runner(events, io);
         runner.enqueue(&run).await?;
@@ -521,7 +533,7 @@ impl Engine {
 
     fn runner(&self, events: Arc<EventBuffer>, io: RunIo) -> Runner {
         let queue: Arc<dyn JobQueue> = self.queue.clone();
-        let checkpoints: Arc<dyn CheckpointStore> = Arc::new(PgCheckpoints::new(self.deps.pool.clone(), events));
+        let checkpoints: Arc<dyn CheckpointStore> = Arc::new(PgCheckpoints::new(self.deps.pool.clone(), self.deps.vault.clone(), events));
         Runner::new(queue, checkpoints, Arc::new(io)).with_lease_ms(self.lease_ms)
     }
 
@@ -555,16 +567,19 @@ impl Engine {
             .collect())
     }
 
+    /// The busy list and away days goal `goal` plans around over the window from `from`:
+    /// device calendar entries only when the goal uses calendars, and always the planned
+    /// actions of other goals and the goal's own locked ones (B89). Returns both lists.
     async fn busy(&self, user: Uuid, goal: &Goal, tz: Tz, from: DateTime<Utc>) -> Result<(Vec<Value>, Vec<String>), ServerError> {
-        if !goal.use_calendars {
-            return Ok((Vec::new(), Vec::new()));
-        }
         let until = from + Duration::days(i64::from(DEFAULT_WINDOW_DAYS));
-        let blocks: Vec<BusyBlock> = list_rows::<BusyBlock>(&self.deps.pool, user, &[], false).await?;
+        let blocks: Vec<BusyBlock> = if goal.use_calendars { list_rows::<BusyBlock>(&self.deps.pool, user, &[], false).await? } else { Vec::new() };
         let actions: Vec<Action> = list_rows::<Action>(&self.deps.pool, user, &[], false).await?;
-        Ok(day_inputs(&blocks, &actions, tz, from, until))
+        Ok(day_inputs(&blocks, &actions, &goal.id, tz, from, until))
     }
 
+    /// The `goal` value planners read: id, title, context, deadline, timezone, `today` (the local
+    /// date) and `now` (the local wall-clock time `YYYY-MM-DDTHH:MM`), both in `tz` at `now`.
+    /// Returns the JSON object.
     pub(crate) fn goal_input(goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Value {
         json!({
             "id": goal.id,
@@ -573,6 +588,7 @@ impl Engine {
             "deadline": goal.deadline,
             "timezone": tz.name(),
             "today": now.with_timezone(&tz).date_naive().to_string(),
+            "now": now.with_timezone(&tz).format("%Y-%m-%dT%H:%M").to_string(),
         })
     }
 
@@ -714,7 +730,7 @@ impl Engine {
         .bind(RUN_LIST_LIMIT)
         .fetch_all(&self.deps.pool)
         .await?;
-        let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
+        let store = PgCheckpoints::new(self.deps.pool.clone(), self.deps.vault.clone(), Arc::new(EventBuffer::default()));
         for id in ids {
             let Some(cp) = store.latest(RunId(id)).await? else { continue };
             let Ok(run) = GraphRun::from_checkpoint(&cp) else { continue };
@@ -767,9 +783,20 @@ impl Engine {
         input.insert("autonomy".into(), serde_json::to_value(goal.autonomy).expect("autonomy serializes"));
         input.insert("profile".into(), json!(self.profile(user).await?));
         input.insert("places".into(), json!(self.places(user).await?));
+        self.add_diary(user, tz, &mut input).await?;
         let run = self.start(user, Some(goal_id), REPLAN, input).await?;
         triggers::claim_status_events(&self.deps.pool, user, goal_id, run, now).await?;
         Ok(run)
+    }
+
+    /// Sets state `diary` to `user`'s last seven diary days when the agents
+    /// read toggle is on and a day opens, so the run is stored sealed; to
+    /// null otherwise. Errors only when the database does.
+    pub(crate) async fn add_diary(&self, user: Uuid, tz: Tz, input: &mut Map<String, Value>) -> Result<(), ServerError> {
+        let today = self.now().with_timezone(&tz).date_naive();
+        let days = crate::diary::agent_days(&self.deps, user, today).await?;
+        input.insert("diary".into(), json!(days));
+        Ok(())
     }
 
     /// Starts the log-intake workflow for one free-text log of `user`,
@@ -816,7 +843,7 @@ impl Engine {
     /// answer does not fit, or the run moved meanwhile.
     pub async fn answer(&self, user: Uuid, run_id: Uuid, answer: Answer) -> Result<(), ServerError> {
         let row = run_row_for(&self.deps.pool, user, RunId(run_id)).await?;
-        let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
+        let store = PgCheckpoints::new(self.deps.pool.clone(), self.deps.vault.clone(), Arc::new(EventBuffer::default()));
         let cp = store.latest(row.id).await?.ok_or_else(|| ServerError::NotFound(format!("run {run_id}")))?;
         let mut run = GraphRun::from_checkpoint(&cp)?;
         if let Err(e) = run.resume(&answer.node, answer.answer.clone()) {
@@ -875,7 +902,7 @@ impl Engine {
     /// twice is fine. Returns `NotFound` for another user's run.
     pub async fn cancel(&self, user: Uuid, run_id: Uuid) -> Result<(), ServerError> {
         let row = run_row_for(&self.deps.pool, user, RunId(run_id)).await?;
-        let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
+        let store = PgCheckpoints::new(self.deps.pool.clone(), self.deps.vault.clone(), Arc::new(EventBuffer::default()));
         for _ in 0..STOP_TRIES {
             let cp = store.latest(row.id).await?.ok_or_else(|| ServerError::NotFound(format!("run {run_id}")))?;
             let mut run = GraphRun::from_checkpoint(&cp)?;
@@ -900,7 +927,7 @@ impl Engine {
                 return Err(ServerError::NotFound(format!("goal {goal}")));
             }
         }
-        let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
+        let store = PgCheckpoints::new(self.deps.pool.clone(), self.deps.vault.clone(), Arc::new(EventBuffer::default()));
         let cp = store.latest(row.id).await?.ok_or_else(|| ServerError::NotFound(format!("run {run_id}")))?;
         let mut run = GraphRun::from_checkpoint(&cp)?;
         run.retry(Some(self.limit_for(user, row.goal_id).await?.ms()))?;
@@ -914,9 +941,7 @@ impl Engine {
     /// Returns `NotFound` for a missing run or another user's run.
     pub async fn run_view(&self, user: Uuid, run_id: Uuid, after_seq: Option<u64>) -> Result<RunView, ServerError> {
         let row = run_row_for(&self.deps.pool, user, RunId(run_id)).await?;
-        let store = PgCheckpoints::new(self.deps.pool.clone(), Arc::new(EventBuffer::default()));
-        let cp = store.latest(row.id).await?.ok_or_else(|| ServerError::NotFound(format!("run {run_id}")))?;
-        let run = GraphRun::from_checkpoint(&cp)?;
+        let run = latest_run(&self.deps.pool, &self.deps.vault, row.id).await?;
         let waiting = run
             .pending_human()
             .into_iter()
@@ -933,7 +958,7 @@ impl Engine {
             .collect();
         let summary = crate::insights::run_summary(&row.workflow, run.state());
         let (research, answers) = crate::insights::run_found(run.state());
-        let events = events_after(&self.deps.pool, row.id, after_seq)
+        let events = events_after(&self.deps.pool, &self.deps.vault, row.id, after_seq)
             .await?
             .into_iter()
             .map(|e| serde_json::to_value(e).expect("events serialize"))
@@ -1155,7 +1180,7 @@ mod tests {
     }
 
     #[test]
-    fn busy_days_are_full_days_away_days_are_dates_and_reminders_change_nothing() {
+    fn busy_and_unmarked_all_day_days_are_full_days_away_days_are_dates_and_reminders_change_nothing() {
         let berlin = chrono_tz::Europe::Berlin;
         let from: DateTime<Utc> = "2026-11-26T08:00:00Z".parse().unwrap();
         let until = from + Duration::days(14);
@@ -1190,19 +1215,130 @@ mod tests {
             fixed("Call", "2026-11-27T17:00:00Z", ActionStatus::Done, true),
             fixed("Later", "2026-12-20T17:00:00Z", ActionStatus::Planned, true),
         ];
-        let (busy, away) = day_inputs(&blocks, &actions, berlin, from, until);
+        let (busy, away) = day_inputs(&blocks, &actions, "own-goal", berlin, from, until);
         assert_eq!(
             busy,
             vec![
                 json!({"title": "Conference", "start": "2026-11-27T00:00:00", "minutes": 1440}),
                 json!({"title": "Standup", "start": "2026-11-27T09:00:00", "minutes": 30}),
                 json!({"title": "Dentist", "start": "2026-11-27T15:00:00", "minutes": 60}),
+                json!({"title": "Run", "start": "2026-11-27T17:00:00", "minutes": 60}),
                 json!({"title": "Conference", "start": "2026-11-28T00:00:00", "minutes": 1440}),
+                json!({"title": "Unsure", "start": "2026-11-28T00:00:00", "minutes": 1440}),
             ]
         );
         assert_eq!(away, ["2026-11-30", "2026-12-01"]);
         let mut gone = blocks.clone();
         gone.iter_mut().for_each(|b| b.deleted = true);
-        assert_eq!(day_inputs(&gone, &[], berlin, from, until), (vec![], vec![]));
+        assert_eq!(day_inputs(&gone, &[], "own-goal", berlin, from, until), (vec![], vec![]));
+    }
+
+    #[test]
+    fn b80_goal_input_carries_the_local_now_next_to_today() {
+        let goal = Goal {
+            id: Uuid::now_v7().to_string(),
+            user_id: Uuid::now_v7().to_string(),
+            category_id: None,
+            title: "Complete Machine Learning Course - 1".into(),
+            context: None,
+            deadline: None,
+            status: GoalStatus::Active,
+            autonomy: Autonomy::Balanced,
+            created_at: "2026-11-20T00:00:00Z".parse().unwrap(),
+            reminders: true,
+            use_calendars: true,
+            ordered: false,
+            run_limit_minutes: None,
+            updated_at: String::new(),
+            deleted: false,
+        };
+        let now: DateTime<Utc> = "2026-11-25T00:20:37Z".parse().unwrap();
+        let input = Engine::goal_input(&goal, chrono_tz::America::New_York, now);
+        assert_eq!(input["today"], "2026-11-24");
+        assert_eq!(input["now"], "2026-11-24T19:20");
+    }
+
+    fn joy_action(goal: &str, title: &str, start: &str, minutes: i64, locked: bool, series: bool) -> Action {
+        let start: DateTime<Utc> = start.parse().unwrap();
+        Action {
+            id: Uuid::now_v7().to_string(),
+            user_id: Uuid::now_v7().to_string(),
+            goal_id: goal.into(),
+            series_id: series.then(|| Uuid::now_v7().to_string()),
+            occurrence: series.then_some(start),
+            title: title.into(),
+            notes: None,
+            start_at: start,
+            end_at: start + Duration::minutes(minutes),
+            status: ActionStatus::Planned,
+            locked,
+            done_at: None,
+            card: None,
+            updated_at: String::new(),
+            deleted: false,
+        }
+    }
+
+    /// The prod input of run 01a2102b ("Read The Joy of X", America/New_York, started
+    /// 2026-11-24 19:51 local): the ML course's unlocked sessions on 11-25 13:00 to 17:45,
+    /// a daily Gym occurrence at 19:00, Thanksgiving as an unmarked all-day entry, and
+    /// one unlocked and one locked action of the run's own goal.
+    fn joy_inputs(thanksgiving: Option<DayKind>) -> (Vec<Value>, Vec<String>) {
+        let ny = chrono_tz::America::New_York;
+        let from: DateTime<Utc> = "2026-11-25T00:51:00Z".parse().unwrap();
+        let blocks = vec![block("Thanksgiving", "2026-11-26T05:00:00Z", "2026-11-27T04:59:59Z", true, thanksgiving)];
+        let actions = vec![
+            joy_action("ml", "ML: Week 1 lectures", "2026-11-25T18:00:00Z", 90, false, false),
+            joy_action("ml", "ML: Week 1 lab", "2026-11-25T19:45:00Z", 180, false, false),
+            joy_action("gym", "Gym", "2026-11-26T00:00:00Z", 60, false, true),
+            joy_action("joy", "Chapters 1-2", "2026-11-27T15:00:00Z", 30, false, false),
+            joy_action("joy", "Book club", "2026-11-28T15:00:00Z", 60, true, false),
+        ];
+        day_inputs(&blocks, &actions, "joy", ny, from, from + Duration::days(i64::from(DEFAULT_WINDOW_DAYS)))
+    }
+
+    fn sessions(day: &str, count: usize, first_hour: u32) -> Value {
+        let items: Vec<Value> = (0..count)
+            .map(|i| {
+                let minutes = first_hour * 60 + 30 * i as u32;
+                json!({"title": format!("Chapter {}", i + 1), "start": format!("{day}T{:02}:{:02}:00", minutes / 60, minutes % 60), "minutes": 25, "rrule": null, "notes": "Read"})
+            })
+            .collect();
+        json!({"items": items})
+    }
+
+    fn overlap(busy: &[Value], plan: &Value) -> Result<(), String> {
+        let registry = crate::evals::registry_with_busy(crate::evals::busy_slots(&json!(busy)).unwrap(), Default::default());
+        registry.get("no_overlap").unwrap()(plan, &[json!("items")])
+    }
+
+    #[test]
+    fn b89_other_goals_sessions_and_series_occurrences_are_busy_but_not_the_runs_own_flexible_ones() {
+        let (busy, _) = joy_inputs(None);
+        let titles: Vec<&str> = busy.iter().filter_map(|b| b["title"].as_str()).collect();
+        assert_eq!(titles, ["ML: Week 1 lectures", "ML: Week 1 lab", "Gym", "Thanksgiving", "Book club"]);
+        assert_eq!(busy[0], json!({"title": "ML: Week 1 lectures", "start": "2026-11-25T13:00:00", "minutes": 90}));
+        assert_eq!(busy[2], json!({"title": "Gym", "start": "2026-11-25T19:00:00", "minutes": 60}));
+        let err = overlap(&busy, &sessions("2026-11-25", 1, 14)).unwrap_err();
+        assert!(err.contains("overlaps busy `ML: Week 1 lectures`"), "{err}");
+        assert_eq!(overlap(&busy, &sessions("2026-11-27", 1, 10)), Ok(()), "the run's own unlocked session at 10:00 never blocks it");
+    }
+
+    #[test]
+    fn b89_an_unmarked_all_day_entry_blocks_its_whole_day_and_a_reminder_does_not() {
+        let (busy, _) = joy_inputs(None);
+        assert!(busy.contains(&json!({"title": "Thanksgiving", "start": "2026-11-26T00:00:00", "minutes": 1440})), "{busy:?}");
+        let err = overlap(&busy, &sessions("2026-11-26", 8, 13)).unwrap_err();
+        assert!(err.contains("overlaps busy `Thanksgiving`"), "{err}");
+        let (reminder, _) = joy_inputs(Some(DayKind::Reminder));
+        assert_eq!(overlap(&reminder, &sessions("2026-11-26", 8, 13)), Ok(()));
+    }
+
+    #[test]
+    fn b89_sessions_earlier_today_are_refused() {
+        let now = crate::evals::parse_local("2026-11-24T19:51:00").unwrap();
+        let registry = crate::evals::registry_for(vec![], Default::default(), teams::Kind::General, crate::sequence::Bounds { now, ..Default::default() }, crate::evals::MAX_HORIZON_DAYS);
+        let err = registry.get("starts_after_now").unwrap()(&sessions("2026-11-24", 4, 13), &[json!("items")]).unwrap_err();
+        assert!(err.contains("`Chapter 1` starts at 2026-11-24T13:00"), "{err}");
     }
 }

@@ -123,6 +123,17 @@ export function minuteOfDay(iso: string, zone: string): number {
 	return (h % 24) * 60 + m;
 }
 
+/**
+ * Where `now` stands against a `deadline` instant (the last second of the due day): `today` on the
+ * due day itself, `passed` once it is over, else the whole days `left` (at least 1).
+ */
+export function deadlineState(deadline: string, now: string): { state: 'today' } | { state: 'passed' } | { state: 'left'; days: number } {
+	if (Date.parse(deadline) <= Date.parse(now)) return { state: 'passed' };
+	const days = daysUntil(deadline, now);
+	console.assert(days >= 0, 'daysUntil is never negative');
+	return days === 0 ? { state: 'today' } : { state: 'left', days };
+}
+
 /** Whole days from `nowIso` to `iso`, rounded down, never negative. */
 export function daysUntil(iso: string, nowIso: string): number {
 	const diff = Date.parse(iso) - Date.parse(nowIso);

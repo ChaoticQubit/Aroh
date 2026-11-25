@@ -13,7 +13,7 @@
 	const facts = $derived(s?.facts.filter((f) => !f.blocked).length ?? 0);
 	let email = $state<string | null>(null);
 	let last4 = $state<Record<string, string | null>>({});
-	let consent = $state<boolean | null>(null);
+	let consent = $state<boolean | null>(engine.cachedConsent() ?? null);
 	let version = $state('');
 
 	/** Reads the sign-in state and, when signed in, the stored keys (vendor and last 4 only) and AI consent. */

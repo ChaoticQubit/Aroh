@@ -1,19 +1,26 @@
 mod common;
 
 use aroh_domain::rows::{Action, ActionStatus, Autonomy, Goal, GoalStatus, Proposal, ProposalSize, ProposalStatus};
+use aroh_server::checkpoints::{EventBuffer, PgCheckpoints};
 use aroh_server::db::{self, PgPool};
 use aroh_server::fake::{json_reply, FnTransport};
 use aroh_server::push::{self, ApnsConfig, ApnsEnv, Platform, Pusher, RegisterDevice, Signer};
-use aroh_server::rows::{put_row, utc, ServerClock};
+use aroh_server::rows::{insert_run, put_row, utc, RunRow, ServerClock};
 use base64::Engine as _;
 use chrono::{DateTime, Duration, Utc};
-use common::{pg, user, T0};
+use common::{pg, user, MASTER, T0};
+use aroh_server::vault::{MasterKey, Vault};
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+use troupekit_agent::{PersonaLoader, SimpleIo};
 use troupekit_core::clock::{Clock, FixedClock};
+use troupekit_core::ids::RunId;
+use troupekit_core::store::CheckpointStore;
+use troupekit_graph::{GraphOutcome, GraphRun, SimpleGraphIo, Workflow};
+use troupekit_tools::ToolRegistry;
 use uuid::Uuid;
 
 fn signer(clock: Arc<dyn Clock>) -> Signer {
@@ -107,7 +114,7 @@ async fn fixture() -> Fixture {
         json_reply(code, body)
     });
     let dyn_clock: Arc<dyn Clock> = clock.clone();
-    let pusher = Pusher::new(pool.clone(), apns.clone(), signer(dyn_clock.clone()), dyn_clock);
+    let pusher = Pusher::new(pool.clone(), vault(&pool), apns.clone(), signer(dyn_clock.clone()), dyn_clock);
     Fixture { pool, hlc: ServerClock::default(), clock, apns, status, pusher }
 }
 
@@ -182,6 +189,7 @@ async fn proposals_are_pushed_and_gone_tokens_remove_the_device() {
         status: ProposalStatus::Proposed,
         undo: None,
         created_at: now() + Duration::seconds(30),
+        sealed_summary: None,
         updated_at: String::new(),
         deleted: false,
     };
@@ -208,4 +216,208 @@ async fn proposals_are_pushed_and_gone_tokens_remove_the_device() {
     assert_eq!(gone.removed, 1, "{gone:?}");
     let left: i64 = db::query_scalar("select count(*) from public.devices").fetch_one(&f.pool).await.unwrap();
     assert_eq!(left, 0);
+}
+
+const WAIT: &str = r#"
+name = "wait"
+start = "questions"
+
+[state]
+intake = "string"
+answers = "string"
+plan = "{summary: string}"
+approved = "bool"
+change = "string"
+
+[[nodes]]
+id = "questions"
+kind = "human"
+ask = "question"
+prompt = "Answer these."
+reads = ["intake"]
+writes = "answers"
+
+[[nodes]]
+id = "approve"
+kind = "human"
+ask = "approval"
+prompt = "Approve this plan?"
+reads = ["plan"]
+writes = "approved"
+
+[[nodes]]
+id = "decided"
+kind = "router"
+condition = "flag(approved)"
+
+[[nodes]]
+id = "change"
+kind = "human"
+ask = "question"
+prompt = "What should change?"
+reads = ["plan"]
+writes = "change"
+
+[[nodes]]
+id = "done"
+kind = "end"
+
+[[edges]]
+from = "questions"
+to = "approve"
+
+[[edges]]
+from = "approve"
+to = "decided"
+
+[[edges]]
+from = "decided"
+to = "done"
+when = "true"
+
+[[edges]]
+from = "decided"
+to = "change"
+when = "false"
+
+[[edges]]
+from = "change"
+to = "approve"
+"#;
+
+fn graph_io() -> SimpleGraphIo {
+    SimpleGraphIo::new(Arc::new(SimpleIo::new(ToolRegistry::new())), PersonaLoader::new(vec![]))
+}
+
+fn vault(pool: &PgPool) -> Vault {
+    Vault::new(pool.clone(), Arc::new(MasterKey::from_base64(MASTER).unwrap()))
+}
+
+fn store(pool: &PgPool) -> PgCheckpoints {
+    PgCheckpoints::new(pool.clone(), vault(pool), Arc::new(EventBuffer::default()))
+}
+
+async fn waiting_run(pool: &PgPool, user: Uuid, goal: Option<&Goal>) -> RunId {
+    let io = graph_io();
+    let mut input = serde_json::Map::new();
+    input.insert("intake".into(), json!("How often do you run?"));
+    input.insert("plan".into(), json!({"summary": "Three easy runs a week"}));
+    let mut run = GraphRun::new(Workflow::parse("wait.toml", WAIT).unwrap(), input, Default::default(), &io).await.unwrap();
+    let goal_id = goal.map(|g| Uuid::parse_str(&g.id).unwrap());
+    let row = RunRow { id: run.run_id(), user_id: user, goal_id, workflow: "wait".into(), personas: BTreeMap::new(), plugin_id: None, plugin_version: None, sealed: false };
+    insert_run(pool, &row).await.unwrap();
+    let store = store(pool);
+    store.save(run.checkpoint()).await.unwrap();
+    assert!(matches!(run.step(&io).await, GraphOutcome::Waiting(_)));
+    store.save(run.checkpoint()).await.unwrap();
+    assert_eq!(run.pending_human()[0].node, "questions");
+    run.run_id()
+}
+
+async fn answer(pool: &PgPool, id: RunId, node: &str, value: Value) {
+    let io = graph_io();
+    let store = store(pool);
+    let mut run = GraphRun::from_checkpoint(&store.latest(id).await.unwrap().unwrap()).unwrap();
+    run.resume(node, value).unwrap();
+    store.save(run.checkpoint()).await.unwrap();
+    assert!(matches!(run.step(&io).await, GraphOutcome::Waiting(_)));
+    store.save(run.checkpoint()).await.unwrap();
+}
+
+async fn waiting_since(pool: &PgPool, id: RunId, at: DateTime<Utc>) {
+    let state: String = db::query_scalar("update public.runs set updated_at = $2 where id = $1 returning state").bind(id.0).bind(at).fetch_one(pool).await.unwrap();
+    assert_eq!(state, "waiting_human");
+}
+
+fn last_payload(apns: &FnTransport) -> (Value, Option<String>) {
+    let last = apns.sent().pop().unwrap();
+    (serde_json::from_slice(last.body.as_ref().unwrap()).unwrap(), last.header("apns-collapse-id").map(str::to_string))
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_waiting_run_pushes_once_per_waiting_node() {
+    let f = fixture().await;
+    let u = user(&f.pool).await;
+    let g = goal(&f.pool, &f.hlc, u).await;
+    push::register(&f.pool, u, Uuid::now_v7(), device(token(5), i64::MAX / 2, now() + Duration::hours(24)), now()).await.unwrap();
+    let run = waiting_run(&f.pool, u, Some(&g)).await;
+    waiting_since(&f.pool, run, now() + Duration::seconds(30)).await;
+    f.clock.advance(60 * 1000);
+
+    let summary = f.pusher.dispatch_once().await.unwrap();
+    assert_eq!((summary.sent, summary.failed), (1, 0), "{summary:?}");
+    let (payload, collapse) = last_payload(&f.apns);
+    assert_eq!(payload["aps"]["alert"]["title"], "Run a 10k: your answers are needed");
+    assert_eq!(payload["aps"]["thread-id"], "run");
+    assert_eq!(payload["aroh"], json!({"kind": "run", "id": run.0.to_string(), "goal_id": g.id, "node": "questions"}));
+    assert_eq!(collapse, Some(run.0.to_string()));
+    let again = f.pusher.dispatch_once().await.unwrap();
+    assert_eq!((again.sent, again.skipped), (0, 1), "{again:?}");
+
+    answer(&f.pool, run, "questions", json!("Three times")).await;
+    waiting_since(&f.pool, run, now() + Duration::seconds(90)).await;
+    f.clock.advance(60 * 1000);
+    assert_eq!(f.pusher.dispatch_once().await.unwrap().sent, 1);
+    let (payload, _) = last_payload(&f.apns);
+    assert_eq!(payload["aps"]["alert"]["title"], "Run a 10k: plan ready to approve");
+    assert_eq!(payload["aroh"]["node"], "approve");
+    assert_eq!(f.pusher.dispatch_once().await.unwrap().sent, 0);
+    assert_eq!(f.apns.sent().len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_new_wait_at_the_same_node_pushes_again() {
+    let f = fixture().await;
+    let u = user(&f.pool).await;
+    let g = goal(&f.pool, &f.hlc, u).await;
+    push::register(&f.pool, u, Uuid::now_v7(), device(token(7), i64::MAX / 2, now() + Duration::hours(24)), now()).await.unwrap();
+    let run = waiting_run(&f.pool, u, Some(&g)).await;
+    answer(&f.pool, run, "questions", json!("Three times")).await;
+    waiting_since(&f.pool, run, now() + Duration::seconds(30)).await;
+    f.clock.advance(60 * 1000);
+    assert_eq!(f.pusher.dispatch_once().await.unwrap().sent, 1);
+    assert_eq!(last_payload(&f.apns).0["aroh"]["node"], "approve");
+    let again = f.pusher.dispatch_once().await.unwrap();
+    assert_eq!((again.sent, again.skipped), (0, 1), "{again:?}");
+
+    answer(&f.pool, run, "approve", json!(false)).await;
+    answer(&f.pool, run, "change", json!("Fewer runs")).await;
+    waiting_since(&f.pool, run, now() + Duration::seconds(90)).await;
+    f.clock.advance(60 * 1000);
+    let revised = f.pusher.dispatch_once().await.unwrap();
+    assert_eq!(revised.sent, 1, "the revised plan waits at approve again: {revised:?}");
+    let (payload, collapse) = last_payload(&f.apns);
+    assert_eq!(payload["aroh"]["node"], "approve");
+    assert_eq!(payload["aps"]["alert"]["title"], "Run a 10k: plan ready to approve");
+    assert_eq!(collapse, Some(run.0.to_string()));
+    assert_eq!(f.pusher.dispatch_once().await.unwrap().sent, 0);
+    assert_eq!(f.apns.sent().len(), 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn stale_and_pre_device_waits_are_not_pushed() {
+    let f = fixture().await;
+    let u = user(&f.pool).await;
+    let g = goal(&f.pool, &f.hlc, u).await;
+    push::register(&f.pool, u, Uuid::now_v7(), device(token(6), i64::MAX / 2, now() + Duration::hours(24)), now()).await.unwrap();
+    let stale = waiting_run(&f.pool, u, Some(&g)).await;
+    waiting_since(&f.pool, stale, now() - Duration::hours(7)).await;
+    let before = waiting_run(&f.pool, u, Some(&g)).await;
+    waiting_since(&f.pool, before, now() - Duration::hours(1)).await;
+    let fresh = waiting_run(&f.pool, u, None).await;
+    waiting_since(&f.pool, fresh, now() + Duration::seconds(30)).await;
+    f.clock.advance(60 * 1000);
+
+    let summary = f.pusher.dispatch_once().await.unwrap();
+    assert_eq!(summary.sent, 1, "{summary:?}");
+    let (payload, _) = last_payload(&f.apns);
+    assert_eq!(payload["aroh"], json!({"kind": "run", "id": fresh.0.to_string(), "goal_id": null, "node": "questions"}));
+    assert_eq!(payload["aps"]["alert"]["title"], "Calendar: your answers are needed");
+
+    f.clock.advance(push::RUN_HOURS * 3600 * 1000);
+    let later = f.pusher.dispatch_once().await.unwrap();
+    assert_eq!((later.sent, later.skipped), (0, 0), "a wait older than RUN_HOURS is not even considered: {later:?}");
 }

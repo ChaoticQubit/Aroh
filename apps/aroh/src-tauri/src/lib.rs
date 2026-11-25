@@ -13,9 +13,12 @@ use std::path::Path;
 use std::sync::Mutex;
 use tauri::Manager;
 
-/// Store connection, clock and local user shared by all commands. Lock `core` for every read or write.
+/// Store connection, clock and local user shared by all commands. Lock `core` for every
+/// read or write, briefly and never across network I/O. `syncing` keeps two syncs apart;
+/// nothing on the main thread takes either lock.
 pub struct AppState {
     pub core: Mutex<Core>,
+    pub syncing: Mutex<()>,
 }
 
 /// The local SQLite connection, this device's clock and the local user id.
@@ -56,9 +59,16 @@ fn open_core(app: &tauri::App) -> Result<Core, Box<dyn std::error::Error>> {
     Ok(Core { conn, clock, user_id })
 }
 
+/// Runs `on_start_or_resume` on a blocking thread, so the main thread never waits on the
+/// core lock (B90). Screens reload on the `aroh://changed` event it emits.
+fn on_start_or_resume_off_main(app: &tauri::AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || on_start_or_resume(&app));
+}
+
 /// Follows the device zone (Q54), then runs the start-up tick (seed, materialize, mark
 /// missed) and reschedules reminders, so both see the shifted rows. Runs at app start and
-/// on resume; the UI also calls `app_tick` when the date changes.
+/// on resume, off the main thread; the UI also calls `app_tick` when the date changes.
 fn on_start_or_resume(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     if let Err(e) = commands::with_core(&state, |c| aroh_app::travel::follow(&c.conn, &mut c.clock, &c.user_id, Utc::now(), device_zone())) {
@@ -71,6 +81,7 @@ fn on_start_or_resume(app: &tauri::AppHandle) {
         eprintln!("aroh: reminders not scheduled: {e}");
     }
     commands::engine::sync_if_signed_in(app);
+    commands::diary::resume_rotation_if_unfinished(app);
     commands::health::import_if_enabled(app);
     commands::location::drain_if_enabled(app);
 }
@@ -101,17 +112,26 @@ pub fn run() {
         .plugin(tauri_plugin_aroh_calendar::init())
         .setup(|app| {
             let core = open_core(app)?;
-            app.manage(AppState { core: Mutex::new(core) });
+            app.manage(AppState { core: Mutex::new(core), syncing: Mutex::new(()) });
             app.manage(notify::ReminderState::default());
             app.manage(realtime::RealtimeState::default());
+            app.manage(commands::push::TapState::default());
             realtime::start(app.handle());
-            on_start_or_resume(app.handle());
+            commands::push::listen_taps(app.handle());
+            on_start_or_resume_off_main(app.handle());
             #[cfg(debug_assertions)]
             dev_script(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::app_snapshot,
+            commands::diary::app_diary_day,
+            commands::diary::app_diary_append,
+            commands::diary::app_diary_structure,
+            commands::diary::app_diary_status,
+            commands::diary::app_diary_share,
+            commands::diary::app_diary_proposal,
+            commands::diary::app_diary_days,
             commands::dashboard::app_dashboard,
             commands::dashboard::app_dev_dashboard_seed,
             commands::app::app_tick,
@@ -159,9 +179,12 @@ pub fn run() {
             commands::plugins::plugins_enable,
             commands::plugins::plugins_save,
             commands::plugins::plugins_use_template,
+            commands::plugins::plugins_all,
+            commands::plugins::plugins_get,
             commands::health::app_health_connect,
             commands::health::app_dev_health_seed,
             commands::push::app_dev_push_probe,
+            commands::push::push_take_tap,
             commands::calendar_import::app_calendar_import,
             commands::calendar_import::app_set_day_kind,
             commands::learning::app_edit_action,
@@ -190,7 +213,7 @@ pub fn run() {
         .run(|_app, _event| {
             #[cfg(mobile)]
             if let tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Resumed, .. } = _event {
-                on_start_or_resume(_app);
+                on_start_or_resume_off_main(_app);
             }
         });
 }
