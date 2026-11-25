@@ -12,7 +12,7 @@
 	import { logState } from '$lib/ui/status';
 	import { getClock } from '$lib/ui/clock';
 	import { formatDay, formatDuration, formatTime } from '$lib/ui/format';
-	import type { ActionView } from '$lib/ui/contract';
+	import type { ActionView, DeleteScope } from '$lib/ui/contract';
 	import type { ActionEdit } from '$lib/ui/screens/types';
 
 	/**
@@ -20,7 +20,8 @@
 	 * day and start time, change the duration in 15 minute steps, toggle Fixed time, save, or delete
 	 * after a confirm step (Q78: a status is shown, never a lock). Emits `onstatus` with the id and
 	 * the picked status, `onsave` with `{ id, start, end }`, `onlock` with the id and the new Fixed
-	 * time, `ondelete` with the id and `onclose` on cancel. `confirming` opens on the delete confirm.
+	 * time, `ondelete` with the id and the scope and `onclose` on cancel. `confirming` opens on the
+	 * delete confirm, which asks this session or this and all future for a series session (Q89).
 	 */
 	let {
 		action,
@@ -36,7 +37,7 @@
 		onstatus?: (id: string, status: LogPick) => void;
 		onsave?: (edit: ActionEdit) => void;
 		onlock?: (id: string, locked: boolean) => void;
-		ondelete?: (id: string) => void;
+		ondelete?: (id: string, scope: DeleteScope) => void;
 		onclose?: () => void;
 	} = $props();
 
@@ -133,10 +134,18 @@
 	{#if asking}
 		<div class="flex flex-col gap-3 rounded-sm border border-status-missed/40 bg-status-missed/10 p-3" role="alertdialog" aria-label="Confirm delete">
 			<p class="text-sm text-fg">Delete <span class="font-medium">{action.title}</span> on {formatDay(action.start, zone)}? It leaves your calendar on every device.</p>
-			<div class="flex justify-end gap-2">
-				<Button variant="outline" size="touch" onclick={() => (asking = false)}>Keep</Button>
-				<Button variant="destructive" size="touch" onclick={() => ondelete?.(action.id)}>Delete</Button>
-			</div>
+			{#if action.series}
+				<div class="flex flex-col gap-2">
+					<Button variant="destructive" size="touch" onclick={() => ondelete?.(action.id, 'this')}>This session only</Button>
+					<Button variant="outline" size="touch" class="text-status-missed" onclick={() => ondelete?.(action.id, 'future')}>This and all future sessions</Button>
+					<Button variant="ghost" size="touch" onclick={() => (asking = false)}>Keep</Button>
+				</div>
+			{:else}
+				<div class="flex justify-end gap-2">
+					<Button variant="outline" size="touch" onclick={() => (asking = false)}>Keep</Button>
+					<Button variant="destructive" size="touch" onclick={() => ondelete?.(action.id, 'this')}>Delete</Button>
+				</div>
+			{/if}
 		</div>
 	{:else}
 		<div class="flex items-center gap-2">

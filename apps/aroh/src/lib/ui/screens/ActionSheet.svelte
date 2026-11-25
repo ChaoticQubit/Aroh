@@ -1,7 +1,7 @@
 <script lang="ts">
 	import * as Sheet from '$lib/ui/primitives/sheet';
 	import ActionEditor from '../components/planning/ActionEditor.svelte';
-	import type { ActionView } from '$lib/ui/contract';
+	import type { ActionView, DeleteScope } from '$lib/ui/contract';
 	import type { ActionEdit } from './types';
 
 	/**
@@ -25,7 +25,7 @@
 		onstatus?: (id: string, status: 'planned' | 'done' | 'skipped') => void;
 		onsave?: (edit: ActionEdit) => void;
 		onlock?: (id: string, locked: boolean) => void;
-		ondelete?: (id: string) => void;
+		ondelete?: (id: string, scope: DeleteScope) => void;
 		onclose?: () => void;
 	} = $props();
 

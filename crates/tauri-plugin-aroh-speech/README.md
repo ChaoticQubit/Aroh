@@ -12,12 +12,14 @@ On-device voice input for Aroh's log screen. Tauri 2 plugin named `aroh-speech`.
 | Command | Resolves | Notes |
 |---|---|---|
 | `plugin:aroh-speech\|start` | nothing | Asks for speech and microphone permission on first use, then listens. |
-| `plugin:aroh-speech\|stop` | `{ transcript: string }` | Ends the audio and waits up to 2 s for the final result. |
+| `plugin:aroh-speech\|stop` | `{ transcript: string }` | Ends the audio and waits up to 2 s for the final result. `transcript` is the whole session. |
 
 Events (plugin listener, `addPluginListener('aroh-speech', ...)`):
 
-- `partial` with `{ text }`: the transcript so far, while listening.
+- `partial` with `{ text }`: the whole session transcript so far, while listening.
 - `ended` with `{ text }`: recognition ended on its own (silence, error or the system time limit). The next `stop` still resolves this text.
+
+The on-device recognizer can restart `formattedString` from empty after a pause, so `text` and `transcript` are never just the recognizer's latest string. `Transcript` (`ios/Sources/Transcript.swift`) keeps each finished utterance and joins it with the live one: a result with speech metadata marks the end of an utterance, and the next result that does not continue it starts a new one; without that mark, a result under half the old word count, or a changed first word once the old utterance is long enough, starts a new one. Blank results never wipe text. When a restart and a revision cannot be told apart, words are kept, so the failure is duplication, not loss.
 
 Every rejection is `{ code, message }`. `message` is fit to show the owner.
 
@@ -55,3 +57,11 @@ cargo build --target aarch64-apple-ios-sim
 ```
 
 Runs on the Mac, outside containers, because it needs Xcode. The build script copies Tauri's Swift API into `.tauri/` and compiles the Swift package with swift-rs, so this command also proves the Swift code compiles against the iOS simulator SDK.
+
+## Checks
+
+`Transcript` depends only on Foundation. Its assert-based checks in `ios/Checks/main.swift` run on the Mac without the Tauri package; they print counts and fixture names only, never live transcript text:
+
+```sh
+swiftc -o "$TMPDIR/tcheck" ios/Sources/Transcript.swift ios/Checks/main.swift && "$TMPDIR/tcheck"
+```

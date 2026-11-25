@@ -19,7 +19,7 @@ use troupekit_agent::{PersonaLoader, SimpleIo};
 use troupekit_core::clock::{Clock, FixedClock};
 use troupekit_core::ids::RunId;
 use troupekit_core::store::CheckpointStore;
-use troupekit_graph::{GraphOutcome, GraphRun, SimpleGraphIo, Workflow};
+use troupekit_graph::{GraphOutcome, GraphRun, SimpleGraphIo, Stop, Workflow};
 use troupekit_tools::ToolRegistry;
 use uuid::Uuid;
 
@@ -327,6 +327,42 @@ async fn answer(pool: &PgPool, id: RunId, node: &str, value: Value) {
 async fn waiting_since(pool: &PgPool, id: RunId, at: DateTime<Utc>) {
     let state: String = db::query_scalar("update public.runs set updated_at = $2 where id = $1 returning state").bind(id.0).bind(at).fetch_one(pool).await.unwrap();
     assert_eq!(state, "waiting_human");
+}
+
+async fn stop_run(pool: &PgPool, id: RunId, why: Stop, at: DateTime<Utc>) {
+    let store = store(pool);
+    let mut run = GraphRun::from_checkpoint(&store.latest(id).await.unwrap().unwrap()).unwrap();
+    run.stop(why).unwrap();
+    store.save(run.checkpoint()).await.unwrap();
+    let state: String = db::query_scalar("update public.runs set updated_at = $2 where id = $1 returning state").bind(id.0).bind(at).fetch_one(pool).await.unwrap();
+    assert_eq!(state, "failed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_failed_run_pushes_once_and_a_cancelled_one_never() {
+    let f = fixture().await;
+    let u = user(&f.pool).await;
+    let g = goal(&f.pool, &f.hlc, u).await;
+    push::register(&f.pool, u, Uuid::now_v7(), device(token(9), i64::MAX / 2, now() + Duration::hours(24)), now()).await.unwrap();
+    let limited = waiting_run(&f.pool, u, Some(&g)).await;
+    stop_run(&f.pool, limited, Stop::TimeLimit { limit_ms: 300_000 }, now() + Duration::seconds(30)).await;
+    let cancelled = waiting_run(&f.pool, u, Some(&g)).await;
+    stop_run(&f.pool, cancelled, Stop::Cancelled, now() + Duration::seconds(30)).await;
+    f.clock.advance(60 * 1000);
+
+    let summary = f.pusher.dispatch_once().await.unwrap();
+    assert_eq!((summary.sent, summary.failed), (1, 0), "{summary:?}");
+    let (payload, collapse) = last_payload(&f.apns);
+    assert_eq!(payload["aroh"], json!({"kind": "run_failed", "id": limited.0.to_string(), "goal_id": g.id}));
+    assert_eq!(payload["aps"]["alert"], json!({"title": "Run a 10k: the run stopped", "body": push::FAIL_BODY}));
+    assert!(!payload.to_string().contains("time limit"), "the push never carries the error text");
+    assert_eq!(collapse, Some(limited.0.to_string()));
+    let again = f.pusher.dispatch_once().await.unwrap();
+    assert_eq!((again.sent, again.skipped), (0, 1), "{again:?}");
+    f.clock.advance(3 * 60 * 60 * 1000);
+    assert_eq!(f.pusher.dispatch_once().await.unwrap(), push::PushSummary { enabled: true, ..Default::default() });
+    assert_eq!(f.apns.sent().len(), 1);
 }
 
 fn last_payload(apns: &FnTransport) -> (Value, Option<String>) {

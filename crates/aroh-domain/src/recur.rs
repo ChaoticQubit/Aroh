@@ -139,28 +139,9 @@ fn rule_parts(line: &str) -> Vec<String> {
 pub fn split(series: &ActionSeries, at: DateTime<Utc>, new_id: String) -> Result<(ActionSeries, ActionSeries)> {
     let set = rule_set(series)?;
     let tz = timezone(series)?;
-    let start = *set.get_dt_start();
     let rule = set.get_rrule()[0].clone();
-    if !is_occurrence(series, at)? {
-        return Err(recurrence("split point is not an occurrence of the series"));
-    }
-    let start_utc = start.with_timezone(&Utc);
-    let before = if at > start_utc {
-        set.before((at - Duration::seconds(1)).with_timezone(&Tz::UTC)).all(u16::MAX).dates.len()
-    } else {
-        0
-    };
-    let kept = rule_parts(&series.rrule);
-
-    let mut old = series.clone();
-    if before == 0 {
-        old.deleted = true;
-    } else {
-        let until = (at - Duration::seconds(1)).format(ICAL_UTC);
-        old.rrule = [kept.clone(), vec![format!("UNTIL={until}")]].concat().join(";");
-    }
-
-    let mut tail = kept;
+    let (old, before) = bound(series, at)?;
+    let mut tail = rule_parts(&series.rrule);
     if let Some(count) = rule.get_count() {
         let remaining = count as usize - before;
         assert!(remaining >= 1, "split occurrence must be within COUNT");
@@ -174,11 +155,40 @@ pub fn split(series: &ActionSeries, at: DateTime<Utc>, new_id: String) -> Result
     new.dtstart_local = at.with_timezone(&tz).naive_local().format(LOCAL_FORMAT).to_string();
     new.deleted = false;
 
-    if !old.deleted {
-        rule_set(&old)?;
-    }
     rule_set(&new)?;
     Ok((old, new))
+}
+
+/// Bounds `series` so its last occurrence is the one before occurrence `at`: UNTIL one
+/// second before `at`, or a tombstone when `at` is its first occurrence. Output: the
+/// bounded series and how many occurrences it keeps. Errors when `at` is not an occurrence.
+fn bound(series: &ActionSeries, at: DateTime<Utc>) -> Result<(ActionSeries, usize)> {
+    let set = rule_set(series)?;
+    if !is_occurrence(series, at)? {
+        return Err(recurrence("split point is not an occurrence of the series"));
+    }
+    let start_utc = set.get_dt_start().with_timezone(&Utc);
+    let before = if at > start_utc {
+        set.before((at - Duration::seconds(1)).with_timezone(&Tz::UTC)).all(u16::MAX).dates.len()
+    } else {
+        0
+    };
+    let mut old = series.clone();
+    if before == 0 {
+        old.deleted = true;
+    } else {
+        let until = (at - Duration::seconds(1)).format(ICAL_UTC);
+        old.rrule = [rule_parts(&series.rrule), vec![format!("UNTIL={until}")]].concat().join(";");
+        rule_set(&old)?;
+    }
+    Ok((old, before))
+}
+
+/// Ends `series` at occurrence `at` for a "this and all future" delete (Q89): the series
+/// bounded by UNTIL one second before `at`, tombstoned when `at` is its first occurrence.
+/// Errors when `at` is not an occurrence of the series.
+pub fn end_at(series: &ActionSeries, at: DateTime<Utc>) -> Result<ActionSeries> {
+    Ok(bound(series, at)?.0)
 }
 
 #[cfg(test)]
@@ -202,6 +212,19 @@ mod tests {
         assert_eq!(got.depth, crate::card::Depth::Outline);
         assert_eq!(got.outline.as_deref(), Some("Squat day"));
         assert!(occurrence(&samples::series(), utc(2026, 10, 21, 5)).card.is_none());
+    }
+
+    #[test]
+    fn b100_an_ended_series_materializes_nothing_from_the_cut_on() {
+        let series = samples::series();
+        let cut = utc(2026, 11, 26, 6);
+        let ended = end_at(&series, cut).unwrap();
+        assert!(!ended.deleted && ended.rrule.ends_with("UNTIL=20261126T055959Z"), "{}", ended.rrule);
+        let kept = materialize(&ended, utc(2026, 11, 23, 0), DEFAULT_WINDOW_DAYS, &BTreeSet::new()).unwrap();
+        assert_eq!(kept.len(), 3, "the device and server materializer stop at the cut");
+        assert!(materialize(&ended, cut, DEFAULT_WINDOW_DAYS, &BTreeSet::new()).unwrap().is_empty());
+        assert!(end_at(&series, utc(2026, 10, 20, 5)).unwrap().deleted, "ending at the first occurrence tombstones");
+        assert!(end_at(&series, utc(2026, 11, 26, 7)).is_err(), "a time off the rule is no occurrence");
     }
 
     fn berlin_hour(t: &DateTime<Utc>) -> u32 {

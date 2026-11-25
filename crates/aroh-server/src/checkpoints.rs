@@ -55,7 +55,8 @@ fn db_int(n: u64) -> i64 {
 /// runs one transaction: the step + 1 rule under a lock on the `runs` row,
 /// the buffered events upserted on `(run_id, seq)`, the stale tail dropped.
 /// A run marked `sealed` (it read the diary) stores its state and event
-/// payloads sealed by the user's data key; `latest` and `events_after` open them.
+/// payloads sealed by the user's data key, with only `seq`, `status` and the stop
+/// kind `stopped` in plaintext; `latest` and `events_after` open them.
 pub struct PgCheckpoints {
     pool: PgPool,
     vault: Vault,
@@ -126,6 +127,9 @@ impl CheckpointStore for PgCheckpoints {
             let mut stored = seal_value(&self.vault, owner, &checkpoint_aad(owner, cp.run_id.0, cp.step), &cp.state).await?;
             stored.insert("seq".into(), Value::from(next_seq));
             stored.insert("status".into(), serde_json::json!({ "status": status }));
+            if let Some(stop) = cp.state.get("stopped") {
+                stored.insert("stopped".into(), stop.clone());
+            }
             Value::Object(stored)
         } else {
             cp.state.clone()

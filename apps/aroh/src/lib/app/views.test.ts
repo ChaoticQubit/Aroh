@@ -62,7 +62,7 @@ describe('views', () => {
 
 	it('maps an action row to an ActionView with goal title and category slot', () => {
 		const [view] = actionViews(fixture());
-		expect(view).toEqual({ id: 'a1', title: 'Strength session', start: '2026-11-26T18:00:00Z', end: '2026-11-26T19:00:00Z', status: 'planned', locked: false, category: 2, goalTitle: 'Six pack by Feb 1' });
+		expect(view).toEqual({ id: 'a1', title: 'Strength session', start: '2026-11-26T18:00:00Z', end: '2026-11-26T19:00:00Z', status: 'planned', locked: false, category: 2, goalTitle: 'Six pack by Feb 1', series: false });
 	});
 
 	it('asks a due check-in after its time and stops once answered today', () => {
@@ -172,17 +172,19 @@ describe('views', () => {
 		]);
 	});
 
-	it('spins only for runs that still work: stopped is grey, waiting and paused are amber', () => {
+	it('b97: spins only for runs that still work: failed is red, an owner stop grey, waiting and paused are amber', () => {
 		const run = (run_id: string, workflow: string, state: string) => ({ run_id, goal_id: null, workflow, state, created_at: '', updated_at: '' });
 		const states = ['failed', 'waiting_human', 'waiting_budget', 'queued', 'running', 'checkpointed'];
-		const { runs } = inboxView(fixture(), states.map((st, i) => run(`r${i}`, `w${i}`, st)));
+		const owner = { ...run('rs', 'ws', 'failed'), stop: 'cancelled' };
+		const { runs } = inboxView(fixture(), [...states.map((st, i) => run(`r${i}`, `w${i}`, st)), owner]);
 		expect(runs.map((r) => [r.step, r.tone, r.working])).toEqual([
-			['Stopped', 'skipped', false],
+			['Failed', 'missed', false],
 			['Waiting for you', 'warn', false],
-			['Paused at a budget', 'warn', false],
-			['Waiting to start', 'planned', true],
+			['Paused', 'warn', false],
 			['Working', 'planned', true],
-			['Working', 'planned', true]
+			['Working', 'planned', true],
+			['Working', 'planned', true],
+			['Stopped', 'skipped', false]
 		]);
 	});
 
@@ -236,8 +238,19 @@ describe('goal progress on the Goals list', () => {
 	it('b70: says waiting for you while a run of the goal waits for the owner, with no proposal', () => {
 		const s = fixture();
 		s.proposals = [];
-		expect(goalProgress(s, [stats('on_track')], clock, [goalId])[goalId]).toMatchObject({ tone: 'warn', label: 'Waiting for you' });
+		const run = (run_id: string, goal_id: string, state: string) => ({ run_id, goal_id, workflow: 'new-goal', state, created_at: '', updated_at: '' });
+		expect(goalProgress(s, [stats('on_track')], clock, [run('r1', goalId, 'waiting_human')])[goalId]).toMatchObject({ tone: 'warn', label: 'Waiting for you' });
+		expect(goalProgress(s, [stats('on_track')], clock, [run('r1', 'other', 'waiting_human')])[goalId]).toMatchObject({ label: 'On track' });
 		expect(goalProgress(s, [stats('on_track')], clock, [])[goalId]).toMatchObject({ label: 'On track' });
+	});
+
+	it('b97: a draft goal whose newest run failed says Failed, and one still planning says Working', () => {
+		const s = fixture();
+		s.proposals = [];
+		s.goals[0].status = 'draft';
+		const run = (run_id: string, state: string) => ({ run_id, goal_id: goalId, workflow: 'new-goal', state, created_at: '', updated_at: '' });
+		expect(goalProgress(s, null, clock, [run('r2', 'failed'), run('r1', 'done')])[goalId]).toMatchObject({ tone: 'missed', label: 'Failed' });
+		expect(goalProgress(s, null, clock, [run('r2', 'running')])[goalId]).toMatchObject({ tone: 'planned', label: 'Working' });
 	});
 
 	it('takes the pace from the dashboard figures once nothing waits', () => {

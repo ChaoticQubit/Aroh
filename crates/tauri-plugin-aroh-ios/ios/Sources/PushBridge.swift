@@ -1,8 +1,9 @@
 import ObjectiveC
 import UIKit
 
-/// A tapped run or proposal push (Q83): the `aroh` dictionary of its payload with `kind`
-/// `run` or `proposal`, the row `id` and the `goal_id`, absent for a run without a goal.
+/// A tapped run, failed-run (Q88) or proposal push (Q83): the `aroh` dictionary of its payload
+/// with `kind` `run`, `run_failed` or `proposal`, the row `id` and the `goal_id`, absent for a
+/// run without a goal.
 /// Only short strings pass; the app checks the ids again before it opens a screen.
 struct PushTap: Encodable, Equatable {
   let kind: String
@@ -12,7 +13,7 @@ struct PushTap: Encodable, Equatable {
   /// Reads the tap from a notification's `userInfo`; nil for any other push or shape.
   init?(_ userInfo: [AnyHashable: Any]) {
     guard let aroh = userInfo["aroh"] as? [String: Any],
-      let kind = aroh["kind"] as? String, kind == "run" || kind == "proposal",
+      let kind = aroh["kind"] as? String, ["run", "run_failed", "proposal"].contains(kind),
       let id = aroh["id"] as? String, !id.isEmpty, id.count <= 64
     else { return nil }
     var goal: String? = nil

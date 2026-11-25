@@ -8,7 +8,7 @@ use crate::error::ServerError;
 use crate::rows::{list_rows, utc};
 use aroh_domain::remind::{self, Planned, PlannedKind};
 use aroh_domain::rows::{Action, Goal, Proposal, Tracker};
-use troupekit_graph::HumanAsk;
+use troupekit_graph::{HumanAsk, Stop};
 use chrono::{DateTime, Duration, Utc};
 use chrono_tz::Tz;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
@@ -33,6 +33,15 @@ pub const RUN_HOURS: i64 = 6;
 
 /// Title prefix of a waiting run that has no goal, such as a calendar triage.
 pub const NO_GOAL_NAME: &str = "Calendar";
+
+/// How long after a run fails it is still pushed.
+pub const FAIL_HOURS: i64 = 2;
+
+/// Body of a failed-run push. Static: never the error, which can quote model or diary text.
+pub const FAIL_BODY: &str = "Tap to see what happened.";
+
+/// Title of a failed-run push for a run that has no goal.
+pub const NO_GOAL_FAIL_TITLE: &str = "A run stopped";
 
 /// Seconds between dispatch passes in worker mode.
 pub const INTERVAL_SECS: u64 = 30;
@@ -258,13 +267,15 @@ pub async fn unregister(pool: &PgPool, user: Uuid, device_id: Uuid) -> Result<bo
 }
 
 /// What one push announces: a reminder or check-in from the shared planner, a proposal,
-/// or a run waiting at human node `node` since `waiting_since`. A run's `step` is the
-/// checkpoint step of that wait; its `goal_id` is `None` when the run has no goal.
+/// a run waiting at human node `node` since `waiting_since`, or a run that failed at
+/// `failed_at`. A run's `step` is its checkpoint step; its `goal_id` is `None` when the
+/// run has no goal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Notice {
     Reminder(Planned),
     Proposal { id: String, goal_id: String, title: String, body: String, created_at: DateTime<Utc> },
     Run { run_id: Uuid, goal_id: Option<String>, node: String, step: u64, title: String, body: String, waiting_since: DateTime<Utc> },
+    RunFailed { run_id: Uuid, goal_id: Option<String>, step: u64, title: String, failed_at: DateTime<Utc> },
 }
 
 /// One APNs push ready to send: ledger key, collapse id, expiry and JSON payload.
@@ -281,7 +292,9 @@ pub struct Push {
 /// kind as thread, plus `aroh {kind, id, goal_id}` (and `node` for a run) to route a tap.
 /// A run's ledger key names run, node and wait step, so each new wait pushes once; its
 /// collapse id is the run id (64-byte cap).
-/// Output: the push; reminders expire after an hour, runs after `RUN_HOURS`, proposals a day.
+/// A failed run's key names run and step, so a retried run that fails again pushes again.
+/// Output: the push; reminders expire after an hour, runs after `RUN_HOURS`, failed runs
+/// after `FAIL_HOURS`, proposals a day.
 pub fn build(notice: &Notice) -> Push {
     let alert = |kind: &str, title: &str, body: &str, aroh: Value| {
         json!({"aps": {"alert": {"title": title, "body": body}, "sound": "default", "thread-id": kind}, "aroh": aroh})
@@ -316,7 +329,31 @@ pub fn build(notice: &Notice) -> Push {
             assert!(push.collapse_id.len() <= 64, "APNs caps the collapse id at 64 bytes");
             push
         }
+        Notice::RunFailed { run_id, goal_id, step, title, failed_at } => {
+            let push = Push {
+                key: format!("fail:{run_id}:{step}"),
+                collapse_id: run_id.to_string(),
+                expires_at: *failed_at + Duration::hours(FAIL_HOURS),
+                payload: alert("run_failed", title, FAIL_BODY, json!({"kind": "run_failed", "id": run_id, "goal_id": goal_id})),
+            };
+            assert!((1..=200).contains(&push.key.len()), "push_sent keys are 1 to 200 characters");
+            assert!(push.collapse_id.len() <= 64, "APNs caps the collapse id at 64 bytes");
+            push
+        }
     }
+}
+
+/// Title of the push for a failed run of goal `goal` (`None`: the run has none) stopped by
+/// `stop`, if it was stopped from outside a step. Returns `None` for a run its owner
+/// cancelled, which never pushes; a time limit or an error does. Names only the goal title.
+pub fn fail_title(goal: Option<&str>, stop: Option<&Stop>) -> Option<String> {
+    if matches!(stop, Some(Stop::Cancelled)) {
+        return None;
+    }
+    Some(match goal {
+        Some(goal) => remind::truncate(format!("{goal}: the run stopped")),
+        None => NO_GOAL_FAIL_TITLE.to_string(),
+    })
 }
 
 /// Title and body of the push for a run of goal `goal` (`NO_GOAL_NAME` when the run has
@@ -442,6 +479,38 @@ impl Pusher {
         Ok(out)
     }
 
+    /// The failed-run notices of `user` at `now`: one per run that turned `failed` within
+    /// `FAIL_HOURS`, keyed by its checkpoint step, titled from `titles`. Runs of a deleted goal,
+    /// runs the owner cancelled and runs whose checkpoint fails to load are skipped.
+    async fn failed_runs(&self, user: Uuid, titles: &HashMap<&str, &str>, now: DateTime<Utc>) -> Result<Vec<Notice>, ServerError> {
+        let rows: Vec<(Uuid, Option<Uuid>, DateTime<Utc>)> =
+            db::query_as("select id, goal_id, updated_at from public.runs where user_id = $1 and state = 'failed' and updated_at > $2 order by created_at, id")
+                .bind(user)
+                .bind(now - Duration::hours(FAIL_HOURS))
+                .fetch_all(&self.pool)
+                .await?;
+        let mut out = Vec::new();
+        for (run_id, goal_id, failed_at) in rows {
+            let goal = match goal_id {
+                None => None,
+                Some(g) => match titles.get(g.to_string().as_str()) {
+                    Some(title) => Some(*title),
+                    None => continue,
+                },
+            };
+            let run = match crate::engine::latest_run(&self.pool, &self.vault, RunId(run_id)).await {
+                Ok(run) => run,
+                Err(_) => {
+                    eprintln!("aroh-server: push skips failed run {run_id}, its checkpoint did not load");
+                    continue;
+                }
+            };
+            let Some(title) = fail_title(goal, run.stopped()) else { continue };
+            out.push(Notice::RunFailed { run_id, goal_id: goal_id.map(|g| g.to_string()), step: run.steps(), title, failed_at });
+        }
+        Ok(out)
+    }
+
     async fn notices(&self, user: Uuid, devices: &[&Device], now: DateTime<Utc>) -> Result<Vec<(Uuid, Notice)>, ServerError> {
         let goals = list_rows::<Goal>(&self.pool, user, &[], false).await?;
         let actions = list_rows::<Action>(&self.pool, user, &[("status", "planned".into())], false).await?;
@@ -450,6 +519,7 @@ impl Pusher {
         let seqs = self.seqs(user).await?;
         let titles: HashMap<&str, &str> = goals.iter().map(|g| (g.id.as_str(), g.title.as_str())).collect();
         let runs = self.waiting_runs(user, &titles, now).await?;
+        let failed = self.failed_runs(user, &titles, now).await?;
         let mut out = Vec::new();
         for device in devices {
             let zone: Tz = device.zone.parse().unwrap_or(Tz::UTC);
@@ -473,6 +543,9 @@ impl Pusher {
                 ));
             }
             for run in runs.iter().filter(|r| matches!(r, Notice::Run { waiting_since, .. } if *waiting_since >= device.created_at)) {
+                out.push((device.id, run.clone()));
+            }
+            for run in failed.iter().filter(|r| matches!(r, Notice::RunFailed { failed_at, .. } if *failed_at >= device.created_at)) {
                 out.push((device.id, run.clone()));
             }
         }
@@ -514,9 +587,9 @@ impl Pusher {
     }
 
     /// One dispatch pass at the clock's now: per device, due reminders the device will not
-    /// show itself, fresh proposals and runs that started waiting for the owner within
-    /// `RUN_HOURS`, each claimed then sent. Gone tokens delete the device; failures release
-    /// the claim. Returns the pass's counts.
+    /// show itself, fresh proposals, runs that started waiting for the owner within
+    /// `RUN_HOURS` and runs that failed within `FAIL_HOURS`, each claimed then sent.
+    /// Gone tokens delete the device; failures release the claim. Returns the pass's counts.
     pub async fn dispatch_once(&self) -> Result<PushSummary, ServerError> {
         let now = utc(self.clock.now_ms());
         let mut summary = PushSummary { enabled: true, ..PushSummary::default() };
@@ -685,6 +758,31 @@ mod tests {
         assert_eq!(questions.0, "Calendar: your answers are needed");
         assert_eq!(run_text("Gym", &ask("limit_choice", json!({"limits": {}}))).unwrap().0, "Gym: your answers are needed");
         assert!(run_text(&"x".repeat(300), &ask("change", json!({}))).unwrap().0.chars().count() <= 120);
+    }
+
+    #[test]
+    fn failed_runs_push_once_per_step_without_the_error() {
+        let run_id = Uuid::parse_str("0190f2a0-0000-7000-8000-000000000009").unwrap();
+        let error = "node `write`: provider said: secret diary words";
+        let title = fail_title(Some("Gym"), None).unwrap();
+        assert_eq!(title, "Gym: the run stopped");
+        let notice = Notice::RunFailed { run_id, goal_id: Some("g1".into()), step: 12, title, failed_at: at(9, 0) };
+        let push = build(&notice);
+        assert_eq!(push.key, format!("fail:{run_id}:12"));
+        assert_eq!(push.collapse_id, run_id.to_string());
+        assert_eq!(push.expires_at, at(11, 0));
+        assert_eq!(push.payload["aroh"], json!({"kind": "run_failed", "id": run_id.to_string(), "goal_id": "g1"}));
+        assert_eq!(push.payload["aps"]["thread-id"], "run_failed");
+        assert_eq!(push.payload["aps"]["alert"], json!({"title": "Gym: the run stopped", "body": FAIL_BODY}));
+        assert!(!push.payload.to_string().contains(error));
+        let again = Notice::RunFailed { run_id, goal_id: None, step: 14, title: fail_title(None, None).unwrap(), failed_at: at(9, 0) };
+        assert_ne!(build(&again).key, push.key);
+        assert_eq!(build(&again).payload["aroh"]["goal_id"], Value::Null);
+        assert_eq!(build(&again).payload["aps"]["alert"]["title"], NO_GOAL_FAIL_TITLE);
+
+        assert_eq!(fail_title(Some("Gym"), Some(&Stop::Cancelled)), None);
+        assert_eq!(fail_title(Some("Gym"), Some(&Stop::TimeLimit { limit_ms: 300_000 })).unwrap(), "Gym: the run stopped");
+        assert!(fail_title(Some(&"x".repeat(300)), None).unwrap().chars().count() <= 120);
     }
 
     #[test]

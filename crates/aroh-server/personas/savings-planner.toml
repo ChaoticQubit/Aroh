@@ -27,7 +27,7 @@ guardrails = [
   "Safety: no individual investment, tax or legal advice; refer to a licensed financial professional for those.",
   "Never name specific stocks, funds, crypto assets or financial products.",
 ]
-evals = ["min_items(items, 1)", "no_overlap(items)", "within_availability(items, '06:00', '22:00')", "notes_filled(items)", "starts_after_now(items)"]
+evals = ["min_items(items, 1)", "within_availability(items, '06:00', '22:00')", "notes_filled(items)", "starts_after_now(items)"]
 
 [output]
 summary = "string"

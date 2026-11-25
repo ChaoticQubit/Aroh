@@ -10,8 +10,9 @@ use aroh_domain::rows::Action;
 use tauri::{AppHandle, State};
 
 /// Moves or resizes action `id` to `start_at`..`end_at` (RFC 3339), or deletes it when
-/// `delete` is true. The action is locked, reminders are rescheduled and the edit is
-/// pushed at once, so the server checks it for a replan within a minute (Q77).
+/// `delete` is true: with `scope` `future` it and every later session of its series (Q89),
+/// else (`this` or none) only it. The action is locked, reminders are rescheduled and the
+/// edit is pushed at once, so the server checks it for a replan within a minute (Q77).
 #[tauri::command(async)]
 pub fn app_edit_action(
     app: AppHandle,
@@ -20,13 +21,22 @@ pub fn app_edit_action(
     start_at: Option<String>,
     end_at: Option<String>,
     delete: bool,
+    scope: Option<String>,
 ) -> Result<Action, String> {
+    let future = match (delete, scope.as_deref()) {
+        (_, None | Some("this")) => false,
+        (true, Some("future")) => true,
+        _ => return Err("scope is this or future, and only for a delete".into()),
+    };
     let span = match (delete, start_at, end_at) {
         (true, None, None) => None,
         (false, Some(s), Some(e)) => Some((parse_time(&s, "start_at")?, parse_time(&e, "end_at")?)),
         _ => return Err("send start_at and end_at, or delete alone".into()),
     };
-    let action = with_core(&state, |c| write::edit_action(&c.conn, &mut c.clock, &id, span))?;
+    let action = with_core(&state, |c| match future {
+        true => write::delete_series_from(&c.conn, &mut c.clock, &id),
+        false => write::edit_action(&c.conn, &mut c.clock, &id, span),
+    })?;
     after_write(&app);
     sync_if_signed_in(&app);
     Ok(action)

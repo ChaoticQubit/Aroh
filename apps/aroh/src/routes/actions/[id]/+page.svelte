@@ -163,7 +163,7 @@
 		if (!loaded) return null;
 		const a = loaded.action;
 		const view = data.snapshot ? actionViews({ ...data.snapshot, actions: [a] })[0] : undefined;
-		return view ?? { id: a.id, title: a.title, start: a.start_at, end: a.end_at, status: a.status, locked: a.locked, category: 1, goalTitle: meta?.goal ?? '' };
+		return view ?? { id: a.id, title: a.title, start: a.start_at, end: a.end_at, status: a.status, locked: a.locked, category: 1, goalTitle: meta?.goal ?? '', series: a.series_id !== null };
 	});
 	const chip = $derived(loaded ? logState({ status: loaded.action.status, start: loaded.action.start_at, end: loaded.action.end_at }, clock.now, clock.zone) : null);
 
@@ -247,9 +247,9 @@
 				void data.run(() => client.editAction(e.id, e.start, e.end)).then(() => load(id));
 			}}
 			onlock={(actionId, locked) => void data.run(() => client.setLocked(actionId, locked))}
-			ondelete={(actionId) => {
+			ondelete={(actionId, scope) => {
 				timing = false;
-				void data.run(() => client.deleteAction(actionId)).then(() => history.back());
+				void data.run(() => client.deleteAction(actionId, scope)).then(() => history.back());
 			}}
 			onclose={() => (timing = false)}
 		/>

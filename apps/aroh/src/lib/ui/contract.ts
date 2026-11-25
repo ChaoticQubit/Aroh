@@ -15,7 +15,10 @@ export type Ring = { label: string; unit: Unit; value: number; target: number; s
 /** One point of a tracker series. */
 export type Point = { at: string; value: number };
 
-/** One planned or past action as the UI shows it. */
+/** Which sessions an owner delete removes (Q89): this one, or this and all future of its series. */
+export type DeleteScope = 'this' | 'future';
+
+/** One planned or past action as the UI shows it; `series` when it is a session of a repeating series. */
 export type ActionView = {
 	id: string;
 	title: string;
@@ -25,6 +28,7 @@ export type ActionView = {
 	locked: boolean;
 	category: CategorySlot;
 	goalTitle: string;
+	series?: boolean;
 };
 
 /** One change inside an agent proposal. */

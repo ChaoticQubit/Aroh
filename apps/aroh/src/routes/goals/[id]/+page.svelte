@@ -11,7 +11,8 @@
 	import { goalHeader, goalView } from '$lib/app/views';
 	import { engine, progressLines } from '$lib/app/engine';
 	import { GoalChat } from '$lib/app/chat.svelte';
-	import { answersReason, goalStatus, markRead, planWaits, settledMark } from '$lib/app/goalcard';
+	import { answersReason, chipFor, goalStatus, markRead, planWaits, runState, settledMark } from '$lib/app/goalcard';
+	import { dashboard, type Pace } from '$lib/app/dashboard';
 	import type { AgentSettings } from '$lib/app/newgoal';
 	import { speech } from '$lib/app/speech.svelte';
 	import { activeVersion, enablePlugin, listPlugins, type PluginVersion } from '$lib/plugins/api';
@@ -26,7 +27,7 @@
 	import type { EngineResult, RunAnswer, RunSummary } from '$lib/app/engine';
 	import type { PlanContext } from '$lib/ui/components/plan/PlanCard.svelte';
 	import { AHEAD_DAYS } from '$lib/app/calendar';
-	import { forGoal, tagged, type Tagged } from '$lib/app/goalpage';
+	import { forGoal, openGoalId, tagged, type Tagged } from '$lib/app/goalpage';
 	import { formatYmd, shiftDay } from '$lib/ui/format';
 
 	const DERIVED = 'derived';
@@ -37,6 +38,7 @@
 	const clock = getClock();
 	const s = $derived(data.snapshot);
 	const goal = $derived(s?.goals.find((g) => g.id === page.params.id));
+	const openId = $derived(openGoalId(s, page.params.id));
 	let pluginRows = $state<Tagged<PluginVersion[]> | null>(null);
 	const plugins = $derived(forGoal(pluginRows, goal?.id, []));
 	let places = $state<location.LocationView | null>(null);
@@ -111,7 +113,7 @@
 		return opened.value;
 	}
 
-	const chat = $derived(new GoalChat(page.params.id ?? null, 'Tell the agents anything about this goal. They read it at their next step.'));
+	const chat = $derived(new GoalChat(openId, 'Tell the agents anything about this goal. They read it at their next step.'));
 	$effect(() => void chat.open(chat.goalId ? runsOnOpen(chat.goalId) : undefined));
 
 	const ready = $derived(!!s);
@@ -122,7 +124,7 @@
 	});
 
 	$effect(() => {
-		const id = page.params.id;
+		const id = openId;
 		if (!ready || !id) return;
 		const mark = runMark;
 		untrack(() => {
@@ -174,7 +176,18 @@
 			: []
 	);
 	const controls = $derived<AgentSettings | null>(goal ? { autonomy: goal.autonomy, reminders: goal.reminders, useCalendars: goal.use_calendars, runLimit: goal.run_limit_minutes } : null);
-	const status = $derived(goalStatus(chat.view, goal?.run_limit_minutes ?? settingsLimit, now, chat.unreachable));
+	let pace = $state<{ id: string; pace: Pace | null } | null>(null);
+	$effect(() => {
+		const id = goal?.id;
+		if (!id || pace?.id === id) return;
+		dashboard().then(
+			(d) => page.params.id === id && (pace = { id, pace: d.goals.find((g) => g.goal_id === id)?.pace ?? null }),
+			() => null
+		);
+	});
+	const proposed = $derived(!!s?.proposals.some((p) => p.goal_id === goal?.id && p.status === 'proposed'));
+	const chip = $derived(chipFor(goal ?? { status: 'active' }, chat.view ? runState(chat.view.status.status, chat.view.status.reason?.kind) : null, proposed, pace?.id === goal?.id ? (pace?.pace ?? null) : null));
+	const status = $derived(goalStatus(chat.view, goal?.run_limit_minutes ?? settingsLimit, now, chip, chat.unreachable));
 	const blocked = $derived(planWaits(chat.view));
 	const planContext = $derived<PlanContext | undefined>(
 		s && goal ? { busy: s.busy ?? [], actions: s.actions, goalId: goal.id, deadline: goal.deadline, knownUntil: shiftDay(formatYmd(clock.now, clock.zone), AHEAD_DAYS) } : undefined
@@ -332,5 +345,8 @@
 		<DeleteGoalSheet title={goal.title} busy={deleting} ondelete={(keep) => void deleteGoal(keep)} onclose={() => (confirmDelete = false)} />
 	{/if}
 {:else if s}
-	<p class="p-4 text-sm text-muted">This goal no longer exists.</p>
+	<div class="flex flex-col gap-3 p-4">
+		<p class="text-sm text-muted">This goal was deleted.</p>
+		<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-fg outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => void goto('/goals')}>Back to Goals</button>
+	</div>
 {/if}

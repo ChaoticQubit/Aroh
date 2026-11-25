@@ -48,8 +48,22 @@ fn busy_in(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateTime<U
     Ok(busy)
 }
 
+/// Whether `user_id`'s Routines goal holds a live series or a live action at any time, so the
+/// screens list it. An empty Routines goal is left out of every goal list (B96).
+fn routines_in_use(conn: &Connection, user_id: &str) -> Result<bool> {
+    let id = aroh_domain::seed::routines_id();
+    let used: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM action_series WHERE user_id = ?1 AND goal_id = ?2 AND deleted = 0)
+             OR EXISTS (SELECT 1 FROM actions WHERE user_id = ?1 AND goal_id = ?2 AND deleted = 0)",
+        [user_id, id.as_str()],
+        |r| r.get(0),
+    )?;
+    Ok(used)
+}
+
 /// Reads the snapshot of `user_id`: actions overlapping `[from, to)` in start order and
-/// entries logged at or after `since`, newest first. Every other table is read whole.
+/// entries logged at or after `since`, newest first. Every other table is read whole, but the
+/// Routines goal is left out while it holds no live series and no live action.
 pub fn snapshot(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateTime<Utc>, since: DateTime<Utc>) -> Result<Snapshot> {
     assert!(from < to, "snapshot range must not be empty");
     let mine = [("user_id", user_id)];
@@ -59,10 +73,13 @@ pub fn snapshot(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateT
     entries.sort_by(|a, b| b.logged_at.cmp(&a.logged_at));
     let mut prefs: Vec<Preference> = repo::list::<Preference>(conn, &mine)?;
     prefs.sort_by(|a, b| b.noted_at.cmp(&a.noted_at));
+    let routines = aroh_domain::seed::routines_id();
+    let keep_routines = routines_in_use(conn, user_id)?;
+    let goals: Vec<Goal> = repo::list::<Goal>(conn, &mine)?.into_iter().filter(|g| keep_routines || g.id != routines).collect();
     Ok(Snapshot {
         user_id: user_id.to_string(),
         categories: repo::list(conn, &mine)?,
-        goals: repo::list(conn, &mine)?,
+        goals,
         files: repo::list::<GoalFile>(conn, &mine)?.into_iter().map(|f| GoalFile { extracted_text: None, ..f }).collect(),
         actions,
         trackers: repo::list(conn, &mine)?,

@@ -205,7 +205,8 @@ pub struct RunView {
 /// One row of the run list behind the Inbox: ids, workflow, lifecycle
 /// state, times, and the sorted slugs of the personas its snapshot holds
 /// (the coaches that work on the run), and the plugin and version it used.
-/// `waiting_human` runs need the owner. Newest first.
+/// `waiting_human` runs need the owner. A failed run stopped from outside a step
+/// names how in `stop` (`cancelled` by its owner, or `time_limit`). Newest first.
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct RunSummary {
     pub run_id: Uuid,
@@ -217,6 +218,8 @@ pub struct RunSummary {
     pub personas: Vec<String>,
     pub plugin_id: Option<Uuid>,
     pub plugin_version: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop: Option<String>,
 }
 
 /// Result of a key test: whether one 1-token call with the stored key
@@ -637,8 +640,8 @@ impl Engine {
     }
 
     /// The input every planning run of `goal` starts with: the goal, the
-    /// calendar, profile, files, places, busy days, fresh limits and the
-    /// plugin guide of its team. Returns the state map.
+    /// calendar, profile, files, places, busy days, fresh limits and overlaps,
+    /// and the plugin guide of its team. Returns the state map.
     async fn planning_input(&self, user: Uuid, goal: &Goal, tz: Tz, now: DateTime<Utc>) -> Result<Map<String, Value>, ServerError> {
         let mut input = Map::new();
         input.insert("goal".into(), Self::goal_input(goal, tz, now));
@@ -652,6 +655,7 @@ impl Engine {
         input.insert("away_days".into(), json!(away_days));
         input.insert("limits".into(), crate::limits::initial());
         input.insert("limit_answers".into(), json!([]));
+        input.insert("overlaps".into(), crate::overlaps::initial());
         let team = teams::for_goal(user, goal.category_id.as_deref(), &about(&goal.title, goal.context.as_deref()));
         let template = aroh_plugins::template(team.template).expect("every team template ships");
         input.insert("plugin_guide".into(), json!({"template": template, "reference": aroh_plugins::reference()}));
@@ -985,12 +989,16 @@ impl Engine {
     }
 
     /// Lists `user`'s 50 newest runs for the Inbox and chat, optionally only
-    /// those in `state` (such as `waiting_human`) and of `goal`. Never
+    /// those in `state` (such as `waiting_human`) and of `goal`, each failed one
+    /// with its stop kind from its latest checkpoint's plaintext `stopped`. Never
     /// another user's runs. Returns the summaries, newest first.
     pub async fn list_runs(&self, user: Uuid, state: Option<&str>, goal: Option<Uuid>) -> Result<Vec<RunSummary>, ServerError> {
-        let rows: Vec<(Uuid, Option<Uuid>, String, String, DateTime<Utc>, DateTime<Utc>, Vec<String>, Option<Uuid>, Option<i64>)> = db::query_as(
+        let rows: Vec<(Uuid, Option<Uuid>, String, String, DateTime<Utc>, DateTime<Utc>, Vec<String>, Option<Uuid>, Option<i64>, Option<String>)> = db::query_as(
             "select id, goal_id, workflow, state, created_at, updated_at,
-                    array(select k from jsonb_object_keys(personas) k order by k), plugin_id, plugin_version from public.runs
+                    array(select k from jsonb_object_keys(personas) k order by k), plugin_id, plugin_version,
+                    case when state = 'failed' then (select c.state->'stopped'->>'kind' from public.run_checkpoints c
+                                                     where c.run_id = runs.id order by c.step desc limit 1) end
+             from public.runs
              where user_id = $1 and ($2::text is null or state = $2) and ($3::uuid is null or goal_id = $3)
              order by created_at desc, id desc limit $4",
         )
@@ -1002,7 +1010,7 @@ impl Engine {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(run_id, goal_id, workflow, state, created_at, updated_at, personas, plugin_id, plugin_version)| RunSummary {
+            .map(|(run_id, goal_id, workflow, state, created_at, updated_at, personas, plugin_id, plugin_version, stop)| RunSummary {
                 run_id,
                 goal_id,
                 workflow,
@@ -1012,6 +1020,7 @@ impl Engine {
                 personas,
                 plugin_id,
                 plugin_version,
+                stop,
             })
             .collect())
     }

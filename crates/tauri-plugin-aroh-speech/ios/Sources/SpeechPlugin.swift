@@ -8,13 +8,14 @@ import WebKit
 /// On-device speech to text for Aroh's log intake.
 /// `start` asks for microphone and then speech permission, then streams microphone audio into
 /// `SFSpeechRecognizer` with `requiresOnDeviceRecognition`, emitting `partial` events `{text}`.
-/// `stop` ends the audio and resolves `{transcript}` with the final text.
+/// `stop` ends the audio and resolves `{transcript}` with the final text. Every `text` and
+/// `transcript` is the whole session so far, kept across the recognizer's restarts after a pause.
 class SpeechPlugin: Plugin {
   private let engine = AVAudioEngine()
   private let finalWait: TimeInterval = 2.0
   private var request: SFSpeechAudioBufferRecognitionRequest?
   private var task: SFSpeechRecognitionTask?
-  private var transcript = ""
+  private var heard = Transcript()
   private var unclaimed: String?
   private var pendingStop: Invoke?
   private var starting = false
@@ -138,7 +139,7 @@ class SpeechPlugin: Plugin {
         request.append(buffer)
       }
       generation += 1
-      transcript = ""
+      heard = Transcript()
       unclaimed = nil
       self.request = request
       task = recognizer.recognitionTask(with: request) { [weak self] result, error in
@@ -156,8 +157,8 @@ class SpeechPlugin: Plugin {
   private func handle(_ result: SFSpeechRecognitionResult?, _ error: Error?) {
     guard task != nil else { return }
     if let result = result {
-      transcript = result.bestTranscription.formattedString
-      trigger("partial", data: ["text": transcript])
+      heard.add(result.bestTranscription.formattedString, utteranceEnded: !result.isFinal && utteranceEnded(result))
+      trigger("partial", data: ["text": heard.text])
       if result.isFinal {
         finish()
         return
@@ -168,9 +169,18 @@ class SpeechPlugin: Plugin {
     }
   }
 
+  /// True when `result` carries speech metadata, which the recognizer attaches at the end of an
+  /// utterance. Always false before iOS 14.5, where the metadata class does not exist.
+  private func utteranceEnded(_ result: SFSpeechRecognitionResult) -> Bool {
+    if #available(iOS 14.5, macOS 11.3, *) {
+      return result.speechRecognitionMetadata != nil
+    }
+    return false
+  }
+
   private func finish() {
     guard task != nil else { return }
-    let text = transcript
+    let text = heard.text
     teardown()
     if let invoke = pendingStop {
       pendingStop = nil

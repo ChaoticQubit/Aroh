@@ -12,6 +12,9 @@ pub mod storage;
 pub use auth::Session;
 pub use config::Config;
 
+/// The text of any 5xx answer: no status number, no body (B96).
+pub const SERVER_PROBLEM: &str = "The server had a problem. Try again in a moment.";
+
 /// Every failure aroh-sync reports. Messages never carry tokens or keys.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -25,7 +28,7 @@ pub enum Error {
     Keychain(#[from] keyring::Error),
     #[error("network: {0}")]
     Http(String),
-    #[error("server answered {0}: {1}")]
+    #[error("{}", status_text(*.0, .1))]
     Status(u16, String),
     #[error("{0}: {1}")]
     Refused(&'static str, String),
@@ -35,6 +38,14 @@ impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Error {
         Error::Http(e.without_url().to_string())
     }
+}
+
+/// The display text of a non-2xx answer: `SERVER_PROBLEM` for a 5xx, else the status and body excerpt.
+fn status_text(status: u16, body: &str) -> String {
+    if status >= 500 {
+        return SERVER_PROBLEM.to_string();
+    }
+    format!("server answered {status}: {body}")
 }
 
 /// Result alias for aroh-sync.
@@ -84,5 +95,14 @@ mod tests {
         assert!(std::ptr::eq(first, second));
         let _ = http();
         assert!(std::ptr::eq(first, shared()));
+    }
+
+    #[test]
+    fn b96_a_server_failure_reads_as_plain_text_and_a_refusal_keeps_its_words() {
+        let failed = Error::Status(500, "{\"error\":{\"code\":\"internal\",\"message\":\"internal error\"}}".into()).to_string();
+        assert_eq!(failed, SERVER_PROBLEM);
+        assert_eq!(Error::Status(503, "<html>503</html>".into()).to_string(), SERVER_PROBLEM);
+        assert_eq!(Error::Status(409, "conflict".into()).to_string(), "server answered 409: conflict");
+        assert_eq!(Error::Refused("goal_limit", "You have 5 active goals.".into()).to_string(), "goal_limit: You have 5 active goals.");
     }
 }

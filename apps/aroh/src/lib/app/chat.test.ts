@@ -557,7 +557,7 @@ describe('goal chat cache stays true (B87)', () => {
 		expect(chat.view?.run_id).toBe('r1');
 		await chat.open();
 		expect(chat.view).toBeNull();
-		expect(goalStatus(chat.view, 5, 0, chat.unreachable)).toMatchObject({ chip: 'Offline', retry: true });
+		expect(goalStatus(chat.view, 5, 0, { tone: 'planned', label: 'Active' }, chat.unreachable)).toMatchObject({ chip: 'Offline', retry: true });
 		engineCache.owner(null);
 	});
 });

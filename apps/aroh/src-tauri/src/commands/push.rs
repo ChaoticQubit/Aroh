@@ -22,8 +22,8 @@ struct Token {
 
 const TAP_RETRY_MAX_SECS: u64 = 60;
 
-/// A tapped run or proposal push as Swift hands it over (Q83): its kind, the row id and the
-/// goal id, `None` for a run without a goal. Ids are hyphenated uuids once `checked`.
+/// A tapped run, failed-run (Q88) or proposal push as Swift hands it over (Q83): its kind, the
+/// row id and the goal id, `None` for a run without a goal. Ids are hyphenated uuids once `checked`.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Tap {
     pub kind: String,
@@ -37,10 +37,10 @@ fn is_uuid(text: &str) -> bool {
 }
 
 impl Tap {
-    /// The tap when its kind is `run` or `proposal` and its ids are hyphenated uuids.
+    /// The tap when its kind is `run`, `run_failed` or `proposal` and its ids are hyphenated uuids.
     /// A proposal needs a goal. Anything else from the push payload gives `None`.
     fn checked(self) -> Option<Tap> {
-        let kind_ok = self.kind == "run" || (self.kind == "proposal" && self.goal_id.is_some());
+        let kind_ok = self.kind == "run" || self.kind == "run_failed" || (self.kind == "proposal" && self.goal_id.is_some());
         (kind_ok && is_uuid(&self.id) && self.goal_id.as_deref().is_none_or(is_uuid)).then_some(self)
     }
 }
@@ -160,10 +160,13 @@ mod tests {
     }
 
     #[test]
-    fn only_run_and_proposal_taps_with_uuid_ids_pass() {
+    fn only_run_failed_run_and_proposal_taps_with_uuid_ids_pass() {
         assert_eq!(tap("run", RUN, Some(GOAL)).checked(), Some(tap("run", RUN, Some(GOAL))));
         assert_eq!(tap("run", RUN, None).checked(), Some(tap("run", RUN, None)));
         assert_eq!(tap("proposal", RUN, Some(GOAL)).checked(), Some(tap("proposal", RUN, Some(GOAL))));
+        assert_eq!(tap("run_failed", RUN, Some(GOAL)).checked(), Some(tap("run_failed", RUN, Some(GOAL))));
+        assert_eq!(tap("run_failed", RUN, None).checked(), Some(tap("run_failed", RUN, None)));
+        assert_eq!(tap("run_failed", RUN, Some("../settings")).checked(), None);
         assert_eq!(tap("reminder", RUN, Some(GOAL)).checked(), None);
         assert_eq!(tap("run", "x", Some(GOAL)).checked(), None);
         assert_eq!(tap("run", RUN, Some("../settings")).checked(), None);

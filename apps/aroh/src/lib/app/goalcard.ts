@@ -1,5 +1,6 @@
 import type { Tone } from '$lib/ui/components/StatusChip.svelte';
 import { ACTIVE, formatCost, pauseMessage, PLANNING, progressLines, retryMessage, stopMessage, waitLabel, type RunAnswer, type RunEvent, type RunSummary, type RunView } from './engine';
+import { PACE_LABEL, type Pace } from './dashboard';
 
 /**
  * What the goal card's status header shows: chip tone and text, a title, a detail line and which
@@ -15,6 +16,75 @@ const MINUTE_MS = 60_000;
  */
 export function pickRun(runs: RunSummary[]): string | null {
 	return (runs.find((r) => r.state === 'waiting_human') ?? runs[0])?.run_id ?? null;
+}
+
+/** A goal's status chip: tone and label, the same on the Goals list, the goal page and the Inbox. */
+export type Chip = { tone: Tone; label: string };
+
+const RUN_CHIP: Record<string, Chip> = {
+	queued: { tone: 'planned', label: 'Working' },
+	running: { tone: 'planned', label: 'Working' },
+	checkpointed: { tone: 'planned', label: 'Working' },
+	waiting_human: { tone: 'warn', label: 'Waiting for you' },
+	waiting_budget: { tone: 'warn', label: 'Paused' },
+	failed: { tone: 'missed', label: 'Failed' },
+	stopped: { tone: 'skipped', label: 'Stopped' }
+};
+
+const SETTLED_CHIP: Record<string, Chip> = {
+	done: { tone: 'done', label: 'Done' },
+	paused: { tone: 'skipped', label: 'Paused' },
+	archived: { tone: 'skipped', label: 'Archived' }
+};
+
+const PACE_TONE: Record<Pace, Tone> = { on_track: 'done', ahead: 'done', behind: 'missed' };
+
+/**
+ * The chip state of a run in lifecycle `state` stopped from outside a step as `stop` (null:
+ * not stopped): `stopped` for a failed run its owner cancelled, else `state`. Errors and
+ * time-limit stops stay `failed`.
+ */
+export function runState(state: string, stop: string | null | undefined): string {
+	return state === 'failed' && stop === 'cancelled' ? 'stopped' : state;
+}
+
+/** The chip of a run in `state` alone (an Inbox run row); null for a finished run or an unknown state. */
+export function runChip(state: string): Chip | null {
+	return RUN_CHIP[state] ?? null;
+}
+
+/**
+ * A goal's chip from its row `goal`, the `runState` of the run `pickRun` picks (null: no run),
+ * whether a proposal of it is `proposed`, and its dashboard `pace`. Done, paused or archived goals
+ * first; then the run: Working, Waiting for you (or a proposal), Paused at a budget, Failed or
+ * Stopped by the owner; else Planning for a draft, else the pace, else Active.
+ */
+export function chipFor(goal: { status: string }, state: string | null, proposed: boolean, pace: Pace | null = null): Chip {
+	const settled = SETTLED_CHIP[goal.status];
+	if (settled) return settled;
+	const run = state === null ? null : runChip(state);
+	if (run && ACTIVE.includes(state ?? '')) return run;
+	if (proposed) return RUN_CHIP.waiting_human;
+	if (run) return run;
+	if (goal.status === 'draft') return { tone: 'planned', label: 'Planning' };
+	return pace ? { tone: PACE_TONE[pace], label: PACE_LABEL[pace] } : { tone: 'planned', label: 'Active' };
+}
+
+/** `chipFor` over the goal's `runs` (newest first), following the run `pickRun` picks. */
+export function goalChip(goal: { status: string }, runs: RunSummary[], proposed: boolean, pace: Pace | null = null): Chip {
+	const id = pickRun(runs);
+	const run = runs.find((r) => r.run_id === id);
+	return chipFor(goal, run ? runState(run.state, run.stop) : null, proposed, pace);
+}
+
+/**
+ * The newest runs list joined with the waiting-run list, which reaches past the 50 newest, each
+ * run once (the `newest` copy wins), newest first by creation as `GET /v1/runs` orders them.
+ */
+export function mergeRuns(newest: RunSummary[], waiting: RunSummary[]): RunSummary[] {
+	const seen = new Set(newest.map((r) => r.run_id));
+	const all = [...newest, ...waiting.filter((r) => !seen.has(r.run_id))];
+	return all.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.run_id.localeCompare(a.run_id));
 }
 
 /** The goal's newest new-goal or Run again run, whose research and answers the card shows; null when none. `runs` is newest first. */
@@ -51,33 +121,34 @@ function clockText(ms: number): string {
 
 /**
  * The goal card status for the followed run `view` (null: none yet), with the run time limit
- * `limitMin` in minutes and `now` in epoch ms: Working with the step, time of the limit and
- * cost; Waiting for you with what it waits for; Stopped with Retry; Failed with Retry after a
- * transient error; Paused or Failed with the reason; On track when agents are idle. With
- * `unreachable` and no view the engine was not read: Offline with Retry, never On track.
+ * `limitMin` in minutes and `now` in epoch ms. Its tone and chip are the shared `chip` (`chipFor`
+ * over the same run). Lines: the step, time of the limit and cost while working; what it waits
+ * for; the stop or failure reason with Retry when it applies; agents idle otherwise. With
+ * `unreachable` and no view the engine was not read: Offline with Retry.
  */
-export function goalStatus(view: RunView | null, limitMin: number, now: number, unreachable = false): GoalStatus {
-	const idle = { tone: 'done' as Tone, chip: 'On track', title: 'Agents are idle', stop: false, retry: false, limit: false };
+export function goalStatus(view: RunView | null, limitMin: number, now: number, chip: Chip, unreachable = false): GoalStatus {
 	if (!view && unreachable) return { tone: 'missed', chip: 'Offline', title: 'Could not reach the engine', detail: 'Tap Retry to check again.', stop: false, retry: true, limit: false };
+	const shown = { tone: chip.tone, chip: chip.label };
+	const idle = { ...shown, title: 'Agents are idle', stop: false, retry: false, limit: false };
 	if (!view) return { ...idle, detail: 'No run yet.' };
 	const cost = formatCost(view.usage?.cost_usd_micros);
 	const stopped = stopMessage(view.status);
 	const limit = view.status.reason?.kind === 'time_limit';
-	if (stopped) return { tone: 'skipped', chip: 'Stopped', title: stopped, detail: `Nothing more was spent: ${cost} in total.`, stop: false, retry: true, limit };
+	if (stopped) return { ...shown, title: stopped, detail: `Nothing more was spent: ${cost} in total.`, stop: false, retry: true, limit };
 	const transient = retryMessage(view.status);
-	if (transient) return { tone: 'missed', chip: 'Failed', title: transient, detail: `${cost} in total.`, stop: false, retry: true, limit: false };
+	if (transient) return { ...shown, title: transient, detail: `${cost} in total.`, stop: false, retry: true, limit: false };
 	if (ACTIVE.includes(view.status.status)) {
 		const step = progressLines(view.events).findLast((l) => !l.done)?.text ?? 'Starting';
 		const detail = `${clockText(activeMs(view.events, now))} of ${clockText(limitMin * MINUTE_MS)} · ${cost} so far`;
-		return { tone: 'planned', chip: 'Working', title: step, detail, stop: true, retry: false, limit: false };
+		return { ...shown, title: step, detail, stop: true, retry: false, limit: false };
 	}
 	const pause = pauseMessage(view.status);
-	if (pause && view.status.status === 'waiting_budget') return { tone: 'warn', chip: 'Paused', title: pause, detail: `${cost} so far.`, stop: false, retry: false, limit: false };
-	if (pause) return { tone: 'missed', chip: 'Failed', title: pause, detail: `${cost} in total.`, stop: false, retry: false, limit: false };
+	if (pause && view.status.status === 'waiting_budget') return { ...shown, title: pause, detail: `${cost} so far.`, stop: false, retry: false, limit: false };
+	if (pause) return { ...shown, title: pause, detail: `${cost} in total.`, stop: false, retry: false, limit: false };
 	const wait = waitLabel(view);
 	if (wait) {
 		const detail = view.waiting[0]?.node === 'approve' ? 'Nothing is on your calendar until you approve.' : 'The timer is paused while you answer.';
-		return { tone: 'warn', chip: 'Waiting for you', title: wait, detail, stop: false, retry: false, limit: false };
+		return { ...shown, title: wait, detail, stop: false, retry: false, limit: false };
 	}
 	return { ...idle, detail: `Last run ${cost}.` };
 }

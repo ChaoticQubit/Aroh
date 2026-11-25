@@ -99,12 +99,57 @@ describe('chat voice input', () => {
 		expect(draft).toBe('Buy milk and eggs then bread');
 	});
 
-	it('partials that restart after a pause keep the words heard before it', async () => {
+	it('partials carry the whole session, so words heard before a pause stay in the draft', async () => {
+		let draft = 'Note:';
+		const d = new Dictation(fakeSpeech(['I read', 'I read two chapters', 'I read two chapters then slept'], 'I read two chapters then slept'), () => draft, (text) => (draft = text));
+		await d.toggle();
+		expect(draft).toBe('Note: I read two chapters then slept');
+		await d.toggle();
+		expect(draft).toBe('Note: I read two chapters then slept');
+	});
+
+	it('a longer utterance after a pause is not appended twice', async () => {
 		let draft = '';
-		const d = new Dictation(fakeSpeech(['I read', 'I read two chapters', 'then slept'], 'then slept'), () => draft, (text) => (draft = text));
+		const session = ['I ate eggs', 'I ate eggs then I walked the dog for an hour'];
+		const d = new Dictation(fakeSpeech(session, session[1]), () => draft, (text) => (draft = text));
 		await d.toggle();
-		expect(draft).toBe('I read two chapters then slept');
 		await d.toggle();
-		expect(draft).toBe('I read two chapters then slept');
+		expect(draft).toBe('I ate eggs then I walked the dog for an hour');
+	});
+
+	it('a same-first-word utterance after a pause is not appended twice', async () => {
+		let draft = '';
+		const session = ['I ate eggs', 'I ate eggs I walked'];
+		const d = new Dictation(fakeSpeech(session, session[1]), () => draft, (text) => (draft = text));
+		await d.toggle();
+		await d.toggle();
+		expect(draft).toBe('I ate eggs I walked');
+	});
+
+	it('a shorter revision within one utterance replaces the words instead of appending', async () => {
+		const seen: string[] = [];
+		const d = new Dictation(fakeSpeech(['Ice cream and tea', 'I scream'], 'I scream'), () => '', (text) => seen.push(text));
+		await d.toggle();
+		await d.toggle();
+		expect(seen).toEqual(['Ice cream and tea', 'I scream', 'I scream']);
+	});
+
+	it('the text the recognizer ends with on its own is the whole session', async () => {
+		let draft = '';
+		let ended: ((text: string) => void) | undefined;
+		const voice: Speech = {
+			async start(onPartial, onEnded) {
+				ended = onEnded;
+				['I ate eggs', 'I ate eggs then slept'].forEach(onPartial);
+			},
+			async stop() {
+				return '';
+			}
+		};
+		const d = new Dictation(voice, () => draft, (text) => (draft = text));
+		await d.toggle();
+		ended?.('I ate eggs then slept');
+		expect(d.listening).toBe(false);
+		expect(draft).toBe('I ate eggs then slept');
 	});
 });
