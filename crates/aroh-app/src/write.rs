@@ -7,7 +7,7 @@ use aroh_domain::calendar::{day_rule, local_days, DAY_GROUP};
 use aroh_domain::hlc::Hlc;
 use aroh_domain::recur::{self, DEFAULT_WINDOW_DAYS};
 use aroh_domain::rows::{
-    validate_entry, Action, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, CalendarRule, Category, DayKind, EntrySource, FieldKind, FileKind, Goal,
+    validate_entry, Action, ActionLog, ActionSeries, ActionStatus, Autonomy, Budget, BudgetScope, BusyBlock, CalendarRule, Category, DayKind, EntrySource, FieldKind, FileKind, Goal,
     GoalFile, IngestStatus, Preference, Proposal, ProposalStatus, ProviderSetting, Tracker, TrackerEntry,
 };
 use aroh_store::repo;
@@ -324,6 +324,42 @@ pub fn edit_action(conn: &Connection, clock: &mut Hlc, id: &str, span: Option<(D
     }
     action.locked = true;
     repo::put(conn, clock, &mut action)?;
+    Ok(action)
+}
+
+/// "This and all future" delete of series session `id` (Q89), in one transaction: the series
+/// ends before the session's own slot (`occurrence`, not its moved time), so it is bounded by
+/// UNTIL or tombstoned when the session is its first; the session and the series' later
+/// planned or missed sessions without a log are tombstoned. Done, skipped and logged sessions
+/// and earlier ones stay; a kept logged session is locked, since it is off the bounded rule. Output: the deleted session. Errors for an action with no series.
+pub fn delete_series_from(conn: &Connection, clock: &mut Hlc, id: &str) -> Result<Action> {
+    let tx = conn.unchecked_transaction()?;
+    let mut action: Action = repo::get(&tx, id)?;
+    let (Some(series_id), Some(slot)) = (action.series_id.clone(), action.occurrence) else {
+        return Err(invalid("action is not a session of a series"));
+    };
+    let series: ActionSeries = repo::get(&tx, &series_id)?;
+    let mut ended = recur::end_at(&series, slot)?;
+    repo::put(&tx, clock, &mut ended)?;
+    for later in repo::list::<Action>(&tx, &[("series_id", series_id.as_str())])? {
+        let open = matches!(later.status, ActionStatus::Planned | ActionStatus::Missed);
+        let after = later.occurrence.is_some_and(|o| o >= slot);
+        if later.id == action.id || !open || !after {
+            continue;
+        }
+        if repo::list::<ActionLog>(&tx, &[("action_id", later.id.as_str())])?.is_empty() {
+            repo::delete::<Action>(&tx, clock, &later.id)?;
+        } else if !later.locked {
+            let mut kept = later;
+            kept.locked = true;
+            repo::put(&tx, clock, &mut kept)?;
+        }
+    }
+    action.deleted = true;
+    action.locked = true;
+    repo::put(&tx, clock, &mut action)?;
+    tx.commit()?;
+    assert!(repo::get::<Action>(conn, id).is_err(), "the deleted session is a tombstone");
     Ok(action)
 }
 

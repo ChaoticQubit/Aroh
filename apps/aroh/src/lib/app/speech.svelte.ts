@@ -17,7 +17,8 @@ export class SpeechError extends Error {
 
 /**
  * On-device voice input: `start` streams partial text, and `onEnded` gets the last text when the
- * recognizer finishes on its own after a pause. `stop` resolves the final transcript.
+ * recognizer finishes on its own after a pause. `stop` resolves the final transcript. Every partial,
+ * ended and final text is the whole session so far, never only the latest utterance.
  */
 export interface Speech {
 	start(onPartial: (text: string) => void, onEnded?: (text: string) => void): Promise<void>;
@@ -89,19 +90,10 @@ export const openSettings = () => invoke<void>('plugin:aroh-speech|open_settings
 const joined = (...parts: string[]) => parts.map((p) => p.trim()).filter(Boolean).join(' ');
 
 /**
- * True when partial `next` starts a new utterance instead of revising `current`: the recognizer
- * restarted after a pause, so it is shorter and does not begin with the same first word.
- * Input: the latest and the incoming partial. Output: whether `current` must be kept.
- */
-function restarted(current: string, next: string): boolean {
-	const first = (t: string) => t.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
-	return current.trim() !== '' && next.trim().length < current.trim().length && first(next) !== first(current);
-}
-
-/**
- * One mic button: `toggle` starts listening or stops. Words are appended to the draft as it was when
- * the mic started (read through `draft`) and the whole text goes to `ontext`, on each partial and on
- * the final words. The recognizer ending on its own after a pause stops listening and keeps the text.
+ * One mic button: `toggle` starts listening or stops. The session text from `Speech` is appended to
+ * the draft as it was when the mic started (read through `draft`) and the whole text goes to `ontext`,
+ * on each partial and on the final words, so a newer partial replaces the older one in the draft.
+ * The recognizer ending on its own after a pause stops listening and keeps the text.
  * `error` is the owner-facing reason the last start or stop failed; `denied` means access is off.
  */
 export class Dictation {
@@ -109,8 +101,6 @@ export class Dictation {
 	error = $state<string | null>(null);
 	denied = $state(false);
 	private base = '';
-	private heard = '';
-	private current = '';
 
 	constructor(
 		private readonly voice: Speech,
@@ -118,12 +108,10 @@ export class Dictation {
 		private readonly ontext: (text: string) => void
 	) {}
 
-	/** Takes partial or final `text` of this session and hands the draft plus all words heard to `ontext`. */
+	/** Takes the session text so far and hands the draft plus it to `ontext`; blank text changes nothing. */
 	private hear(text: string): void {
 		if (!text.trim()) return;
-		if (restarted(this.current, text)) this.heard = joined(this.heard, this.current);
-		this.current = text;
-		this.ontext(joined(this.base, this.heard, this.current));
+		this.ontext(joined(this.base, text));
 	}
 
 	/** Starts or stops listening; never throws. */
@@ -134,8 +122,6 @@ export class Dictation {
 			if (!this.listening) {
 				this.listening = true;
 				this.base = this.draft();
-				this.heard = '';
-				this.current = '';
 				await this.voice.start(
 					(text) => this.hear(text),
 					(text) => {

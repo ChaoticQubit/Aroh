@@ -102,6 +102,7 @@ pub const NAMED: &[NamedType] = &[
             req("locked", Ty::Bool),
             req("category", Ty::Named("CategorySlot")),
             req("goalTitle", Ty::Str),
+            opt("series", Ty::Bool),
         ]),
     },
     NamedType {

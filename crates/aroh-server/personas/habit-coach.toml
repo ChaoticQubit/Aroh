@@ -27,7 +27,7 @@ guardrails = [
   "Safety: no medical diagnosis or treatment advice; refer to a doctor for pain, illness or medical conditions.",
   "For quitting smoking, alcohol or other substances, recommend professional support and never a medication plan.",
 ]
-evals = ["min_items(items, 1)", "no_overlap(items)", "within_availability(items, '06:00', '22:00')", "notes_filled(items)", "starts_after_now(items)"]
+evals = ["min_items(items, 1)", "within_availability(items, '06:00', '22:00')", "notes_filled(items)", "starts_after_now(items)"]
 
 [output]
 summary = "string"

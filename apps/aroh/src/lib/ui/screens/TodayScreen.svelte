@@ -13,7 +13,7 @@
 	import { getClock } from '$lib/ui/clock';
 	import { formatDate, formatDuration, formatTime, formatYmd } from '$lib/ui/format';
 	import { actionStyle, logState } from '$lib/ui/status';
-	import type { ActionView, ComponentSpec, OnChange } from '$lib/ui/contract';
+	import type { ActionView, ComponentSpec, DeleteScope, OnChange } from '$lib/ui/contract';
 	import type { ActionEdit, AllDayView, DayKind, DayPick } from './types';
 
 	/**
@@ -57,7 +57,7 @@
 		voice?: Speech;
 		onedit?: (edit: ActionEdit) => void;
 		onlock?: (id: string, locked: boolean) => void;
-		ondelete?: (id: string) => void;
+		ondelete?: (id: string, scope: DeleteScope) => void;
 		onchoose?: (pick: DayPick) => void;
 	} = $props();
 
@@ -105,10 +105,10 @@
 	}
 
 	/** Removes an action locally, closes the sheet and reports it. */
-	function remove(id: string) {
+	function remove(id: string, scope: DeleteScope) {
 		deleted = [...deleted, id];
 		editing = null;
-		ondelete?.(id);
+		ondelete?.(id, scope);
 	}
 
 	/** Stores the owner's kind for an all-day event, closes a reopened card and reports it. */

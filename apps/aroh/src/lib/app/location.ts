@@ -188,7 +188,7 @@ export function routineRows(v: LocationView, now: string, zone: string): Routine
 				: formatYmd(next.start_at, zone) === today
 					? ['warn', 'Due today']
 					: ['planned', 'Planned'];
-		return { id: r.series_id, title: r.title, place: r.place, cadence: r.cadence, streak: r.streak, lastDone: r.last_done, nextDue: next?.start_at ?? '', tone, due };
+		return { id: r.series_id, title: r.title, place: r.place, cadence: r.cadence, streak: r.streak, lastDone: r.last_done, nextDue: next?.start_at ?? null, tone, due };
 	});
 }
 

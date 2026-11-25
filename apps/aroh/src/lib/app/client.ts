@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { engineCache } from './cache';
 import type { Card, CardLog } from '$lib/ui/action/card';
+import type { DeleteScope } from '$lib/ui/contract';
 
 /** A goal category row. */
 export type Category = { id: string; name: string; color: string; seeded: boolean };
@@ -308,8 +309,8 @@ export const readCalendar = (from: string, to: string) =>
 /** Moves or resizes an action to `start`..`end` (RFC 3339); the action is locked so agents leave it. */
 export const editAction = (id: string, start: string, end: string) => invoke<Action>('app_edit_action', { id, startAt: start, endAt: end, delete: false });
 
-/** Deletes an action; the server learns from the edit when it syncs. */
-export const deleteAction = (id: string) => invoke<Action>('app_edit_action', { id, startAt: null, endAt: null, delete: true });
+/** Deletes an action, or with scope `future` it and every later session of its series (Q89); the server learns from the edit when it syncs. */
+export const deleteAction = (id: string, scope: DeleteScope = 'this') => invoke<Action>('app_edit_action', { id, startAt: null, endAt: null, delete: true, scope });
 
 /** Turns Fixed time on or off for an action; a fixed action is never moved by agents or the app. */
 export const setLocked = (id: string, locked: boolean) => invoke<Action>('app_set_locked', { id, locked });

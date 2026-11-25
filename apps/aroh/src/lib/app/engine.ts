@@ -30,8 +30,8 @@ export type Call = (method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, bod
 /** A stored key as `GET /v1/keys` lists it: setting row, vendor and last 4 characters. */
 export type KeyInfo = { setting_id: string; vendor: string; last4: string; updated_at: string };
 
-/** One run of `GET /v1/runs`; `personas` are the slugs of the coaches its snapshot holds. */
-export type RunSummary = { run_id: string; goal_id: string | null; workflow: string; state: string; created_at: string; updated_at: string; personas?: string[]; plugin_id?: string | null; plugin_version?: number | null };
+/** One run of `GET /v1/runs`; `personas` are the slugs of the coaches its snapshot holds, `stop` how a failed run was stopped (`cancelled`, `time_limit`). */
+export type RunSummary = { run_id: string; goal_id: string | null; workflow: string; state: string; created_at: string; updated_at: string; personas?: string[]; plugin_id?: string | null; plugin_version?: number | null; stop?: string | null };
 
 /** One intake question of the new-goal run. Number questions may carry a unit and slider bounds; runs from before units have none. */
 export type Question = {
@@ -99,6 +99,7 @@ const STEP_TEXT: Record<string, string> = {
 	research: 'Researching how to reach it',
 	plan: 'Writing the plan',
 	revise: 'Revising the plan',
+	place: 'Moving sessions around your calendar',
 	write: 'Putting the plan on your calendar',
 	map: 'Reading your log',
 	save: 'Saving the entries',
@@ -110,6 +111,9 @@ const STEP_TEXT: Record<string, string> = {
 	save_rules: 'Saving your calendar rules'
 };
 
+/** Start of a failure reason the server words for the owner (Q88), shown as is without the node and tool around it. */
+const PLAIN_REASON = 'Could not fit sessions around your calendar:';
+
 /** The owner-facing line for a paused or failed run, or null when it is neither. */
 export function pauseMessage(status: RunStatus): string | null {
 	if (status.status === 'waiting_budget') {
@@ -117,6 +121,8 @@ export function pauseMessage(status: RunStatus): string | null {
 		if (limit === 'unverified_price') return "Paused: this model's price is not verified, so spend cannot be checked. Pick an Anthropic, OpenAI or Google model in Settings.";
 		return `Paused: the ${limit} budget is reached. Raise it in Settings to continue.`;
 	}
+	const plain = status.error?.indexOf(PLAIN_REASON) ?? -1;
+	if (status.status === 'failed' && plain >= 0) return `${status.error?.slice(plain)}.`;
 	if (status.status === 'failed') return `The run stopped: ${status.error ?? 'unknown error'}.`;
 	return null;
 }
@@ -269,10 +275,14 @@ export function keyStatus(keys: KeyInfo[], providers: { id: string; vendor: stri
 	return out;
 }
 
-/** The error text of a failed answer: the engine's message, else the status. */
+/** The one line shown for an engine failure that carries nothing the owner can act on (B96). */
+export const ENGINE_PROBLEM = 'The engine had a problem. Try again in a moment.';
+
+/** The error text of a failed answer: the engine's own message for a 4xx, else `ENGINE_PROBLEM`, never a status or raw body (B96). */
 function failure(a: Answer): string {
-	const body = a.body as { error?: { message?: string } } | null;
-	return body?.error?.message ?? `The engine answered ${a.status}.`;
+	const message = (a.body as { error?: { message?: unknown } } | null)?.error?.message;
+	if (a.status >= 500 || typeof message !== 'string' || !message.trim()) return ENGINE_PROBLEM;
+	return message;
 }
 
 /**

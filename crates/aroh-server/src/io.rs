@@ -333,6 +333,8 @@ impl RunIo {
         conditions.register("limits_gate", Arc::new(crate::limits::limits_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
         conditions.register("cards_gate", Arc::new(crate::cards::cards_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
         tools.register(crate::limits::tool()).map_err(|e| ServerError::Setup(e.to_string()))?;
+        conditions.register("overlap_gate", Arc::new(crate::overlaps::overlap_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
+        tools.register(crate::overlaps::tool(busy.clone(), days)).map_err(|e| ServerError::Setup(e.to_string()))?;
         for t in crate::cards::card_tools(env_cards) {
             tools.register(t).map_err(|e| ServerError::Setup(e.to_string()))?;
         }

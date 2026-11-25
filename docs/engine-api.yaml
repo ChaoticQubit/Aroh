@@ -1777,7 +1777,8 @@ components:
         One row of the run list behind the Inbox: ids, workflow, lifecycle
         state, times, and the sorted slugs of the personas its snapshot holds
         (the coaches that work on the run), and the plugin and version it used.
-        `waiting_human` runs need the owner. Newest first.
+        `waiting_human` runs need the owner. A failed run stopped from outside a step
+        names how in `stop` (`cancelled` by its owner, or `time_limit`). Newest first.
       required:
       - run_id
       - workflow
@@ -1813,6 +1814,10 @@ components:
           format: uuid
         state:
           type: string
+        stop:
+          type:
+          - string
+          - 'null'
         updated_at:
           type: string
           format: date-time

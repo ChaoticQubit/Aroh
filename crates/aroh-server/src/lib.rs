@@ -17,6 +17,7 @@ pub mod insights;
 pub mod io;
 pub mod learning;
 pub mod limits;
+pub mod overlaps;
 pub mod ledger;
 pub mod personas;
 pub mod plugins;

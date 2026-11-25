@@ -55,7 +55,7 @@
 		voice={speech}
 		onedit={(e) => data.run(() => client.editAction(e.id, e.start, e.end).then(() => editStatus.track(e.id)))}
 		onlock={(id, locked) => data.run(() => client.setLocked(id, locked))}
-		ondelete={(id) => data.run(() => client.deleteAction(id).then(() => editStatus.track(id)))}
+		ondelete={(id, scope) => data.run(() => client.deleteAction(id, scope).then(() => editStatus.track(id)))}
 		onchoose={(p) => data.run(() => confirmDay(p.id, p.kind))}
 	/>
 {/if}

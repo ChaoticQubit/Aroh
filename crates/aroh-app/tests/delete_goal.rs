@@ -242,3 +242,57 @@ fn a_second_device_converges_after_delete_all() {
 fn a_second_device_converges_after_keep_actions() {
     converges(true);
 }
+
+fn deletes_actions_one_by_one_then_the_goal(keep: bool) {
+    let server = Arc::new(Mutex::new(Server::default()));
+    for (table, row) in SYNCED.iter().zip(samples::all()) {
+        let serde_json::Value::Object(row) = row else { unreachable!() };
+        server.lock().unwrap().put(table.name, row);
+    }
+    let mut a = db::open_in_memory().unwrap();
+    let mut clock = Hlc::new("00000000000000a1");
+    sync(&mut a, &mut clock, &server);
+    let actions: Vec<Action> = repo::list(&a, &[("goal_id", goal().as_str())]).unwrap();
+    assert!(!actions.is_empty());
+    for action in &actions {
+        aroh_app::write::edit_action(&a, &mut clock, &action.id, None).unwrap();
+        sync(&mut a, &mut clock, &server);
+    }
+    remove::delete_goal(&a, &mut clock, &goal(), keep).unwrap();
+    sync(&mut a, &mut clock, &server);
+    sync(&mut a, &mut clock, &server);
+    assert_eq!(live_count(&a, "goals", "id", &goal()), 0, "the deleted goal stays deleted on the device");
+    let pushed = &server.lock().unwrap().rows[&("goals", goal())].1;
+    assert_eq!(pushed["deleted"], true, "the server holds the tombstone");
+}
+
+#[test]
+fn b96_goal_deleted_after_its_actions_one_by_one_stays_deleted() {
+    deletes_actions_one_by_one_then_the_goal(false);
+    deletes_actions_one_by_one_then_the_goal(true);
+}
+
+fn routines_listed(conn: &Connection, from: DateTime<Utc>, to: DateTime<Utc>) -> bool {
+    let snap = aroh_app::snapshot::snapshot(conn, USER, from, to, from).unwrap();
+    snap.goals.iter().any(|g| g.id == routines_id())
+}
+
+#[test]
+fn b96_routines_shows_only_while_it_holds_a_live_series_or_action() {
+    let (conn, mut clock) = store("00000000000000d1");
+    let (from, to) = (now() + Duration::days(400), now() + Duration::days(401));
+    aroh_app::location::ensure_routines(&conn, &mut clock, USER).unwrap();
+    assert!(!routines_listed(&conn, from, to), "an empty Routines goal is not listed");
+    remove::delete_goal(&conn, &mut clock, &goal(), true).unwrap();
+    assert!(routines_listed(&conn, from, to), "kept series list Routines though no action is in the window");
+    for series in repo::list::<ActionSeries>(&conn, &[("goal_id", routines_id().as_str())]).unwrap() {
+        repo::delete::<ActionSeries>(&conn, &mut clock, &series.id).unwrap();
+    }
+    let actions: Vec<Action> = repo::list(&conn, &[("goal_id", routines_id().as_str())]).unwrap();
+    assert!(!actions.is_empty());
+    assert!(routines_listed(&conn, from, to), "a live action outside the window still lists Routines");
+    for action in &actions {
+        aroh_app::write::edit_action(&conn, &mut clock, &action.id, None).unwrap();
+    }
+    assert!(!routines_listed(&conn, from, to), "no live series and no live action: not listed");
+}

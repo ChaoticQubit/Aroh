@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { forGoal, tagged } from './goalpage';
+import { forGoal, openGoalId, tagged } from './goalpage';
 
 describe('goal page state keyed by goal id (B87)', () => {
 	it('shows a value only on the goal it was read for', () => {
@@ -16,5 +16,15 @@ describe('goal page state keyed by goal id (B87)', () => {
 		held = late.id === 'b' ? late : held;
 		expect(forGoal(held, 'b', null)).toBe('fresh b');
 		expect(forGoal(late, 'b', null)).toBeNull();
+	});
+});
+
+describe('the goal a page reads for (B96)', () => {
+	it('b96: no goal id until the snapshot holds the goal, so a deleted goal sends no engine read', () => {
+		const goals = [{ id: 'g1' }];
+		expect(openGoalId(null, 'g1')).toBeNull();
+		expect(openGoalId({ goals }, 'g1')).toBe('g1');
+		expect(openGoalId({ goals }, 'gone')).toBeNull();
+		expect(openGoalId({ goals }, undefined)).toBeNull();
 	});
 });

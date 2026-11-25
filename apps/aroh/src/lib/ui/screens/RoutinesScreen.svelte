@@ -40,7 +40,7 @@
 							<td class="px-2 py-2.5 text-right tabular-nums">{r.streak}</td>
 							<td class="px-2 py-2.5 text-xs whitespace-nowrap text-muted">{r.lastDone ? formatDay(r.lastDone, zone) : 'Not yet'}</td>
 							<td class="py-2.5 pr-4 pl-2">
-								<span class="flex flex-col items-start gap-1"><span class="text-xs whitespace-nowrap">{formatDay(r.nextDue, zone)}</span><span class="whitespace-nowrap"><StatusChip tone={r.tone} label={r.due} /></span></span>
+								<span class="flex flex-col items-start gap-1">{#if r.nextDue}<span class="text-xs whitespace-nowrap">{formatDay(r.nextDue, zone)}</span>{/if}<span class="whitespace-nowrap"><StatusChip tone={r.tone} label={r.due} /></span></span>
 							</td>
 						</tr>
 					{/each}

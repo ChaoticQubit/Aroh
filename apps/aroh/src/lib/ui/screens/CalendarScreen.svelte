@@ -12,7 +12,7 @@
 	import { daysBetween, formatDate, formatYmd, mondayOf, shiftDay, shiftMonth } from '$lib/ui/format';
 	import { stepAnchor, swipe } from '$lib/ui/swipe';
 	import type { Snippet } from 'svelte';
-	import type { ActionView } from '$lib/ui/contract';
+	import type { ActionView, DeleteScope } from '$lib/ui/contract';
 	import type { ActionEdit, AllDayView, BusyView, CategoryView, DayKind, DayPick } from './types';
 
 	/**
@@ -58,7 +58,7 @@
 		onstatus?: (id: string, status: 'planned' | 'done' | 'skipped') => void;
 		onedit?: (edit: ActionEdit) => void;
 		onlock?: (id: string, locked: boolean) => void;
-		ondelete?: (id: string) => void;
+		ondelete?: (id: string, scope: DeleteScope) => void;
 		onchoose?: (pick: DayPick) => void;
 		dayTop?: Snippet<[string]>;
 	} = $props();
@@ -121,11 +121,11 @@
 	}
 
 	/** Removes an action locally and reports it. */
-	function remove(id: string) {
+	function remove(id: string, scope: DeleteScope) {
 		deleted = [...deleted, id];
 		editing = null;
 		selected = null;
-		ondelete?.(id);
+		ondelete?.(id, scope);
 	}
 
 	/** Stores the owner's kind for an all-day event, closes a reopened card and reports it. */

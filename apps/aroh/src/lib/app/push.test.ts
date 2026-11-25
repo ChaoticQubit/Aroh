@@ -10,6 +10,12 @@ describe('pushTarget', () => {
 		expect(pushTarget({ kind: 'proposal', id: RUN, goal_id: GOAL })).toBe(`/goals/${GOAL}`);
 	});
 
+	it('b97: opens the goal page for a failed run, and the Inbox when it has no goal', () => {
+		expect(pushTarget({ kind: 'run_failed', id: RUN, goal_id: GOAL })).toBe(`/goals/${GOAL}`);
+		expect(pushTarget({ kind: 'run_failed', id: RUN, goal_id: null })).toBe('/inbox');
+		expect(pushTarget({ kind: 'run_failed', id: RUN, goal_id: '../settings' })).toBeNull();
+	});
+
 	it('opens the Inbox for a run without a goal', () => {
 		expect(pushTarget({ kind: 'run', id: RUN, goal_id: null })).toBe('/inbox');
 		expect(pushTarget({ kind: 'run', id: RUN })).toBe('/inbox');

@@ -91,7 +91,7 @@ fn path_slots(output: &Value, args: &[Value]) -> Result<Vec<Slot>, String> {
 }
 
 /// The slots of the items at the path in `args[0]`, each series expanded over its first `days`.
-fn path_slots_within(output: &Value, args: &[Value], days: u32) -> Result<Vec<Slot>, String> {
+pub fn path_slots_within(output: &Value, args: &[Value], days: u32) -> Result<Vec<Slot>, String> {
     let path = args.first().and_then(Value::as_str).ok_or("takes a path to a list of items first")?;
     let mut out = Vec::new();
     for found in lookup(output, path) {
@@ -107,19 +107,12 @@ fn path_slots_within(output: &Value, args: &[Value], days: u32) -> Result<Vec<Sl
     Ok(out)
 }
 
-fn clash(mut all: Vec<Slot>, busy: &[Slot]) -> Result<(), String> {
-    all.sort_by(|a, b| (a.start, a.end).cmp(&(b.start, b.end)));
-    for pair in all.windows(2) {
-        if pair[1].start < pair[0].end {
-            return Err(format!("`{}` overlaps `{}` at {}", pair[1].title, pair[0].title, pair[1].start));
-        }
+fn clash(all: Vec<Slot>, busy: &[Slot]) -> Result<(), String> {
+    match crate::overlaps::clashes(all, busy).first() {
+        None => Ok(()),
+        Some(c) if c.busy => Err(format!("`{}` overlaps busy `{}` at {}", c.slot.title, c.other.title, c.other.start)),
+        Some(c) => Err(format!("`{}` overlaps `{}` at {}", c.slot.title, c.other.title, c.slot.start)),
     }
-    for slot in &all {
-        if let Some(b) = busy.iter().find(|b| slot.start < b.end && b.start < slot.end) {
-            return Err(format!("`{}` overlaps busy `{}` at {}", slot.title, b.title, b.start));
-        }
-    }
-    Ok(())
 }
 
 /// Eval `no_overlap(path)`: the slots of the items at `path` never overlap

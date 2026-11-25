@@ -4,7 +4,8 @@
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { follow } from '$lib/app/chat.svelte';
-	import { engine, unreachable, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
+	import { ACTIVE, engine, unreachable, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
+	import { refreshRuns } from '$lib/app/realtime';
 	import { decisionsFrom, deviceSuggestions, finishTriage, refreshSuggestions, triageCards } from '$lib/app/calendar';
 	import { inboxView } from '$lib/app/views';
 	import { openProposals, withOpened, type OpenedProposal } from '$lib/app/diary';
@@ -37,6 +38,19 @@
 		await loadTriage();
 	}
 
+	/**
+	 * Re-reads the runs and what the waiting ones wait for, after a run event or a return to the
+	 * app. Triage answers and insights stay as they are; a failed read keeps the last list.
+	 */
+	async function refresh() {
+		const r = await engine.runs();
+		offline = unreachable(r);
+		if (!r.ok) return;
+		const w = await engine.waits(r.value);
+		runs = r.value;
+		waits = w;
+	}
+
 	/** Reads the calendar-triage run waiting at `decide` for the group cards and keeps its day suggestions. */
 	async function loadTriage() {
 		triage = data.snapshot ? await refreshSuggestions(data.snapshot, deviceSuggestions(runs)) : null;
@@ -56,7 +70,13 @@
 		await loadRuns();
 	}
 
-	onMount(() => void loadRuns());
+	onMount(() => {
+		void loadRuns();
+		return refreshRuns(
+			() => void refresh(),
+			() => runs.some((r) => ACTIVE.includes(r.state))
+		);
+	});
 	onMount(() => location.follow((v) => (places = v), (e) => (data.error = String(e))));
 
 	/** Answers a place prompt; an answer the card cannot give is ignored. */

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { chatFromRun, Engine, fixedActionIds, flushLogs, keyStatus, NEEDS_ENGINE, pauseMessage, route, unreachable, waitLabel, type Answer, type Call, type RunView, type Waiting } from './engine';
+import { chatFromRun, Engine, fixedActionIds, flushLogs, keyStatus, NEEDS_ENGINE, ENGINE_PROBLEM, pauseMessage, progressLines, route, unreachable, waitLabel, type Answer, type Call, type RunView, type Waiting } from './engine';
 import type { Action } from './client';
 import { deviceZone } from '$lib/ui/clock';
 
@@ -76,6 +76,10 @@ describe('engine client', () => {
 		expect(pauseMessage({ status: 'waiting_budget', reason: { kind: 'budget', limit: 'unverified_price' } })).toContain('price is not verified');
 		expect(pauseMessage({ status: 'waiting_budget', reason: { kind: 'budget', limit: 'user' } })).toBe('Paused: the user budget is reached. Raise it in Settings to continue.');
 		expect(pauseMessage({ status: 'failed', error: 'no key' })).toBe('The run stopped: no key.');
+		const clash = 'node `place_check`: tool `check_overlap`: blocked: Could not fit sessions around your calendar: Gym: Upper body A clashes with Gym: Full body A (legs, chest, back)';
+		expect(pauseMessage({ status: 'failed', error: clash })).toBe('Could not fit sessions around your calendar: Gym: Upper body A clashes with Gym: Full body A (legs, chest, back).');
+		const events = [{ seq: 1, at_ms: 0, body: { type: 'step_started', step: 'place' } }];
+		expect(progressLines(events)).toEqual([{ text: 'Moving sessions around your calendar', done: false }]);
 		expect(pauseMessage({ status: 'checkpointed' })).toBeNull();
 		expect(chatFromRun(view({ status: 'waiting_budget', reason: { kind: 'budget', limit: 'unverified_price' } })).at(-1)).toMatchObject({ from: 'persona', name: 'Aroh' });
 	});
@@ -289,5 +293,24 @@ describe('engine reads in flight (B87)', () => {
 		expect(sent).toEqual(['GET /v1/runs?goal_id=g1', 'GET /v1/runs?goal_id=g2', 'POST /v1/runs/r1/cancel', 'POST /v1/runs/r1/cancel']);
 		await e.runs({ goalId: 'g1' });
 		expect(sent.filter((x) => x === 'GET /v1/runs?goal_id=g1')).toHaveLength(2);
+	});
+});
+
+describe('engine failures in plain words (B96)', () => {
+	it('b96: a 5xx or a body that is not the engine error JSON is one plain line; a 4xx keeps the engine message', async () => {
+		const answers: Answer[] = [
+			{ status: 500, body: { error: { code: 'internal', message: 'internal error' } } },
+			{ status: 500, body: null },
+			{ status: 502, body: '<html>500: INTERNAL_SERVER_ERROR</html>' },
+			{ status: 404, body: null },
+			{ status: 404, body: { error: { code: 'not_found', message: 'not found: goal g1' } } }
+		];
+		const messages: string[] = [];
+		for (const a of answers) {
+			const r = await new Engine(async () => a).runs({ goalId: 'g1' });
+			messages.push(r.ok ? 'ok' : r.message);
+		}
+		expect(messages).toEqual([ENGINE_PROBLEM, ENGINE_PROBLEM, ENGINE_PROBLEM, ENGINE_PROBLEM, 'not found: goal g1']);
+		for (const m of messages.slice(0, 4)) expect(m).not.toMatch(/\d{3}|internal|html/i);
 	});
 });

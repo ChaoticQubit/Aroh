@@ -52,6 +52,9 @@ pub fn db_refusal(message: &str) -> Option<(&'static str, String)> {
 
 impl From<db::Error> for ServerError {
     fn from(e: db::Error) -> Self {
+        if matches!(e, db::Error::RowNotFound) {
+            return ServerError::NotFound("no such row".into());
+        }
         let refusal = e.as_database_error().and_then(|d| db_refusal(d.message()));
         match refusal {
             Some((code, message)) => ServerError::Refused { code, message },
@@ -175,5 +178,11 @@ mod tests {
         assert_eq!(status("goal_limit"), (StatusCode::CONFLICT, "goal_limit"));
         assert_eq!(status("account_disabled").0, StatusCode::FORBIDDEN);
         assert_eq!(ServerError::Refused { code: "goal_limit", message: "Archive one.".into() }.to_string(), "Archive one.");
+    }
+
+    #[test]
+    fn b96_a_missing_row_is_not_found_and_other_database_errors_stay_internal() {
+        assert_eq!(ServerError::from(db::Error::RowNotFound).status(), (StatusCode::NOT_FOUND, "not_found"));
+        assert_eq!(ServerError::from(db::Error::Pool("gone".into())).status(), (StatusCode::INTERNAL_SERVER_ERROR, "internal"));
     }
 }

@@ -6,7 +6,8 @@ import { catalog } from './catalog';
 import type { Action, Goal, Proposal, Snapshot, Tracker, TrackerEntry, TrackerField } from './client';
 import { ACTIVE, type Insight, type RunSummary } from './engine';
 import type { Tone } from '$lib/ui/components/StatusChip.svelte';
-import { PACE_LABEL, type GoalStats } from './dashboard';
+import type { GoalStats } from './dashboard';
+import { goalChip, runChip, runState } from './goalcard';
 
 const SEEDED_SLOTS: Record<string, CategorySlot> = { Learning: 1, 'Health and Fitness': 2, Financial: 3, 'Hobby and Skill': 4, 'Career and Projects': 5, Habit: 6 };
 
@@ -77,7 +78,7 @@ export function actionViews(s: Snapshot): ActionView[] {
 	const goals = new Map(s.goals.map((g) => [g.id, g]));
 	return s.actions.map((a) => {
 		const goal = goals.get(a.goal_id);
-		return { id: a.id, title: a.title, start: a.start_at, end: a.end_at, status: a.status, locked: a.locked, category: goalCategory(categories, goal).slot, goalTitle: goal?.title ?? '' };
+		return { id: a.id, title: a.title, start: a.start_at, end: a.end_at, status: a.status, locked: a.locked, category: goalCategory(categories, goal).slot, goalTitle: goal?.title ?? '', series: a.series_id !== null };
 	});
 }
 
@@ -245,41 +246,27 @@ export function goalRows(s: Snapshot, zone: string): GoalRow[] {
 /** A goal's line on the Goals list: status chip tone and label, done and due sessions to date, and its next step or null. */
 export type GoalProgress = { tone: Tone; label: string; done: number; due: number; line: string | null };
 
-const PACE_TONE: Record<GoalStats['pace'], Tone> = { on_track: 'done', ahead: 'done', behind: 'missed' };
-
 /**
- * The status, progress and next step of every non-archived goal, by goal id. Draft is Planning,
- * paused Paused, done Done; an active goal with a proposal waiting, or listed in `waitingRuns`
- * (goal ids of runs waiting for the owner), is Waiting for you, else its dashboard pace (`stats`;
- * null while loading gives Active). The line names the next planned session, else the sessions
- * missed this week, else null.
+ * The status, progress and next step of every non-archived goal, by goal id. The chip is the
+ * shared `goalChip` over the goal's `runs` (the engine's runs, newest first), whether a proposal
+ * of it waits, and its dashboard pace (`stats`; null while loading). The line names the next
+ * planned session, else the sessions missed this week, else null.
  */
-export function goalProgress(s: Snapshot, stats: GoalStats[] | null, clock: Clock, waitingRuns: string[] = []): Record<string, GoalProgress> {
+export function goalProgress(s: Snapshot, stats: GoalStats[] | null, clock: Clock, runs: RunSummary[] = []): Record<string, GoalProgress> {
 	const today = formatYmd(clock.now, clock.zone);
 	const figures = new Map((stats ?? []).map((st) => [st.goal_id, st]));
-	const waiting = new Set([...s.proposals.filter((p) => p.status === 'proposed').map((p) => p.goal_id), ...waitingRuns]);
+	const proposed = new Set(s.proposals.filter((p) => p.status === 'proposed').map((p) => p.goal_id));
 	const out: Record<string, GoalProgress> = {};
 	for (const g of s.goals.filter((g) => g.status !== 'archived')) {
 		const st = figures.get(g.id);
 		const actions = s.actions.filter((a) => a.goal_id === g.id).sort((a, b) => a.start_at.localeCompare(b.start_at));
 		const next = actions.find((a) => a.status === 'planned' && Date.parse(a.start_at) > Date.parse(clock.now));
 		const missed = weekActions(actions, clock).filter((a) => a.status === 'missed').length;
-		const status: { tone: Tone; label: string } =
-			g.status === 'draft'
-				? { tone: 'planned', label: 'Planning' }
-				: g.status === 'paused'
-					? { tone: 'skipped', label: 'Paused' }
-					: g.status === 'done'
-						? { tone: 'done', label: 'Done' }
-						: waiting.has(g.id)
-							? { tone: 'warn', label: 'Waiting for you' }
-							: st
-								? { tone: PACE_TONE[st.pace], label: PACE_LABEL[st.pace] }
-								: { tone: 'planned', label: 'Active' };
+		const status = goalChip(g, runs.filter((r) => r.goal_id === g.id), proposed.has(g.id), st?.pace ?? null);
 		const when = next && (formatYmd(next.start_at, clock.zone) === today ? 'today' : formatDay(next.start_at, clock.zone));
 		const line = next ? `Next: ${next.title}, ${when} ${formatTime(next.start_at, clock.zone)}` : missed ? `${missed} ${missed === 1 ? 'session' : 'sessions'} missed this week` : null;
 		console.assert(!st || (st.done >= 0 && st.due >= 0), 'dashboard counts are never negative');
-		out[g.id] = { ...status, done: st?.done ?? 0, due: st?.due ?? 0, line };
+		out[g.id] = { tone: status.tone, label: status.label, done: st?.done ?? 0, due: st?.due ?? 0, line };
 	}
 	return out;
 }
@@ -304,18 +291,9 @@ const WORKFLOW: Record<string, { title: string; persona: string }> = {
 	'calendar-triage': { title: 'Sorting your calendar', persona: 'Calendar triage' }
 };
 
-const RUN_STATE: Record<string, { step: string; tone: Tone }> = {
-	queued: { step: 'Waiting to start', tone: 'planned' },
-	running: { step: 'Working', tone: 'planned' },
-	checkpointed: { step: 'Working', tone: 'planned' },
-	waiting_human: { step: 'Waiting for you', tone: 'warn' },
-	waiting_budget: { step: 'Paused at a budget', tone: 'warn' },
-	failed: { step: 'Stopped', tone: 'skipped' }
-};
-
 /**
  * Runs not done, newest first, one per goal and workflow, titled by workflow and goal, with a
- * status tone and `working` (spins) only while the run still moves on its own. Progress is
+ * status from the shared `runChip` and `working` (spins) only while the run still moves on its own. Progress is
  * coarse by state: 0 queued, 50 working, 100 stopped at a wait, a pause or a failure. A run that
  * waits for the owner says what for (`waits`, by run id, such as "3 questions to answer") and
  * links to its goal's chat.
@@ -331,7 +309,8 @@ function openRuns(s: Snapshot, runs: RunSummary[], waits: Record<string, string>
 		const kind = WORKFLOW[r.workflow] ?? { title: r.workflow, persona: 'Aroh' };
 		const progress = r.state === 'queued' ? 0 : r.state === 'running' || r.state === 'checkpointed' ? 50 : 100;
 		const wait = r.state === 'waiting_human' ? waits[r.run_id] : undefined;
-		const state = RUN_STATE[r.state] ?? { step: r.state, tone: 'skipped' };
+		const chip = runChip(runState(r.state, r.stop)) ?? { label: r.state, tone: 'skipped' };
+		const state = { step: chip.label, tone: chip.tone };
 		const step = wait ? `Waiting for you: ${wait}` : state.step;
 		const working = ACTIVE.includes(r.state);
 		console.assert(!working || state.tone === 'planned', 'only a working run is drawn as working');

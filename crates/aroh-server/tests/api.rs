@@ -971,6 +971,60 @@ async fn b89_a_series_occurrence_a_month_out_is_busy_though_not_materialized() {
     assert_eq!(view["waiting"][0]["data"]["plan"]["items"][0]["start"], "2026-12-22T11:00:00", "the daily Yoga at 06:00 a month out is busy");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b97_a_plan_that_keeps_clashing_with_another_goals_series_goes_back_twice_then_fails_plainly() {
+    let models = FnTransport::new(|req| {
+        let body = body_text(req);
+        if body.contains("You are Intake interviewer") {
+            return sse_text(&coach_intake().to_string());
+        }
+        if body.contains("You are Goal researcher") {
+            return sse_text(&json!({"summary": "Lift weights.", "sources": []}).to_string());
+        }
+        if body.contains("You are Goal planner") {
+            let plan = json!({"summary": "Upper body on Mondays.", "timezone": "UTC", "trackers": [], "daily_minutes": null, "needed_minutes": null, "ordered": false, "ordered_why": "Sessions stand in for each other.",
+                "items": [{"title": "Gym: Upper body A", "start": "2026-11-30T19:00:00", "minutes": 60, "rrule": "FREQ=WEEKLY;BYDAY=MO", "notes": "Bench, rows, presses"}]});
+            return sse_text(&plan.to_string());
+        }
+        json_reply(400, json!({}))
+    });
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let other = api.goal(u, Autonomy::Balanced).await;
+    let mut legs = aroh_domain::rows::ActionSeries {
+        id: Uuid::now_v7().to_string(),
+        user_id: u.to_string(),
+        goal_id: other.to_string(),
+        title: "Gym: Full body A (legs, chest, back)".into(),
+        notes: None,
+        rrule: "FREQ=WEEKLY;BYDAY=MO".into(),
+        dtstart_local: "2026-12-14T19:00:00".into(),
+        timezone: "UTC".into(),
+        duration_minutes: 60,
+        card: None,
+        updated_at: String::new(),
+        deleted: false,
+    };
+    put_row(&api.pool, &api.hlc, u, &mut legs).await.unwrap();
+    let (_, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Gym", "timezone": "UTC"}))).await;
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["status"]["status"], "failed", "{view}");
+    let error = view["status"]["error"].as_str().unwrap();
+    assert!(error.ends_with("Could not fit sessions around your calendar: Gym: Upper body A clashes with Gym: Full body A (legs, chest, back)"), "{error}");
+    assert_eq!(view["status"]["retryable"], false, "the same plan would clash again: {view}");
+    let planner: Vec<String> = models.sent().iter().map(body_text).filter(|b| b.contains("You are Goal planner")).collect();
+    assert_eq!(planner.len(), 3, "the plan and two retries");
+    for retry in &planner[1..] {
+        assert!(retry.contains("overlaps busy `Gym: Full body A (legs, chest, back)` (19:00-20:00), and on "), "{retry}");
+        assert!(retry.contains("Mon 2026-12-14 19:00-20:00"), "{retry}");
+    }
+}
+
 fn triage_event(id: &str, title: &str, start: &str, rrule: Option<&str>) -> Value {
     let start: DateTime<Utc> = start.parse().unwrap();
     json!({"event_id": id, "calendar_id": "cal-work", "calendar": "Work", "title": title,
@@ -1480,6 +1534,8 @@ async fn a_run_stops_at_its_active_time_limit_and_the_owner_can_stop_and_retry_i
     let calls = models.sent().len();
     api.tick().await;
     assert_eq!(models.sent().len(), calls, "a stopped run calls no more models");
+    let listed = |runs: Value| runs.as_array().unwrap().iter().find(|r| r["run_id"] == json!(run)).cloned().unwrap();
+    assert_eq!(listed(api.call(Method::Get, "/v1/runs", Some(&t), None).await.1)["stop"], "time_limit", "b97: the list names a time-limit stop");
 
     let other = user_token(user(&api.pool).await);
     assert_eq!(api.call(Method::Post, &format!("/v1/runs/{run}/retry"), Some(&other), None).await.0, 404, "only the owner retries");
@@ -1496,11 +1552,13 @@ async fn a_run_stops_at_its_active_time_limit_and_the_owner_can_stop_and_retry_i
     assert_eq!(api.call(Method::Post, &format!("/v1/runs/{run}/cancel"), Some(&t), None).await.0, 202, "stopping twice is fine");
     let view = api.run(&t, &run).await;
     assert_eq!((&view["status"]["status"], &view["status"]["reason"]), (&json!("failed"), &json!({"kind": "cancelled"})), "{view}");
+    assert_eq!(listed(api.call(Method::Get, "/v1/runs?state=failed", Some(&t), None).await.1)["stop"], "cancelled", "b97: the list tells an owner stop apart");
     let (status, _) = api.call(Method::Post, &format!("/v1/runs/{run}/answers"), Some(&t), Some(json!({"node": "approve", "answer": true}))).await;
     assert_eq!(status, 409, "a stopped run takes no answer");
     assert_eq!(api.call(Method::Post, &format!("/v1/runs/{run}/retry"), Some(&t), None).await.0, 202);
     api.tick().await;
     assert_eq!(api.run(&t, &run).await["waiting"][0]["node"], "approve", "a cancelled run retried waits where it was");
+    assert_eq!(listed(api.call(Method::Get, "/v1/runs", Some(&t), None).await.1).get("stop"), None, "b97: only a failed run carries a stop");
 }
 
 
@@ -1984,7 +2042,8 @@ async fn diary_reaches_runs_only_while_shared_and_never_rests_in_plaintext() {
         let target = ids.last().cloned().unwrap_or_default();
         let summary = if with_diary { format!("Lighter week because you wrote {DIARY_SENTINEL}.") } else { "Move the run.".to_string() };
         let title = if with_diary { format!("Easy run, {DIARY_SENTINEL}") } else { "Easy run".to_string() };
-        let change = json!([{"op": "move", "action_id": target, "title": title, "start": "2026-11-24T18:00:00", "minutes": 30}]);
+        let start = format!("2026-11-24T{}:00:00", 17 + ids.len());
+        let change = json!([{"op": "move", "action_id": target, "title": title, "start": start, "minutes": 30}]);
         sse_text(&json!({"summary": summary, "size": "small", "changes": change}).to_string())
     });
     let api = api(models, offline()).await;
@@ -2114,4 +2173,199 @@ async fn diary_key_version_must_match_the_diary_rows() {
     let run = replan().await;
     assert_eq!(*saw.lock().unwrap(), vec![true, false], "a run gets no diary once the rows moved to another key version");
     assert_eq!(api.count("select count(*) from public.runs where id::text = $1 and not sealed", &run).await, 1);
+}
+
+/// A device stamp newer than every stamp the test server issued so far, from node `d1`.
+fn device_stamp(offset_ms: i64) -> String {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+    format!("{:013}-0000-00000000000000d1", now + 60_000 + offset_ms)
+}
+
+/// Every engine read the goal page and the Goals list send for `goal`, with its status and body.
+async fn goal_page_reads(api: &Api, t: &str, goal: &str) -> Vec<(String, u16, Value)> {
+    let mut paths = vec![
+        format!("/v1/runs?goal_id={goal}"),
+        "/v1/runs?state=waiting_human".to_string(),
+        "/v1/personas".to_string(),
+        format!("/v1/goals/{goal}/review"),
+        format!("/v1/goals/{goal}/plugins"),
+        format!("/v1/insights?goal_id={goal}"),
+    ];
+    let runs: Vec<String> = db::query_scalar("select id::text from public.runs where goal_id::text = $1 order by id").bind(goal).fetch_all(&api.pool).await.unwrap();
+    paths.extend(runs.iter().map(|r| format!("/v1/runs/{r}")));
+    let actions: Vec<String> = db::query_scalar("select id::text from public.actions where goal_id::text = $1 order by id").bind(goal).fetch_all(&api.pool).await.unwrap();
+    paths.extend(actions.iter().flat_map(|a| [format!("/v1/actions/{a}/replan"), format!("/v1/actions/{a}/miss-replan")]));
+    let mut out = Vec::new();
+    for path in paths {
+        let (status, body) = api.call(Method::Get, &path, Some(t), None).await;
+        out.push((path, status, body));
+    }
+    out
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b96_a_goal_deleted_after_its_actions_stays_deleted_and_no_read_of_it_is_a_500() {
+    let api = api(goal_models(), brave()).await;
+    let (_u, t) = api.signed_up().await;
+    let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "Europe/Berlin"}))).await;
+    assert_eq!(status, 202, "{started}");
+    let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+    api.tick().await;
+    api.answer(&t, &run, "approve", json!(true)).await;
+    api.tick().await;
+    assert_eq!(api.run(&t, &run).await["status"]["status"], "done");
+    let actions: Vec<String> =
+        db::query_scalar("select id::text from public.actions where goal_id::text = $1 and not deleted order by start_at").bind(&goal).fetch_all(&api.pool).await.unwrap();
+    assert!(!actions.is_empty());
+    let mut ticks = Vec::new();
+    for (i, id) in actions.iter().enumerate() {
+        db::query("update public.actions set deleted = true, locked = true, updated_at = $2 where id::text = $1")
+            .bind(id)
+            .bind(device_stamp(i as i64))
+            .execute(&api.pool)
+            .await
+            .unwrap();
+        let (_, report) = api.call(Method::Post, "/v1/tick", Some(&service_token()), None).await;
+        ticks.push(report);
+    }
+    let before_delete = goal_page_reads(&api, &t, &goal).await;
+    let stamp = device_stamp(1_000);
+    for table in ["action_series", "trackers", "plugins", "proposals", "personas", "goal_files", "budgets", "actions"] {
+        db::query(&format!("update public.{table} set deleted = true, updated_at = $2 where goal_id::text = $1 and not deleted"))
+            .bind(&goal)
+            .bind(&stamp)
+            .execute(&api.pool)
+            .await
+            .unwrap();
+    }
+    db::query("update public.goals set deleted = true, updated_at = $2 where id::text = $1").bind(&goal).bind(device_stamp(1_001)).execute(&api.pool).await.unwrap();
+    let (_, report) = api.call(Method::Post, "/v1/tick", Some(&service_token()), None).await;
+    ticks.push(report);
+    api.clock.advance(3_600_000);
+    let (_, report) = api.call(Method::Post, "/v1/tick", Some(&service_token()), None).await;
+    ticks.push(report);
+    let after_delete = goal_page_reads(&api, &t, &goal).await;
+    let missing = goal_page_reads(&api, &t, &Uuid::now_v7().to_string()).await;
+    let live: i64 = api.count("select count(*) from public.goals where id::text = $1 and not deleted", &goal).await;
+    let failed: Vec<_> = before_delete.iter().chain(&after_delete).chain(&missing).filter(|(_, s, _)| *s >= 500).collect();
+    let tick_errors: Vec<_> = ticks.iter().filter(|r| r["errors"] != json!([])).collect();
+    eprintln!("B96 runs after delete: {}", db::query_scalar::<String>("select coalesce(string_agg(workflow || ':' || state, ', '), '') from public.runs where goal_id::text = $1").bind(&goal).fetch_one(&api.pool).await.unwrap());
+    assert!(failed.is_empty() && tick_errors.is_empty() && live == 0, "500s: {failed:?}\ntick errors: {tick_errors:?}\nlive goal rows: {live}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b96_a_goal_deleted_while_its_plan_waits_for_approval_stays_deleted_and_no_read_of_it_is_a_500() {
+    let api = api(goal_models(), brave()).await;
+    let (_u, t) = api.signed_up().await;
+    let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "Europe/Berlin"}))).await;
+    assert_eq!(status, 202, "{started}");
+    let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
+    api.tick().await;
+    api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+    api.tick().await;
+    assert_eq!(api.run(&t, &run).await["waiting"][0]["node"], "approve");
+    db::query("update public.goals set deleted = true, updated_at = $2 where id::text = $1").bind(&goal).bind(device_stamp(0)).execute(&api.pool).await.unwrap();
+    let (approve, body) = api.call(Method::Post, &format!("/v1/runs/{run}/answers"), Some(&t), Some(json!({"node": "approve", "answer": true}))).await;
+    let mut ticks = Vec::new();
+    for _ in 0..2 {
+        let (_, report) = api.call(Method::Post, "/v1/tick", Some(&service_token()), None).await;
+        ticks.push(report);
+    }
+    let reads = goal_page_reads(&api, &t, &goal).await;
+    let live: i64 = api.count("select count(*) from public.goals where id::text = $1 and not deleted", &goal).await;
+    let failed: Vec<_> = reads.iter().filter(|(_, s, _)| *s >= 500).collect();
+    let tick_errors: Vec<_> = ticks.iter().filter(|r| r["errors"] != json!([])).collect();
+    eprintln!("B96 approve after delete: {approve} {body}; run: {}", api.run(&t, &run).await["status"]);
+    assert!(approve < 500 && failed.is_empty() && tick_errors.is_empty() && live == 0, "500s: {failed:?}\ntick errors: {tick_errors:?}\nlive goal rows: {live}");
+}
+
+/// Plays the device side of a keep-actions delete (Q68) of `goal`: writes the Routines goal,
+/// moves the goal's series and actions onto it and tombstones the goal, all with device stamps.
+async fn device_keeps_actions(api: &Api, user: Uuid, goal: &str) {
+    let mut routines = aroh_domain::seed::routines_goal(&user.to_string());
+    routines.updated_at = device_stamp(2_000);
+    db::query("insert into public.goals select * from jsonb_populate_record(null::public.goals, $1)")
+        .bind(serde_json::to_value(&routines).unwrap())
+        .execute(&api.pool)
+        .await
+        .unwrap();
+    for table in ["action_series", "actions"] {
+        db::query(&format!("update public.{table} set goal_id = $2::uuid, updated_at = $3 where user_id = $4 and goal_id::text = $1 and not deleted"))
+            .bind(goal)
+            .bind(&routines.id)
+            .bind(device_stamp(2_001))
+            .bind(user)
+            .execute(&api.pool)
+            .await
+            .unwrap();
+    }
+    db::query("update public.goals set deleted = true, updated_at = $2 where id::text = $1 and user_id = $3").bind(goal).bind(device_stamp(2_002)).bind(user).execute(&api.pool).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b96_opening_routines_after_a_keep_actions_delete_is_never_a_500() {
+    let api = api(goal_models(), brave()).await;
+    let mut owners = Vec::new();
+    for _ in 0..2 {
+        let (u, t) = api.signed_up().await;
+        let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(json!({"title": "Run a 5k", "timezone": "Europe/Berlin"}))).await;
+        assert_eq!(status, 202, "{started}");
+        let (goal, run) = (started["goal_id"].as_str().unwrap().to_string(), started["run_id"].as_str().unwrap().to_string());
+        api.tick().await;
+        api.answer(&t, &run, "questions", json!([{"id": "weekly_runs", "answer": "3"}])).await;
+        api.tick().await;
+        api.answer(&t, &run, "approve", json!(true)).await;
+        api.tick().await;
+        device_keeps_actions(&api, u, &goal).await;
+        owners.push((u, t));
+    }
+    let routines = aroh_domain::seed::routines_id();
+    let (u, t) = &owners[0];
+    let occurrences: Vec<String> = db::query_scalar("select id::text from public.actions where user_id = $1 and goal_id::text = $2 and not deleted order by start_at")
+        .bind(*u)
+        .bind(&routines)
+        .fetch_all(&api.pool)
+        .await
+        .unwrap();
+    for (i, id) in occurrences.iter().enumerate() {
+        db::query("update public.actions set deleted = true, locked = true, updated_at = $2 where id::text = $1").bind(id).bind(device_stamp(3_000 + i as i64)).execute(&api.pool).await.unwrap();
+    }
+    let mut ticks = Vec::new();
+    for _ in 0..2 {
+        let (_, report) = api.call(Method::Post, "/v1/tick", Some(&service_token()), None).await;
+        ticks.push(report);
+        api.clock.advance(3_600_000);
+    }
+    let mut reads = goal_page_reads(&api, t, &routines).await;
+    for path in ["/v1/settings/run-limit", "/v1/account", "/v1/keys", "/v1/insights"] {
+        let (status, body) = api.call(Method::Get, path, Some(t), None).await;
+        reads.push((path.to_string(), status, body));
+    }
+    for (path, body) in [
+        (format!("/v1/goals/{routines}/replan"), json!({"reason": "Move my mornings", "timezone": "Europe/Berlin"})),
+        (format!("/v1/goals/{routines}/run-again"), json!({"timezone": "Europe/Berlin"})),
+        (format!("/v1/goals/{routines}/review"), json!({"weekday": 0, "at": "18:00", "enabled": true, "timezone": "Europe/Berlin"})),
+    ] {
+        let method = if path.ends_with("review") { Method::Put } else { Method::Post };
+        let (status, answer) = api.call(method, &path, Some(t), Some(body)).await;
+        reads.push((path, status, answer));
+    }
+    for _ in 0..3 {
+        let (_, report) = api.call(Method::Post, "/v1/tick", Some(&service_token()), None).await;
+        ticks.push(report);
+    }
+    let runs: Vec<String> = db::query_scalar("select id::text from public.runs where user_id = $1 and goal_id::text = $2").bind(*u).bind(&routines).fetch_all(&api.pool).await.unwrap();
+    for r in runs {
+        let (status, view) = api.call(Method::Get, &format!("/v1/runs/{r}"), Some(t), None).await;
+        reads.push((format!("/v1/runs/{r} {}", view["status"]), status, view));
+    }
+    let failed: Vec<_> = reads.iter().filter(|(_, s, _)| *s >= 500).collect();
+    let tick_errors: Vec<_> = ticks.iter().filter(|r| r["errors"] != json!([])).collect();
+    eprintln!("B96 routines reads: {:?}", reads.iter().map(|(p, s, _)| format!("{s} {p}")).collect::<Vec<_>>());
+    assert!(failed.is_empty() && tick_errors.is_empty(), "500s: {failed:?}\ntick errors: {tick_errors:?}");
 }
