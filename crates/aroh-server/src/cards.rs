@@ -427,25 +427,28 @@ async fn edit_card(env: &ToolEnv, args: EditArgs, ctx: &ToolContext) -> Result<V
     }
     this.card = Some(card.clone());
     let mut proposal = Proposal {
-        id: proposal_id,
+        id: proposal_id.clone(),
         user_id: env.user.to_string(),
         goal_id: goal.to_string(),
         run_id: ctx.run_id.map(|r| r.0.to_string()),
         summary: args.change.reply.chars().take(2000).collect::<String>().trim().to_string(),
-        diff: json!({"op": "card", "scope": args.request.scope, "request": args.request.text, "action_id": this.id,
-            "before": before, "after": {"card": card, "minutes": args.change.minutes}, "count": targets.len()}),
+        diff: json!({"op": "card", "scope": args.request.scope, "request": crate::diary::proposal_part(env, &proposal_id, "request", json!(args.request.text))?, "action_id": this.id,
+            "before": before, "after": crate::diary::proposal_part(env, &proposal_id, "after", json!({"card": card, "minutes": args.change.minutes}))?, "count": targets.len()}),
         size: ProposalSize::Small,
         status: ProposalStatus::Applied,
         undo: Some(json!({"rows": undo})),
         created_at: crate::rows::utc(env.clock.now_ms()),
+        sealed_summary: None,
         updated_at: String::new(),
         deleted: false,
     };
     if proposal.summary.is_empty() {
         proposal.summary = "Changed the card.".into();
     }
+    let reply = proposal.summary.clone();
+    (proposal.summary, proposal.sealed_summary) = crate::diary::proposal_summary(env, &proposal.id, &reply)?;
     put_row(&env.pool, &env.hlc, env.user, &mut proposal).await.map_err(failed)?;
-    Ok(json!({"reply": proposal.summary, "proposal_id": proposal.id, "changed": targets.len()}))
+    Ok(json!({"reply": reply, "proposal_id": proposal.id, "changed": targets.len()}))
 }
 
 fn json_output(v: Value) -> ToolOutput {
@@ -541,6 +544,7 @@ impl Engine {
             }),
         );
         input.insert("profile".into(), json!(self.profile(user).await?));
+        self.add_diary(user, tz, &mut input).await?;
         let run = self.start(user, Some(goal), CARD_CHAT, input).await?;
         Ok(Started { goal_id: Some(goal), run_id: run.0 })
     }
@@ -558,6 +562,7 @@ impl Engine {
         let mut input = Map::new();
         input.insert("goal".into(), Engine::goal_input(goal, tz, now));
         input.insert("profile".into(), json!(self.profile(user).await?));
+        self.add_diary(user, tz, &mut input).await?;
         let result = self.start(user, Some(goal_id), FILL_CARDS, input).await;
         settle(pool, adaptation, &result).await?;
         Ok(result.is_ok())

@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 aroh-domain.workspace = true
+aroh-diary.workspace = true
 aroh-plugins = { path = "../aroh-plugins" }
 troupekit-core = { git = "https://github.com/ChaoticQubit/troupekit", rev = "b6e411b06e6d99efbe799e8b21e5192a0ac5c54a" }
 troupekit-providers = { git = "https://github.com/ChaoticQubit/troupekit", rev = "b6e411b06e6d99efbe799e8b21e5192a0ac5c54a" }

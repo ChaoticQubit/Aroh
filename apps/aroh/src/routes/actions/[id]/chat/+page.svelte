@@ -3,8 +3,10 @@
 	import CardChat, { type CardChatEntry } from '$lib/ui/components/action/CardChat.svelte';
 	import ScopeSheet from '$lib/ui/components/action/ScopeSheet.svelte';
 	import * as client from '$lib/app/client';
-	import { engine } from '$lib/app/engine';
+	import { chatFromRun, engine } from '$lib/app/engine';
 	import { follow } from '$lib/app/chat.svelte';
+	import { bubbleOf, type FailedSend } from '$lib/app/working';
+	import type { ChatMessage } from '$lib/ui/contract';
 	import { pageCard, scopeText } from '$lib/app/cardpage';
 	import { cardDiff, type Card } from '$lib/ui/action/card';
 	import { getClock } from '$lib/ui/clock';
@@ -19,6 +21,9 @@
 	let proposals = $state<Record<number, string>>({});
 	let pending = $state<string | null>(null);
 	let busy = $state(false);
+	let live = $state<ChatMessage[]>([]);
+	let failed = $state<(FailedSend & { scope: 'this' | 'future' }) | null>(null);
+	const tail = $derived(bubbleOf(busy, live, failed));
 
 	/** Loads the action and sends the request the card page handed over in `?text=`. */
 	$effect(() => {
@@ -36,18 +41,23 @@
 		else void send('this', text);
 	}
 
-	/** Sends `text` to the card coach for `scope`, follows the run and shows the applied diff with Undo. */
-	async function send(scope: 'this' | 'future', text: string) {
+	/**
+	 * Sends `text` to the card coach for `scope`, follows the run under the working bubble and shows
+	 * the applied diff with Undo; `again` resends a failed send without a second owner line.
+	 */
+	async function send(scope: 'this' | 'future', text: string, again = false) {
 		pending = null;
 		busy = true;
-		entries = [...entries, { kind: 'owner', text }];
+		failed = null;
+		live = [];
+		if (!again) entries = [...entries, { kind: 'owner', text }];
 		const started = await engine.cardChat(id, scope, text);
 		if (!started.ok) {
-			entries = [...entries, { kind: 'coach', text: started.message }];
+			failed = { scope, text, message: started.message };
 			busy = false;
 			return;
 		}
-		const view = await follow(started.value.run_id);
+		const view = await follow(started.value.run_id, (v) => (live = chatFromRun(v)));
 		const p = await client.cardPage(id);
 		action = p.action;
 		const edit = p.edit;
@@ -67,6 +77,11 @@
 		busy = false;
 	}
 
+	/** Sends the failed text again for the same scope. */
+	function resend() {
+		if (failed && !busy) void send(failed.scope, failed.text, true);
+	}
+
 	async function undo(i: number) {
 		const proposal = proposals[i];
 		const e = entries[i];
@@ -79,8 +94,7 @@
 </script>
 
 <div class="flex h-full flex-col">
-	<CardChat coach={COACH} {entries} keep="card:{id}" onsend={ask} onundo={undo} />
-	{#if busy}<p class="px-4 pb-2 text-sm text-muted" role="status">The coach is changing the card.</p>{/if}
+	<CardChat coach={COACH} {entries} {tail} keep="card:{id}" onsend={ask} onundo={undo} onretry={resend} />
 </div>
 {#if pending && action}
 	<div class="fixed inset-0 z-40">

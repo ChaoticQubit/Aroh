@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentDefaults, blankDraft, canCreate, defaultsValue, pickCategory, problem, quickPicks, startBody, withGuess, type NewGoalDraft } from './newgoal';
+import { agentDefaults, blankDraft, canCreate, defaultsValue, noEndDate, pickCategory, withTarget, problem, quickPicks, startBody, withGuess, type NewGoalDraft } from './newgoal';
 
 const draft = (patch: Partial<NewGoalDraft> = {}): NewGoalDraft => ({ ...blankDraft(), ...patch });
 
@@ -21,6 +21,17 @@ describe('new goal form', () => {
 		expect(full).toMatchObject({ context: 'Evenings', run_limit_minutes: 10, autonomy: 'balanced' });
 		expect(full).not.toHaveProperty('deadline');
 		expect(full).not.toHaveProperty('category_id');
+	});
+
+	it('sends no deadline while the owner keeps No end date (B83)', () => {
+		const untouched = draft({ title: 'Gym' });
+		expect(untouched.target).toBe('');
+		expect(startBody(untouched, 'America/New_York')).not.toHaveProperty('deadline');
+		const quick = withTarget(untouched, quickPicks('2026-11-24')[0].ymd);
+		expect(startBody(quick, 'America/New_York').deadline).toBe('2026-12-24');
+		const cleared = noEndDate(withTarget(untouched, '2026-11-24'));
+		expect(cleared.target).toBe('');
+		expect(startBody(cleared, 'America/New_York')).not.toHaveProperty('deadline');
 	});
 
 	it('takes the category guess until the owner picks one', () => {

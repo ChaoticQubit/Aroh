@@ -116,6 +116,7 @@ name = "aroh"
 version = "0.1.0"
 dependencies = [
  "aroh-app",
+ "aroh-diary",
  "aroh-domain",
  "aroh-plugins",
  "aroh-store",
@@ -123,7 +124,9 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "iana-time-zone",
+ "keyring",
  "pdf-extract",
+ "reqwest 0.12.28",
  "rusqlite",
  "serde",
  "serde_json",
@@ -159,6 +162,7 @@ dependencies = [
 name = "aroh-app"
 version = "0.1.0"
 dependencies = [
+ "aroh-diary",
  "aroh-domain",
  "aroh-location",
  "aroh-store",
@@ -182,6 +186,20 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "uuid",
+]
+
+[[package]]
+name = "aroh-diary"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -257,6 +275,7 @@ name = "aroh-server"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "aroh-diary",
  "aroh-domain",
  "aroh-plugins",
  "aroh-server",
@@ -296,6 +315,7 @@ dependencies = [
 name = "aroh-store"
 version = "0.1.0"
 dependencies = [
+ "aroh-diary",
  "aroh-domain",
  "chrono",
  "rusqlite",
@@ -303,6 +323,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

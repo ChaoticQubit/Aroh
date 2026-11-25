@@ -24,19 +24,22 @@ final class ReminderDelegate: NSObject, UNUserNotificationCenterDelegate {
     LocationBridge.shared.restorePending()
   }
 
-  /// Shows a local reminder as a banner with sound while the app is open. A remote push gets
-  /// no foreground banner, as the plugin did, since the server and the local schedule share ids.
+  /// Shows a local reminder, and a remote run or proposal push (Q83), as a banner with sound
+  /// while the app is open. Other remote pushes (reminders, check-ins) get none, since the
+  /// server and the local schedule share their ids.
   func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification,
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
     let remote = notification.request.trigger is UNPushNotificationTrigger
-    NSLog("aroh-ios: foreground notification %@ remote=%d", notification.request.identifier, remote ? 1 : 0)
-    completionHandler(remote ? [] : [.banner, .list, .sound])
+    let shown = !remote || PushTap(notification.request.content.userInfo) != nil
+    NSLog("aroh-ios: foreground notification %@ remote=%d shown=%d", notification.request.identifier, remote ? 1 : 0, shown ? 1 : 0)
+    completionHandler(shown ? [.banner, .list, .sound] : [])
   }
 
-  /// A nudge action (Mark done, Remind me in 1 hour, Skip today) goes to the location bridge;
+  /// A nudge action (Mark done, Remind me in 1 hour, Skip today) goes to the location bridge.
+  /// A plain tap on a run or proposal push is queued for the app to open its screen (Q83);
   /// any other tap opens the app and nothing more.
   func userNotificationCenter(
     _ center: UNUserNotificationCenter,
@@ -44,6 +47,11 @@ final class ReminderDelegate: NSObject, UNUserNotificationCenterDelegate {
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     _ = LocationBridge.shared.respond(response)
+    if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+      let tap = PushTap(response.notification.request.content.userInfo)
+    {
+      PushBridge.shared.tapped(tap)
+    }
     completionHandler()
   }
 }

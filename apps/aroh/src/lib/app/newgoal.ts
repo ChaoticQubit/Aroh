@@ -88,6 +88,17 @@ export function startBody(d: NewGoalDraft, zone: string): StartGoalBody {
 	return body;
 }
 
+/** The owner sets the target date to `ymd` (`YYYY-MM-DD`), from a quick pick or the date input. */
+export function withTarget(d: NewGoalDraft, ymd: string): NewGoalDraft {
+	console.assert(/^\d{4}-\d{2}-\d{2}$/.test(ymd), 'withTarget needs YYYY-MM-DD');
+	return { ...d, target: ymd };
+}
+
+/** The owner chooses No end date: the target is cleared, so no deadline is sent. */
+export function noEndDate(d: NewGoalDraft): NewGoalDraft {
+	return { ...d, target: '' };
+}
+
 /** Applies a category guess (an id or null) unless the owner already picked a category. */
 export function withGuess(d: NewGoalDraft, guessed: string | null): NewGoalDraft {
 	return d.categoryPicked ? d : { ...d, categoryId: guessed };

@@ -3,8 +3,11 @@
 	import { page } from '$app/state';
 	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { onMount, tick, type Snippet } from 'svelte';
+	import { prefetchOnPress } from '$lib/app/prefetch';
+	import { listen } from '@tauri-apps/api/event';
 	import PhoneShell from '$lib/ui/shell/PhoneShell.svelte';
 	import DesktopShell from '$lib/ui/shell/DesktopShell.svelte';
+	import favicon from '$lib/ui/brand/aroh-icon.svg';
 	import type { Place } from '$lib/ui/shell/nav';
 	import { backTarget, nextStack, screenTitle } from '$lib/ui/shell/back';
 	import { data } from '$lib/app/data.svelte';
@@ -17,12 +20,13 @@
 	import { needsServer, onboardingStart } from '$lib/app/setup';
 	import { fitKeyboard } from '$lib/app/keyboard';
 	import { categoryList, inboxCount } from '$lib/app/views';
+	import { pushTarget } from '$lib/app/push';
 
 	let { children }: { children: Snippet } = $props();
 
 	const PLACES: Place[] = ['today', 'calendar', 'goals', 'dashboard', 'log', 'inbox', 'settings'];
 	const bare = $derived((page.data as { bare?: boolean }).bare === true);
-	const coaches = $derived(page.url.pathname.startsWith('/personas'));
+	const coaches = $derived(page.url.pathname.startsWith('/personas') || page.url.pathname.startsWith('/plugins'));
 	const tab = $derived(PLACES.find((t) => page.url.pathname.startsWith(`/${t}`)) ?? (coaches ? (page.url.searchParams.has('goal') ? 'goals' : 'settings') : 'today'));
 	const title = $derived(screenTitle(page.url.pathname + page.url.search));
 	let stack = $state<string[]>([]);
@@ -71,12 +75,21 @@
 		query.addEventListener('change', onWidth);
 		const stop = data.start();
 		const unfit = fitKeyboard(window);
+		void openPushTap();
+		const unlisten = listen('aroh://push-tap', () => void openPushTap());
 		return () => {
 			query.removeEventListener('change', onWidth);
 			stop();
 			unfit();
+			void unlisten.then((off) => off());
 		};
 	});
+
+	/** Opens the screen of the last tapped run or proposal push (Q83), if one waits. */
+	async function openPushTap() {
+		const to = pushTarget(await client.takePushTap().catch(() => null));
+		if (to) await goto(to);
+	}
 
 	/**
 	 * Reads the sign-in state and, when signed in, whether the server lacks the owner's AI consent
@@ -151,6 +164,9 @@
 		void goto(`/${to}`);
 	}
 </script>
+
+<svelte:head><link rel="icon" type="image/svg+xml" href={favicon} /></svelte:head>
+<svelte:document onpointerdown={prefetchOnPress} />
 
 {#snippet body()}
 	{#if data.error}<p role="alert" class="px-4 pt-3 text-sm text-status-missed">{data.error}</p>{/if}

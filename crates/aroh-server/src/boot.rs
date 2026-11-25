@@ -54,7 +54,7 @@ pub async fn app(config: Config) -> Result<AppState, ServerError> {
     };
     let pusher = config.apns.map(|apns| {
         eprintln!("aroh-server: push on, topic {}", apns.topic);
-        Arc::new(Pusher::new(deps.pool.clone(), http.clone(), Signer::new(apns, clock.clone()), clock.clone()))
+        Arc::new(Pusher::new(deps.pool.clone(), deps.vault.clone(), http.clone(), Signer::new(apns, clock.clone()), clock.clone()))
     });
     let storage = config.supabase.map(|(url, key)| crate::account::StorageApi::new(&url, &key, http.clone()));
     let jwks = config.jwks_url.map(|url| (url, http));

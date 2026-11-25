@@ -31,7 +31,7 @@ fn targets(plugins: &[Plugin], trackers: &[Tracker]) -> BTreeMap<String, BTreeMa
 
 /// Reads the dashboard now, in the device zone: per goal done vs due, projected finish and
 /// pace, streaks, completion, minutes per week and the tracker trend with its plugin target.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_dashboard(state: State<'_, AppState>) -> Result<Dashboard, String> {
     with_core(&state, |c| {
         let mine = [("user_id", c.user_id.as_str())];
@@ -164,7 +164,7 @@ fn seed_goal(c: &mut Core, spec: &LongGoal, rank: i64, now: DateTime<Utc>) -> ar
 /// Debug builds only: seeds the sample goals, then four goals with up to 120 days of history,
 /// bounded and open-ended future plans and weekly tracker entries, so the Dashboard shows
 /// more than six goals, every pace and long titles. Ticks after, so series materialize.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_dev_dashboard_seed(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     if !cfg!(debug_assertions) {
         return Err("debug builds only".into());

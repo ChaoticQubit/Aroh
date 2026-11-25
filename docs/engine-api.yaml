@@ -258,6 +258,72 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
+  /v1/diary/key:
+    get:
+      tags:
+      - diary
+      operationId: diary_status
+      responses:
+        '200':
+          description: Whether agents may read the diary; never the key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiaryKeyStatus'
+        '401':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    put:
+      tags:
+      - diary
+      operationId: set_diary_key
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetDiaryKey'
+        required: true
+      responses:
+        '200':
+          description: Agents may read the last 7 days of diary summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiaryKeyStatus'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: Diary rows use another key version than the one sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+    delete:
+      tags:
+      - diary
+      operationId: delete_diary_key
+      responses:
+        '204':
+          description: The server copy of the diary key is deleted
+        '404':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
   /v1/goals:
     post:
       tags:
@@ -1260,6 +1326,19 @@ components:
           format: int64
         zone:
           type: string
+    DiaryKeyStatus:
+      type: object
+      description: Whether agents may read the diary, and the server copy's key version.
+      required:
+      - on
+      properties:
+        on:
+          type: boolean
+        version:
+          type:
+          - integer
+          - 'null'
+          format: int64
     EditPersona:
       type: object
       description: |-
@@ -1816,6 +1895,21 @@ components:
       properties:
         ai:
           type: boolean
+    SetDiaryKey:
+      type: object
+      description: |-
+        Body of `PUT /v1/diary/key`: the diary key version and its 32 bytes as
+        standard base64. No Debug, so the key never reaches a log line.
+      required:
+      - version
+      - key
+      properties:
+        key:
+          type: string
+        version:
+          type: integer
+          format: int64
+      additionalProperties: false
     SetKey:
       type: object
       description: |-

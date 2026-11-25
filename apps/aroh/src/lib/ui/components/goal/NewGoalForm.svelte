@@ -7,7 +7,7 @@
 	import { Textarea } from '$lib/ui/primitives/textarea';
 	import Field from '$lib/ui/components/Field.svelte';
 	import type { CategorySlot } from '$lib/ui/contract';
-	import { canCreate, pickCategory, problem, quickPicks, type NewGoalDraft } from '$lib/app/newgoal';
+	import { canCreate, noEndDate, pickCategory, problem, quickPicks, withTarget, type NewGoalDraft } from '$lib/app/newgoal';
 	import AgentControls from './AgentControls.svelte';
 	import Attachments, { type Attachment } from './Attachments.svelte';
 
@@ -77,6 +77,8 @@
 	let field = $state<HTMLDivElement>();
 	const hue = $derived(swatch ?? freeSlot);
 	const why = $derived(problem(draft));
+	let dated = $state(draft.target !== '');
+	const picked = $derived(dated && !quick.some((q) => q.ymd === draft.target));
 
 	onMount(() => {
 		const main = field?.closest('main');
@@ -118,13 +120,18 @@
 			<Field label="Description" id="{id}-desc" detail="Optional">
 				<Textarea id="{id}-desc" class="min-h-20" placeholder="Why it matters, what got in the way before" bind:value={draft.description} />
 			</Field>
-			<Field label="Target date" id="{id}-date">
-				<Input id="{id}-date" type="date" class="{input} tabular-nums" min={today} bind:value={draft.target} />
-				<div class="flex flex-wrap gap-1">
+			<Field label="Target date" labelId="{id}-date">
+				<div role="radiogroup" aria-labelledby="{id}-date" class="flex flex-wrap gap-1">
+					<button type="button" role="radio" aria-checked={!dated} class="h-11 rounded-sm border px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 {!dated ? 'border-fg bg-surface-2 font-medium' : 'border-border bg-bg'}" onclick={() => ((dated = false), (draft = noEndDate(draft)))}>No end date</button>
 					{#each quick as q (q.ymd)}
-						<button type="button" aria-pressed={draft.target === q.ymd} class="h-11 rounded-sm border px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 {draft.target === q.ymd ? 'border-fg bg-surface-2 font-medium' : 'border-border bg-bg'}" onclick={() => (draft.target = q.ymd)}>{q.label}</button>
+						{@const on = dated && draft.target === q.ymd}
+						<button type="button" role="radio" aria-checked={on} class="h-11 rounded-sm border px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 {on ? 'border-fg bg-surface-2 font-medium' : 'border-border bg-bg'}" onclick={() => ((dated = true), (draft = withTarget(draft, q.ymd)))}>{q.label}</button>
 					{/each}
+					<button type="button" role="radio" aria-checked={picked} class="h-11 rounded-sm border px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 {picked ? 'border-fg bg-surface-2 font-medium' : 'border-border bg-bg'}" onclick={() => ((dated = true), quick.some((q) => q.ymd === draft.target) && (draft = noEndDate(draft)))}>Pick a date</button>
 				</div>
+				{#if dated}
+					<Input id="{id}-date-input" type="date" aria-label="Target date" class="{input} tabular-nums" min={today} bind:value={draft.target} />
+				{/if}
 			</Field>
 			<Field label="Category" labelId="{id}-cat" detail={chosen ? (draft.categoryPicked ? 'Your pick' : detected ? 'Detected from the title' : '') : 'Detected when you type a title'}>
 				{#if chosen && !picking}

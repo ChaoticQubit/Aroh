@@ -7,6 +7,8 @@
 	import Segmented from '$lib/ui/components/Segmented.svelte';
 	import Render from '$lib/ui/components/Render.svelte';
 	import PersonaChat from '$lib/ui/components/agent/PersonaChat.svelte';
+	import CardChat from '$lib/ui/components/action/CardChat.svelte';
+	import type { ChatMessage } from '$lib/ui/contract';
 	import PhoneShell from '$lib/ui/shell/PhoneShell.svelte';
 	import DesktopShell from '$lib/ui/shell/DesktopShell.svelte';
 	import type { Place, TabId } from '$lib/ui/shell/nav';
@@ -25,6 +27,7 @@
 	import Redesign from './redesign/Redesign.svelte';
 	import ActionCards from './action-cards/ActionCards.svelte';
 	import WeekView from './week-view/WeekView.svelte';
+	import Diary from './diary/Diary.svelte';
 	import LocationExplainer from '$lib/ui/components/location/LocationExplainer.svelte';
 	import LockScreenNudge from '$lib/ui/components/location/LockScreenNudge.svelte';
 	import PlacesScreen from '$lib/ui/screens/PlacesScreen.svelte';
@@ -55,7 +58,7 @@
 
 	setClock({ now: mockNow, zone: mockZone });
 
-	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location' | 'plan-view' | 'redesign' | 'action-cards' | 'week-view';
+	type View = 'tokens' | 'inputs' | 'display' | 'planning' | 'agent' | 'screens-phone' | 'screens-desktop' | 'editing' | 'goal-redesign' | 'location' | 'plan-view' | 'redesign' | 'action-cards' | 'week-view' | 'diary';
 	const VIEWS: { value: View; label: string }[] = [
 		{ value: 'tokens', label: 'Tokens' },
 		{ value: 'inputs', label: 'Inputs' },
@@ -70,7 +73,8 @@
 		{ value: 'plan-view', label: 'Plan, back, dashboard' },
 		{ value: 'redesign', label: 'Redesign' },
 		{ value: 'action-cards', label: 'Action cards' },
-		{ value: 'week-view', label: 'Week view' }
+		{ value: 'week-view', label: 'Week view' },
+		{ value: 'diary', label: 'Diary' }
 	];
 	const keep = () => {};
 	const EDIT = { onedit: keep, onlock: keep, ondelete: keep, onchoose: keep, inline: true };
@@ -116,6 +120,12 @@
 	const TYPE = ['text-xs', 'text-sm', 'text-md', 'text-lg', 'text-xl'];
 	const SPACE = ['space-1', 'space-2', 'space-3', 'space-4', 'space-5', 'space-6'];
 	const RADIUS = ['radius-sm', 'radius-dialog'];
+	const OWNER_ASK: ChatMessage = { type: 'message', from: 'owner', name: 'You', text: 'Can you move the core sessions to mornings?' };
+	const WORKING_CHATS: { state: string; messages: ChatMessage[] }[] = [
+		{ state: 'working, step known', messages: [...sixpackChat.slice(0, 2), OWNER_ASK, { type: 'typing', step: 'Researching' }] },
+		{ state: 'send failed', messages: [...sixpackChat.slice(0, 2), OWNER_ASK, { type: 'failed', text: 'The engine is not reachable. Check your connection.' }] },
+		{ state: 'working, long thread (scroll up for the pill)', messages: [...sixpackChat, OWNER_ASK, { type: 'typing', step: null }] }
+	];
 	const inboxCount = sixpackInbox.approvals.length + sixpackInbox.suggestions.length + sixpackInbox.insights.length;
 
 	let view = $state<View>('tokens');
@@ -163,6 +173,8 @@
 	<ActionCards {inboxCount} {solo} />
 {:else if solo !== null && view === 'week-view'}
 	<WeekView {inboxCount} {solo} />
+{:else if solo !== null && view === 'diary'}
+	<Diary {inboxCount} {solo} />
 {:else if solo !== null}
 	<PlanView {inboxCount} {solo} />
 {:else}
@@ -235,6 +247,16 @@
 						<p class="flex items-center gap-2 text-xs text-muted"><span class="font-medium text-fg">PersonaChat</span>filled</p>
 						<div class="h-[640px] overflow-hidden rounded-md bg-bg ring-1 ring-border"><PersonaChat messages={sixpackChat.slice(0, 4)} /></div>
 					</li>
+					{#each WORKING_CHATS as c (c.state)}
+						<li class="flex flex-col gap-2">
+							<p class="flex items-center gap-2 text-xs text-muted"><span class="font-medium text-fg">PersonaChat</span>{c.state}</p>
+							<div class="h-[520px] overflow-hidden rounded-md bg-bg ring-1 ring-border"><PersonaChat messages={c.messages} /></div>
+						</li>
+					{/each}
+					<li class="flex flex-col gap-2">
+						<p class="flex items-center gap-2 text-xs text-muted"><span class="font-medium text-fg">CardChat</span>working</p>
+						<div class="h-[420px] overflow-hidden rounded-md bg-bg ring-1 ring-border"><CardChat coach="Your coach" entries={[{ kind: 'owner', text: 'Make it 30 minutes' }]} tail={{ type: 'typing', step: 'Changing the card' }} /></div>
+					</li>
 				{/if}
 			</ul>
 		{:else if view === 'screens-phone'}
@@ -271,6 +293,8 @@
 			<ActionCards {inboxCount} />
 		{:else if view === 'week-view'}
 			<WeekView {inboxCount} />
+		{:else if view === 'diary'}
+			<Diary {inboxCount} />
 		{:else if view === 'location'}
 			<ul class="flex gap-6 overflow-x-auto pb-4">
 				{#each LOCATION as s (s.name)}

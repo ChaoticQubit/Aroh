@@ -33,7 +33,7 @@ export function groupByTeam(views: PersonaView[], categories: CategoryView[]): (
 }
 
 /** The run fields the goal page reads: id, persona slugs, and the plugin version the run used. */
-export type GoalRun = { run_id?: string; personas?: string[]; plugin_id?: string | null; plugin_version?: number | null };
+export type GoalRun = { run_id?: string; state?: string; personas?: string[]; plugin_id?: string | null; plugin_version?: number | null };
 
 /**
  * The coaches that worked on goal `goalId`: its persona rows and the persona slugs of its runs,
@@ -78,17 +78,26 @@ export type CoachDeps = {
 	runs: (filter: { goalId?: string }) => Promise<EngineResult<GoalRun[]>>;
 };
 
+/** Whether goal `goalId` names a coach, in its persona `rows` or its `runs`, that the library `views` lacks. */
+export function libraryMisses(views: PersonaView[], rows: PersonaRow[], runs: GoalRun[], goalId: string): boolean {
+	const names = [...rows.filter((r) => r.goal_id === goalId).map((r) => r.name), ...runs.flatMap((r) => r.personas ?? [])];
+	return names.some((n) => !views.some((v) => v.name === n));
+}
+
 /**
  * The persona library and, for goal `goalId`, the coaches that worked on it (`coachesOn` over the
  * snapshot's persona rows and the goal's runs). Offline lists the rows only, with the engine's
  * message as `status`; no goal gives no coaches. `runs` are the goal's runs, for `pluginsUsed`.
+ * With the library already `known`, only the runs are read, and the library again only when a
+ * coach is missing from it (B87).
  */
-export async function loadCoaches(s: Snapshot, goalId: string | null, deps: CoachDeps = engine): Promise<{ views: PersonaView[]; coaches: CoachView[]; runs: GoalRun[]; status: string | null }> {
-	const [library, runs] = await Promise.all([deps.personas(), goalId ? deps.runs({ goalId }) : null]);
+export async function loadCoaches(s: Snapshot, goalId: string | null, deps: CoachDeps = engine, known?: PersonaView[]): Promise<{ views: PersonaView[]; coaches: CoachView[]; runs: GoalRun[]; status: string | null }> {
+	const [read, runs] = await Promise.all([known ? null : deps.personas(), goalId ? deps.runs({ goalId }) : null]);
+	const fresh = runs?.ok ? runs.value : [];
+	const library = read ?? (known && goalId && libraryMisses(known, s.personas, fresh, goalId) ? await deps.personas() : { ok: true as const, value: known ?? [] });
 	const views = library.ok ? library.value : [];
-	const goalRuns = runs?.ok ? runs.value : [];
-	const coaches = goalId ? coachesOn(views, s.personas, goalRuns, goalId) : [];
-	return { views, coaches, runs: goalRuns, status: library.ok ? null : library.message };
+	const coaches = goalId ? coachesOn(views, s.personas, fresh, goalId) : [];
+	return { views, coaches, runs: fresh, status: library.ok ? null : library.message };
 }
 
 /**

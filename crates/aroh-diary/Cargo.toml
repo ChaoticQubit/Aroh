@@ -1,0 +1,16 @@
+[package]
+name = "aroh-diary"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+aes-gcm = "0.10"
+zeroize = "1"
+base64 = "0.22"
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+thiserror.workspace = true

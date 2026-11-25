@@ -27,7 +27,7 @@
 <ul class="flex flex-col divide-y divide-border rounded-sm border border-border bg-bg">
 	{#each goals as g (g.id)}
 		<li>
-			<button type="button" class="flex w-full flex-col gap-1.5 px-3 py-2.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => onopen?.(g.id)}>
+			<button type="button" class="flex w-full flex-col gap-1.5 px-3 py-2.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50" data-goal={g.id} onclick={() => onopen?.(g.id)}>
 				<span class="flex w-full items-center gap-2">
 					<span class="size-2 shrink-0 rounded-full" style="background: var(--cat-{g.slot})" aria-hidden="true"></span>
 					<span class="min-w-0 flex-1 truncate text-sm font-medium">{g.title}</span>

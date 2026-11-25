@@ -9,7 +9,7 @@
 
 	/**
 	 * Every open question of a run as one card: each with its input and a Skip (a question the
-	 * profile answers as "Still true?" with Yes and Edit), a count line, and
+	 * profile answers shows the remembered value, already counted as the answer, with Edit), a count line, and
 	 * one Send answers button enabled once every question has an answer or a skip. Emits
 	 * `{ type: 'answer', id, value }`, `{ type: 'skip', id, skipped }` and `{ type: 'submit' }`.
 	 * Once submitted it lists what was sent.
@@ -45,7 +45,7 @@
 						<p class="text-sm text-muted">Skipped. The planner picks a sensible default.</p>
 					{:else if item.known}
 						{@const known = item.known}
-						<StillTrue label="Your answer" value={known.value} source={known.source} onyes={() => onchange?.({ type: 'answer', id: item.id, value: known.value })}>
+						<StillTrue label="Your answer" value={known.value} source={known.source} accepted>
 							<Render spec={item.input} onchange={(value) => onchange?.({ type: 'answer', id: item.id, value })} />
 						</StillTrue>
 					{:else}

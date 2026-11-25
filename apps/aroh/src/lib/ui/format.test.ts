@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { daysUntil, dayLabels, formatDuration, formatNumber, formatTime, formatYmd, minuteOfDay, shiftDay, shiftMonth, mondayOf, daysBetween, formatDate, sliderRange, snap, stepNumber, typedNumber } from './format';
+import { daysUntil, deadlineState, dayLabels, formatDuration, formatNumber, formatTime, formatYmd, minuteOfDay, shiftDay, shiftMonth, mondayOf, daysBetween, formatDate, sliderRange, snap, stepNumber, typedNumber } from './format';
 
 describe('format', () => {
 	it('formats numbers with units', () => {
@@ -59,6 +59,14 @@ describe('format', () => {
 	});
 	it('counts whole days to a deadline', () => {
 		expect(daysUntil('2027-02-01T00:00:00Z', '2026-11-21T00:00:00Z')).toBe(72);
+	});
+	it('reads Due today on the due date until its end, and passed only from the next day (B83)', () => {
+		const end = '2026-11-25T04:59:59.000Z';
+		expect(deadlineState(end, '2026-11-24T05:00:00Z')).toEqual({ state: 'today' });
+		expect(deadlineState(end, '2026-11-25T04:58:00Z')).toEqual({ state: 'today' });
+		expect(deadlineState(end, '2026-11-25T05:00:00Z')).toEqual({ state: 'passed' });
+		expect(deadlineState(end, '2026-11-23T17:00:00Z')).toEqual({ state: 'left', days: 1 });
+		expect(deadlineState(end, '2026-11-14T12:00:00Z')).toEqual({ state: 'left', days: 10 });
 	});
 });
 

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { engineCache } from './cache';
 import type { Card, CardLog } from '$lib/ui/action/card';
 
 /** A goal category row. */
@@ -145,6 +146,9 @@ export const addEntry = (trackerId: string, data: Record<string, unknown>) => in
 /** Logs free text as an entry, or queues it for the engine. */
 export const logText = (text: string) => invoke<Logged>('app_log_text', { text });
 
+/** Takes the last tapped run or proposal push (Q83), null when none waits; it is cleared. */
+export const takePushTap = () => invoke<unknown>('push_take_tap');
+
 /** Applies or rejects an open proposal. */
 export const decideProposal = (id: string, apply: boolean) => invoke<Proposal>('app_decide_proposal', { id, apply });
 
@@ -240,7 +244,18 @@ export const saveProvider = (vendor: string, model: string) => invoke<ProviderSe
 export const saveBudget = (usd: number | null) => invoke<null>('app_save_budget', { usd });
 
 /** Stores one device setting. */
-export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions' | 'agent_defaults', value: string) => invoke<null>('app_set_setting', { name, value });
+export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions' | 'agent_defaults', value: string) => (
+	SERVER_SETTINGS.includes(name) && engineCache.owner(null), invoke<null>('app_set_setting', { name, value })
+);
+
+/** Settings that point the app at another server, so the engine cache is cleared when one changes (B87). */
+const SERVER_SETTINGS = ['server_url', 'supabase_url', 'supabase_anon_key'];
+
+/** Hands the signed-in account of `a` to the engine cache, which clears itself for another account (B87). */
+function owned(a: Account): Account {
+	engineCache.owner(a.signed_in ? a.user_id : null);
+	return a;
+}
 
 /** Asks for notification permission once and reports whether it is granted. */
 export const notificationPermission = () => invoke<boolean>('app_notification_permission');
@@ -258,22 +273,22 @@ export const devHealthSeed = () => invoke<null>('app_dev_health_seed');
 export type Account = { signed_in: boolean; email: string | null; user_id: string | null; check_email: boolean };
 
 /** The stored sign-in state, without a network call. */
-export const account = () => invoke<Account>('app_account');
+export const account = () => invoke<Account>('app_account').then(owned);
 
 /** Signs in, or with `create` signs up; the device adopts the account and syncs. */
-export const signIn = (email: string, password: string, create: boolean) => ((storage = null), invoke<Account>('app_sign_in', { email, password, create }));
+export const signIn = (email: string, password: string, create: boolean) => ((storage = null), engineCache.owner(null), invoke<Account>('app_sign_in', { email, password, create }).then(owned));
 
 /** Signs in with Apple's native sheet (iPhone only); the device adopts the account and syncs. */
-export const signInApple = () => ((storage = null), invoke<Account>('app_sign_in_apple'));
+export const signInApple = () => ((storage = null), engineCache.owner(null), invoke<Account>('app_sign_in_apple').then(owned));
 
-/** Signs out; local rows stay. */
-export const signOut = () => ((storage = null), invoke<Account>('app_sign_out'));
+/** Signs out; local rows stay, the engine cache is cleared. */
+export const signOut = () => ((storage = null), engineCache.owner(null), invoke<Account>('app_sign_out'));
 
 /**
  * Asks the server to delete the account (15-day grace, Q76), then signs this device out and
  * erases its local data, keeping only the server address. Resolves with the purge date.
  */
-export const deleteAccount = () => ((storage = null), invoke<{ purge_after: string }>('app_delete_account'));
+export const deleteAccount = () => ((storage = null), engineCache.owner(null), invoke<{ purge_after: string }>('app_delete_account'));
 
 /** Pushes local changes and pulls the account's rows. */
 export const sync = () => invoke<{ pushed: number; pulled: number }>('app_sync');

@@ -10,6 +10,7 @@
 	import { catchUp } from '$lib/app/catchup.svelte';
 	import { actionViews, categoryList } from '$lib/app/views';
 	import { allDayViews, busyViews, confirmDay, refreshSuggestions } from '$lib/app/calendar';
+	import DiaryDayTop from '$lib/ui/diary/DiaryDayTop.svelte';
 
 	const clock = getClock();
 	const s = $derived(data.snapshot);
@@ -37,5 +38,7 @@
 		onlock={(id, locked) => data.run(() => client.setLocked(id, locked))}
 		ondelete={(id) => data.run(() => client.deleteAction(id).then(() => editStatus.track(id)))}
 		onchoose={(p) => data.run(() => confirmDay(p.id, p.kind))}
-	/>
+	>
+		{#snippet dayTop(day: string)}<DiaryDayTop {day} actions={actionViews(s)} zone={clock.zone} />{/snippet}
+	</CalendarScreen>
 {/if}

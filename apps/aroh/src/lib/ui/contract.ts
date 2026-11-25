@@ -68,7 +68,11 @@ export type SpecOf<K extends ComponentSpec['kind']> = Extract<ComponentSpec, { k
 /** The change callback every component accepts: the new value, shaped per kind. */
 export type OnChange = (value: unknown) => void;
 
-/** One entry of a persona chat thread: a message, an inline card, research progress, a working or stopped run, or a plan summary. */
+/**
+ * One entry of a persona chat thread: a message, an inline card, research progress, a working or
+ * stopped run, or a plan summary. A trailing `typing` is the working bubble from Send until the
+ * reply lands (Q87); a trailing `failed` is a send that did not reach the agents, with Retry.
+ */
 export type ChatMessage =
 	| { type: 'message'; from: 'owner' | 'persona'; name: string; text: string }
 	| { type: 'card'; spec: ComponentSpec }
@@ -76,6 +80,8 @@ export type ChatMessage =
 	| { type: 'plan'; title: string; items: string[]; fixable?: boolean[]; plan?: { items: PlanItemLike[]; timezone: string | null }; key?: string; approved?: boolean }
 	| { type: 'working'; step: string | null; cost: string }
 	| { type: 'stopped'; text: string; retry: boolean }
+	| { type: 'typing'; step: string | null }
+	| { type: 'failed'; text: string }
 	| {
 			type: 'questions';
 			persona: string;

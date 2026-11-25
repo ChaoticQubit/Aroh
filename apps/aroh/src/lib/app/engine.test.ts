@@ -268,3 +268,26 @@ describe('unreachable (B69)', () => {
 		expect(unreachable({ ok: true, value: [] })).toBe(false);
 	});
 });
+
+describe('engine reads in flight (B87)', () => {
+	it('one GET in flight is shared by every caller of the same path; writes and later reads go out again', async () => {
+		const sent: string[] = [];
+		let release: () => void = () => {};
+		const gate = new Promise<void>((r) => (release = r));
+		const call: Call = async (method, path) => {
+			sent.push(`${method} ${path}`);
+			await gate;
+			return { status: 200, body: [] };
+		};
+		const e = new Engine(call);
+		const both = Promise.all([e.runs({ goalId: 'g1' }), e.runs({ goalId: 'g1' }), e.runs({ goalId: 'g2' })]);
+		void e.cancel('r1');
+		void e.cancel('r1');
+		release();
+		const [a, b] = await both;
+		expect(a).toEqual(b);
+		expect(sent).toEqual(['GET /v1/runs?goal_id=g1', 'GET /v1/runs?goal_id=g2', 'POST /v1/runs/r1/cancel', 'POST /v1/runs/r1/cancel']);
+		await e.runs({ goalId: 'g1' });
+		expect(sent.filter((x) => x === 'GET /v1/runs?goal_id=g1')).toHaveLength(2);
+	});
+});

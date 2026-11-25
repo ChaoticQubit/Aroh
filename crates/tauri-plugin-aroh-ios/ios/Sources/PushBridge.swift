@@ -1,6 +1,31 @@
 import ObjectiveC
 import UIKit
 
+/// A tapped run or proposal push (Q83): the `aroh` dictionary of its payload with `kind`
+/// `run` or `proposal`, the row `id` and the `goal_id`, absent for a run without a goal.
+/// Only short strings pass; the app checks the ids again before it opens a screen.
+struct PushTap: Encodable, Equatable {
+  let kind: String
+  let id: String
+  let goal_id: String?
+
+  /// Reads the tap from a notification's `userInfo`; nil for any other push or shape.
+  init?(_ userInfo: [AnyHashable: Any]) {
+    guard let aroh = userInfo["aroh"] as? [String: Any],
+      let kind = aroh["kind"] as? String, kind == "run" || kind == "proposal",
+      let id = aroh["id"] as? String, !id.isEmpty, id.count <= 64
+    else { return nil }
+    var goal: String? = nil
+    if let raw = aroh["goal_id"], !(raw is NSNull) {
+      guard let text = raw as? String, !text.isEmpty, text.count <= 64 else { return nil }
+      goal = text
+    }
+    self.kind = kind
+    self.id = id
+    self.goal_id = goal
+  }
+}
+
 /// Gets the APNs device token. Tauri's app delegate has no remote notification callbacks, so
 /// `install` adds `didRegister...` and `didFailToRegister...` to the delegate's class at
 /// runtime, leaving any implementation already there alone; `register` waits for one of
@@ -8,6 +33,9 @@ import UIKit
 final class PushBridge {
   static let shared = PushBridge()
   private var waiting: [(Result<String, Error>) -> Void] = []
+  private var taps: [PushTap] = []
+  private var tapWaiters: [(PushTap) -> Void] = []
+  private let tapsMax = 8
   private var installed = false
   private let timeout = 20.0
 
@@ -41,6 +69,30 @@ final class PushBridge {
         guard !self.waiting.isEmpty else { return }
         let error = NSError(domain: "aroh", code: 1, userInfo: [NSLocalizedDescriptionKey: "no push token from iOS"])
         self.finish(.failure(error))
+      }
+    }
+  }
+
+  /// Hands `tap` to the oldest waiting `nextTap` caller, or queues it (at most `tapsMax`,
+  /// oldest dropped) until one asks, so a tap that opens the app cold is not lost.
+  func tapped(_ tap: PushTap) {
+    DispatchQueue.main.async {
+      if self.tapWaiters.isEmpty {
+        self.taps.append(tap)
+        if self.taps.count > self.tapsMax { self.taps.removeFirst() }
+      } else {
+        self.tapWaiters.removeFirst()(tap)
+      }
+    }
+  }
+
+  /// Calls `done` with the oldest queued tap, or with the next tap once one arrives.
+  func nextTap(_ done: @escaping (PushTap) -> Void) {
+    DispatchQueue.main.async {
+      if self.taps.isEmpty {
+        self.tapWaiters.append(done)
+      } else {
+        done(self.taps.removeFirst())
       }
     }
   }

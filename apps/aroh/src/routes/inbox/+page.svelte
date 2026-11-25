@@ -7,18 +7,25 @@
 	import { engine, unreachable, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
 	import { decisionsFrom, deviceSuggestions, finishTriage, refreshSuggestions, triageCards } from '$lib/app/calendar';
 	import { inboxView } from '$lib/app/views';
+	import { openProposals, withOpened, type OpenedProposal } from '$lib/app/diary';
 	import * as location from '$lib/app/location';
 	import { getClock } from '$lib/ui/clock';
 
 	const clock = getClock();
 	const s = $derived(data.snapshot);
-	let runs = $state<RunSummary[]>([]);
-	let insights = $state<Insight[]>([]);
-	let waits = $state<Record<string, string>>({});
+	let runs = $state<RunSummary[]>(engine.cachedRuns() ?? []);
+	let insights = $state<Insight[]>(engine.cachedInsights() ?? []);
+	let waits = $state<Record<string, string>>(engine.cachedWaits(engine.cachedRuns() ?? []));
 	let triage = $state<{ runId: string; waiting: Waiting } | null>(null);
 	let answers: Record<string, unknown> = {};
 	let places = $state<location.LocationView | null>(null);
 	let offline = $state(false);
+	let opened = $state<Record<string, OpenedProposal>>({});
+
+	$effect(() => {
+		const list = s?.proposals ?? [];
+		void openProposals(list).then((o) => (opened = o));
+	});
 
 	/** Reads the engine's newest runs, what the waiting ones wait for, and insights; a failed read leaves them empty and sets `offline`. */
 	async function loadRuns() {
@@ -108,7 +115,7 @@
 	</div>
 {/if}
 {#if s}
-	{@const inbox = inboxView(s, runs, insights, clock.zone, clock.now, waits)}
+	{@const inbox = inboxView({ ...s, proposals: withOpened(s.proposals, opened) }, runs, insights, clock.zone, clock.now, waits)}
 	<InboxScreen
 		{...inbox}
 		approvals={[...(places ? location.patternItems(places) : []), ...inbox.approvals]}

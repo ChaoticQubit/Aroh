@@ -27,6 +27,17 @@ class AppleArgs: Decodable {
   let nonce: String
 }
 
+/// Arguments of `diary_key_get` and `diary_key_delete`: the key version.
+class DiaryKeyArgs: Decodable {
+  let version: Int
+}
+
+/// Arguments of `diary_key_put`: the key version and its 32 bytes as base64.
+class DiaryKeyPutArgs: Decodable {
+  let version: Int
+  let key: String
+}
+
 /// Arguments of `location_authorize`: `when_in_use` first, then `always`.
 class LocationStepArgs: Decodable {
   let step: String
@@ -57,7 +68,7 @@ class LocationSnapshotArgs: Decodable {
 }
 
 /// Native bridges the Aroh Rust commands call: HealthKit import, remote notification
-/// registration and cancelling pending reminders. Loading it also installs the reminder delegate. Every command answers on
+/// registration, tapped run and proposal pushes (`push_tap_next`) and cancelling pending reminders. Loading it also installs the reminder delegate. Every command answers on
 /// the main queue's completion of its work and rejects with a code the Rust side turns into
 /// a status line.
 class ArohPlugin: Plugin {
@@ -206,6 +217,46 @@ class ArohPlugin: Plugin {
       case .success(let token): invoke.resolve(["id_token": token] as [String: String])
       case .failure(let error): invoke.reject(error.message, code: error.code)
       }
+    }
+  }
+
+  @objc public func push_tap_next(_ invoke: Invoke) {
+    PushBridge.shared.nextTap { tap in invoke.resolve(tap) }
+  }
+
+  @objc public func diary_key_get(_ invoke: Invoke) {
+    guard let args = try? invoke.parseArgs(DiaryKeyArgs.self), args.version >= 1, args.version <= 1_000_000 else {
+      invoke.reject("Bad arguments.", code: "bad_args")
+      return
+    }
+    switch DiaryKeychain.get(args.version) {
+    case .success(let key):
+      if let key = key { invoke.resolve(["key": key]) } else { invoke.resolve([:] as [String: String]) }
+    case .failure(let error): invoke.reject(error.message, code: "keychain")
+    }
+  }
+
+  @objc public func diary_key_put(_ invoke: Invoke) {
+    guard let args = try? invoke.parseArgs(DiaryKeyPutArgs.self), args.version >= 1, args.version <= 1_000_000,
+      args.key.count == 44
+    else {
+      invoke.reject("Bad arguments.", code: "bad_args")
+      return
+    }
+    switch DiaryKeychain.put(args.version, key: args.key) {
+    case .success(let added): invoke.resolve(["added": added])
+    case .failure(let error): invoke.reject(error.message, code: "keychain")
+    }
+  }
+
+  @objc public func diary_key_delete(_ invoke: Invoke) {
+    guard let args = try? invoke.parseArgs(DiaryKeyArgs.self), args.version >= 1, args.version <= 1_000_000 else {
+      invoke.reject("Bad arguments.", code: "bad_args")
+      return
+    }
+    switch DiaryKeychain.delete(args.version) {
+    case .success: invoke.resolve()
+    case .failure(let error): invoke.reject(error.message, code: "keychain")
     }
   }
 

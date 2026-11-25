@@ -7,6 +7,7 @@ pub mod checkpoints;
 pub mod config;
 pub mod conflicts;
 pub mod db;
+pub mod diary;
 pub mod engine;
 pub mod error;
 pub mod evals;

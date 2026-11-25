@@ -20,7 +20,7 @@ const PAST_DAYS: i64 = 1;
 /// busy blocks, stale blocks are removed, actions are kept off Busy days, and the unmatched
 /// events (one per series) are returned. Takes at most 5000 occurrences; reschedules
 /// reminders after a change.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_calendar_import(app: AppHandle, state: State<'_, AppState>, events: Vec<DeviceEvent>) -> Result<Import, String> {
     if events.len() > MAX_EVENTS {
         return Err(format!("at most {MAX_EVENTS} calendar events"));
@@ -44,7 +44,7 @@ pub fn app_calendar_import(app: AppHandle, state: State<'_, AppState>, events: V
 /// Confirms the kind of the all-day event behind busy block `id`: `reminder`, `busy` or
 /// `away`. Writes the event's rule and block kinds and moves planned actions off every Busy
 /// day from today on to the next free day. Reschedules reminders and reloads the screens.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_set_day_kind(app: AppHandle, state: State<'_, AppState>, id: String, kind: String) -> Result<DaySet, String> {
     let kind: DayKind = serde_json::from_value(serde_json::Value::String(kind)).map_err(|_| "invalid kind".to_string())?;
     let set = with_core(&state, |c| aroh_app::write::set_day_kind(&c.conn, &mut c.clock, &c.user_id, &id, kind, Utc::now().with_timezone(&crate::zone()).date_naive(), crate::zone()))?;

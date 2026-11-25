@@ -14,7 +14,7 @@ fn checked_run(text: &str) -> Result<&str, String> {
 }
 
 /// Lists the proposals replan run `run_id` wrote, any status, for "what moved".
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_run_proposals(state: State<'_, AppState>, run_id: String) -> Result<Vec<Proposal>, String> {
     let id = checked_run(&run_id)?;
     with_core(&state, |c| undo::run_proposals(&c.conn, id))
@@ -22,7 +22,7 @@ pub fn app_run_proposals(state: State<'_, AppState>, run_id: String) -> Result<V
 
 /// What turning back replan run `run_id` would change: the actions it added (a
 /// catch-up after a miss, Q78) and how many it moved.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_catch_up(state: State<'_, AppState>, run_id: String) -> Result<undo::CatchUp, String> {
     let id = checked_run(&run_id)?;
     with_core(&state, |c| undo::catch_up(&c.conn, id))
@@ -30,7 +30,7 @@ pub fn app_catch_up(state: State<'_, AppState>, run_id: String) -> Result<undo::
 
 /// Undoes every applied change of replan run `run_id`, reschedules reminders and
 /// syncs so the server sees it. Returns how many actions were restored.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn app_undo_run(app: AppHandle, state: State<'_, AppState>, run_id: String) -> Result<usize, String> {
     let id = checked_run(&run_id)?;
     let restored = with_core(&state, |c| undo::undo_run(&c.conn, &mut c.clock, id))?;

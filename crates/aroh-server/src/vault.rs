@@ -253,6 +253,70 @@ impl Vault {
     }
 }
 
+impl Vault {
+    /// Seals `plain` under `user`'s data key (made on first use) with `aad`.
+    /// Returns the ciphertext and nonce. Used for the checkpoints and events
+    /// of runs that read the diary, so no diary text rests in plaintext.
+    pub(crate) async fn seal_for(&self, user: Uuid, aad: &[u8], plain: &[u8]) -> Result<(Vec<u8>, Vec<u8>), ServerError> {
+        let dek = self.data_key(user, true).await?.ok_or_else(|| ServerError::Crypto("no data key".into()))?;
+        seal(&dek, aad, plain)
+    }
+
+    /// Opens a value sealed by `seal_for` for `user` with the same `aad`.
+    /// Returns the plaintext in zeroizing memory, or `Crypto` on any mismatch.
+    pub(crate) async fn open_for(&self, user: Uuid, aad: &[u8], nonce: &[u8], ct: &[u8]) -> Result<Zeroizing<Vec<u8>>, ServerError> {
+        let dek = self.data_key(user, false).await?.ok_or_else(|| ServerError::Crypto("no data key".into()))?;
+        open(&dek, aad, nonce, ct)
+    }
+
+    /// Stores `user`'s diary key sealed by their data key (agents read toggle
+    /// on), replacing an older copy. Returns the stored version.
+    pub async fn diary_set(&self, user: Uuid, key: &aroh_diary::DiaryKey) -> Result<i64, ServerError> {
+        let (sealed, nonce) = self.seal_for(user, &diary_aad(user, key.version()), key.bytes()).await?;
+        db::query(
+            "insert into public.diary_keys (user_id, key_version, sealed, nonce) values ($1, $2, $3, $4)
+             on conflict (user_id) do update set key_version = excluded.key_version, sealed = excluded.sealed,
+               nonce = excluded.nonce, created_at = now()",
+        )
+        .bind(user)
+        .bind(key.version())
+        .bind(sealed)
+        .bind(nonce)
+        .execute(&self.pool)
+        .await?;
+        Ok(key.version())
+    }
+
+    /// Deletes `user`'s server copy of the diary key (toggle off).
+    /// Returns true when a copy was deleted.
+    pub async fn diary_delete(&self, user: Uuid) -> Result<bool, ServerError> {
+        let done = db::query("delete from public.diary_keys where user_id = $1").bind(user).execute(&self.pool).await?;
+        Ok(done.rows_affected() == 1)
+    }
+
+    /// The version of `user`'s server copy of the diary key, None when the
+    /// agents read toggle is off. Never decrypts.
+    pub async fn diary_version(&self, user: Uuid) -> Result<Option<i64>, ServerError> {
+        Ok(db::query_scalar("select key_version from public.diary_keys where user_id = $1").bind(user).fetch_optional(&self.pool).await?)
+    }
+
+    /// Opens `user`'s diary key for one run, None when the toggle is off.
+    /// Returns `Crypto` when the row does not open under this user.
+    pub async fn diary_get(&self, user: Uuid) -> Result<Option<aroh_diary::DiaryKey>, ServerError> {
+        let row: Option<(i64, Vec<u8>, Vec<u8>)> =
+            db::query_as("select key_version, sealed, nonce from public.diary_keys where user_id = $1").bind(user).fetch_optional(&self.pool).await?;
+        let Some((version, sealed, nonce)) = row else {
+            return Ok(None);
+        };
+        let plain = self.open_for(user, &diary_aad(user, version), &nonce, &sealed).await?;
+        aroh_diary::DiaryKey::from_bytes(version, &plain).map(Some).map_err(|_| ServerError::Crypto("stored diary key is malformed".into()))
+    }
+}
+
+fn diary_aad(user: Uuid, version: i64) -> Vec<u8> {
+    format!("aroh/diary/v1/{user}/{version}").into_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

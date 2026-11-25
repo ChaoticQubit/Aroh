@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Check from '@lucide/svelte/icons/check';
+	import ChevronRight from '@lucide/svelte/icons/chevron-right';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
 	import type { Snippet } from 'svelte';
 	import { Button } from '$lib/ui/primitives/button';
@@ -10,6 +11,7 @@
 	import Render from '../Render.svelte';
 	import Segmented from '../Segmented.svelte';
 	import StatusChip from '../StatusChip.svelte';
+	import Skeleton from '../Skeleton.svelte';
 	import Persona from '../agent/Persona.svelte';
 	import PersonaChat from '../agent/PersonaChat.svelte';
 	import type { PlanContext } from '../plan/PlanCard.svelte';
@@ -25,17 +27,18 @@
 	import type { Speech } from '$lib/app/speech.svelte';
 
 	/**
-	 * The goal page (Q72, Q76): header and status card (Stop, Retry, Change time limit), then
+	 * The goal page (Q72, Q76): header and status card (Stop, Retry, Change time limit; with Research and Agent activity a skeleton while `loading`, B87), then
 	 * cards: Overview, Plan (open while agents wait, closed after approval; "Keep sessions in
 	 * order" through `ordered` and `onordered`, Q79), Questions and answers
 	 * (`onanswers`; open for Run again with `rerun`, `onrerun`, `oncancelrerun`), Research with
-	 * files, Agent activity (`steps`), Coaches and plugins (`coaches`, `plugins`, `helpersLoading`, `oncontrols`)
+	 * files, Agent activity (`steps`), Coaches and plugins (`coaches`, `plugins`, `pluginHref` linking each plugin row to its page, `helpersLoading`, `oncontrols`)
 	 * and Chat, where questions and the plan to approve appear.
 	 */
 	let {
 		goal,
 		view,
 		status,
+		loading = false,
 		steps = [],
 		research = null,
 		answers = [],
@@ -47,6 +50,7 @@
 		oncontrols,
 		coaches = [],
 		plugins = [],
+		pluginHref,
 		helpersLoading = false,
 		oncoaches,
 		versions = [],
@@ -72,6 +76,7 @@
 		goal: GoalHeader;
 		view: ViewSpec;
 		status: GoalStatus;
+		loading?: boolean;
 		steps?: { text: string; done: boolean }[];
 		research?: RunView['research'];
 		answers?: RunAnswer[];
@@ -83,6 +88,7 @@
 		oncontrols?: (value: AgentSettings) => void;
 		coaches?: CoachView[];
 		plugins?: PluginUsed[];
+		pluginHref?: (name: string) => string | null;
 		helpersLoading?: boolean;
 		oncoaches?: () => void;
 		versions?: { value: string; label: string }[];
@@ -118,8 +124,8 @@
 	const fresh = $derived(coaches.some((c) => c.fresh) || plugins.some((p) => p.fresh));
 	const overviewSummary = $derived(goal.deadline ? `By ${formatDay(goal.deadline, zone)}` : `${view.sections.length} sections`);
 	const planSummary = $derived(waiting ? 'Waiting for you' : sessions === 1 ? '1 upcoming session' : `${sessions} upcoming sessions`);
-	const researchSummary = $derived([research ? `${research.sources.length} sources` : 'No research yet', files.length ? `${files.length} ${files.length === 1 ? 'file' : 'files'}` : ''].filter(Boolean).join(' · '));
-	const activitySummary = $derived(steps.length ? (steps.find((x) => !x.done)?.text ?? `${steps.length} steps done`) : 'No run yet');
+	const researchSummary = $derived([loading ? 'Loading research' : research ? `${research.sources.length} sources` : 'No research yet', files.length ? `${files.length} ${files.length === 1 ? 'file' : 'files'}` : ''].filter(Boolean).join(' · '));
+	const activitySummary = $derived(loading ? 'Loading' : steps.length ? (steps.find((x) => !x.done)?.text ?? `${steps.length} steps done`) : 'No run yet');
 	const helperSummary = $derived(
 		[helpersLoading ? 'Loading coaches' : coaches.length === 1 ? '1 coach' : `${coaches.length} coaches`, plugins.length ? (plugins.length === 1 ? '1 plugin' : `${plugins.length} plugins`) : '', `${controls.autonomy[0].toUpperCase()}${controls.autonomy.slice(1)}`, `${limit} min limit`].filter(Boolean).join(' · ')
 	);
@@ -171,6 +177,9 @@
 	</header>
 
 	<Card.Root size="sm" class="gap-2 px-4" role="status" aria-label="Agent status">
+		{#if loading}
+			<Skeleton lines={3} label="Loading agent status" />
+		{:else}
 		<div class="flex items-center gap-2">
 			{#if status.stop}<LoaderCircle class="size-4 animate-spin text-status-planned" aria-hidden="true" />{/if}
 			<StatusChip tone={status.tone} label={status.chip} />
@@ -181,6 +190,7 @@
 			<div class="flex"><Button variant="outline" size="touch" onclick={() => onstop?.()}>Stop</Button></div>
 		{:else if status.retry}
 			<div class="flex gap-2"><Button size="touch" onclick={() => onretry?.()}>Retry</Button>{#if status.limit}<Button variant="ghost" size="touch" onclick={() => (open = true)}>Change time limit</Button>{/if}</div>
+		{/if}
 		{/if}
 	</Card.Root>
 
@@ -244,7 +254,9 @@
 	{/if}
 
 	<Fold title="Research" summary={researchSummary} bind:open={folds.research}>
-		{#if research}
+		{#if loading}
+			<Skeleton label="Loading research" />
+		{:else if research}
 			<div class="flex flex-col gap-2">
 				<p class="text-sm font-medium">{status.retry ? 'Found before it stopped' : 'What the agents found'}</p>
 				<p class="text-sm">{research.summary}</p>
@@ -261,7 +273,9 @@
 	</Fold>
 
 	<Fold title="Agent activity" summary={activitySummary} bind:open={folds.activity}>
-		{#if steps.length}
+		{#if loading}
+			<Skeleton label="Loading agent activity" />
+		{:else if steps.length}
 			<ol class="flex flex-col divide-y divide-border rounded-sm border border-border">
 				{#each steps as s (s.text)}
 					<li class="flex min-h-11 items-center gap-3 px-3 py-2 text-sm text-fg">
@@ -277,7 +291,9 @@
 
 	<Fold title="Coaches and plugins" summary={helperSummary} bind:open={folds.helpers}>
 		{#snippet badge()}{#if fresh}<span class="rounded-sm bg-fg px-1.5 text-xs leading-5 font-medium text-bg">New</span>{/if}{/snippet}
-		{#if coaches.length || plugins.length}
+		{#if helpersLoading}
+			<Skeleton label="Loading coaches" />
+		{:else if coaches.length || plugins.length}
 			<ul class="flex flex-col divide-y divide-border rounded-sm border border-border">
 				{#each coaches as c (c.name)}
 					<li class="flex min-h-14 items-center gap-3 px-3 py-2">
@@ -287,10 +303,21 @@
 					</li>
 				{/each}
 				{#each plugins as p (p.name)}
-					<li class="flex min-h-14 items-center gap-3 px-3 py-2">
+					{@const href = pluginHref?.(p.name) ?? null}
+					{#snippet pluginRow()}
 						<span class="flex min-w-0 flex-1 flex-col"><span class="text-sm font-medium break-words">{p.name}</span><span class="text-xs text-muted">Plugin, v{p.version}</span></span>
 						{#if p.fresh}<span class="shrink-0 rounded-sm border border-border px-1.5 text-xs leading-5 font-medium">New</span>{/if}
 						{#if p.runs}<span class="shrink-0 text-sm text-muted tabular-nums">{p.runs === 1 ? '1 run' : `${p.runs} runs`}</span>{/if}
+					{/snippet}
+					<li>
+						{#if href}
+							<a {href} class="flex min-h-14 items-center gap-3 px-3 py-2 text-fg no-underline outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset" aria-label="Open plugin {p.name}">
+								{@render pluginRow()}
+								<ChevronRight class="size-4 shrink-0 text-muted" aria-hidden="true" />
+							</a>
+						{:else}
+							<div class="flex min-h-14 items-center gap-3 px-3 py-2">{@render pluginRow()}</div>
+						{/if}
 					</li>
 				{/each}
 			</ul>

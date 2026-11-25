@@ -11,20 +11,22 @@
 	import { goalHeader, goalView } from '$lib/app/views';
 	import { engine, progressLines } from '$lib/app/engine';
 	import { GoalChat } from '$lib/app/chat.svelte';
-	import { answersReason, goalStatus, planWaits, settledMark } from '$lib/app/goalcard';
+	import { answersReason, goalStatus, markRead, planWaits, settledMark } from '$lib/app/goalcard';
 	import type { AgentSettings } from '$lib/app/newgoal';
 	import { speech } from '$lib/app/speech.svelte';
 	import { activeVersion, enablePlugin, listPlugins, type PluginVersion } from '$lib/plugins/api';
 	import { parseTree, resolve } from '$lib/plugins/resolve';
+	import { pluginPageFor } from '$lib/plugins/describe';
 	import type { CoachView } from '$lib/ui/screens/types';
 	import { coachesOn, loadCoaches, pluginsUsed, type GoalRun, type PersonaView } from '$lib/app/personas';
 	import { goalAttachments, pendingAttachment, uploadFailed } from '$lib/app/files';
 	import type { Attachment } from '$lib/ui/components/goal/Attachments.svelte';
 	import DeleteGoalSheet from '$lib/ui/components/goal/DeleteGoalSheet.svelte';
 	import RunAgainSheet from '$lib/ui/components/goal/RunAgainSheet.svelte';
-	import type { RunAnswer } from '$lib/app/engine';
+	import type { EngineResult, RunAnswer, RunSummary } from '$lib/app/engine';
 	import type { PlanContext } from '$lib/ui/components/plan/PlanCard.svelte';
 	import { AHEAD_DAYS } from '$lib/app/calendar';
+	import { forGoal, tagged, type Tagged } from '$lib/app/goalpage';
 	import { formatYmd, shiftDay } from '$lib/ui/format';
 
 	const DERIVED = 'derived';
@@ -35,13 +37,15 @@
 	const clock = getClock();
 	const s = $derived(data.snapshot);
 	const goal = $derived(s?.goals.find((g) => g.id === page.params.id));
-	let plugins = $state<PluginVersion[]>([]);
+	let pluginRows = $state<Tagged<PluginVersion[]> | null>(null);
+	const plugins = $derived(forGoal(pluginRows, goal?.id, []));
 	let places = $state<location.LocationView | null>(null);
 	const routines = $derived(!!goal && !!places && goal.id === places.routines_goal);
-	let library = $state<PersonaView[]>([]);
-	let helpersFor = $state<string | null>(null);
-	let goalRuns = $state<GoalRun[]>([]);
-	let settingsLimit = $state(DEFAULT_LIMIT);
+	let helpers = $state<Tagged<{ library: PersonaView[]; runs: GoalRun[] }> | null>(null);
+	const mine = $derived(forGoal(helpers, goal?.id, null));
+	const helpersFor = $derived(mine ? (goal?.id ?? null) : null);
+	const goalRuns = $derived(mine?.runs ?? []);
+	let settingsLimit = $state(engine.cachedRunLimit()?.minutes ?? DEFAULT_LIMIT);
 	let now = $state(Date.now());
 	let upload = $state(false);
 	onMount(async () => (upload = await client.filesAvailable()));
@@ -97,8 +101,18 @@
 		return () => clearInterval(timer);
 	});
 
+	let opened: Tagged<Promise<EngineResult<RunSummary[]>>> | null = null;
+	let coachesFor: string | null = null;
+	let coachesRead: string | null = null;
+
+	/** The runs of goal `id`, read once per open and shared by the chat and the coaches (B87). */
+	function runsOnOpen(id: string): Promise<EngineResult<RunSummary[]>> {
+		if (opened?.id !== id) opened = tagged(id, engine.runs({ goalId: id }));
+		return opened.value;
+	}
+
 	const chat = $derived(new GoalChat(page.params.id ?? null, 'Tell the agents anything about this goal. They read it at their next step.'));
-	$effect(() => void chat.open());
+	$effect(() => void chat.open(chat.goalId ? runsOnOpen(chat.goalId) : undefined));
 
 	const ready = $derived(!!s);
 	let runMark = $state('');
@@ -110,15 +124,22 @@
 	$effect(() => {
 		const id = page.params.id;
 		if (!ready || !id) return;
-		void runMark;
+		const mark = runMark;
 		untrack(() => {
 			const snap = data.snapshot;
 			if (!snap) return;
-			void loadCoaches(snap, id).then((r) => {
+			const have = forGoal(helpers, id, null);
+			const library = have ? null : engine.cachedPersonas();
+			const runs = have ? null : engine.cachedRuns({ goalId: id });
+			if (library && runs) helpers = tagged(id, { library, runs });
+			const read = coachesRead === id ? have : null;
+			if (coachesFor === id && (!read || !mark || markRead(mark, read.runs))) return;
+			coachesFor = id;
+			const deps = read ? engine : { personas: () => engine.personas(), runs: () => runsOnOpen(id) };
+			void loadCoaches(snap, id, deps, read?.library).then((r) => {
 				if (page.params.id !== id) return;
-				library = r.views;
-				goalRuns = r.runs;
-				helpersFor = id;
+				helpers = tagged(id, { library: r.views, runs: r.runs });
+				coachesRead = id;
 			});
 		});
 	});
@@ -127,12 +148,12 @@
 		const id = goal?.id;
 		if (!s || !id) return;
 		listPlugins(id).then(
-			(list) => page.params.id === id && (plugins = list),
+			(list) => page.params.id === id && (pluginRows = tagged(id, list)),
 			(e) => (data.error = String(e))
 		);
 	});
 
-	const coaches = $derived<CoachView[]>(s && goal ? coachesOn(library, s.personas, goalRuns, goal.id) : []);
+	const coaches = $derived<CoachView[]>(s && goal && mine ? coachesOn(mine.library, s.personas, mine.runs, goal.id) : []);
 
 	const shown = $derived(activeVersion(plugins));
 	const view = $derived.by(() => {
@@ -212,6 +233,18 @@
 	let confirmDelete = $state(false);
 	let deleting = $state(false);
 
+	$effect.pre(() => {
+		void page.params.id;
+		untrack(() => {
+			failed = [];
+			retries.clear();
+			runMark = '';
+			askRunAgain = false;
+			rerun = false;
+			confirmDelete = false;
+		});
+	});
+
 	/** Deletes the goal (Q68), keeping its actions under Routines when `keepActions`, then opens Goals. */
 	async function deleteGoal(keepActions: boolean) {
 		const id = goal?.id;
@@ -231,7 +264,12 @@
 
 	/** Switches the dashboard to a plugin version, or to the derived view. */
 	function onversion(value: string) {
-		if (goal) void data.run(async () => (plugins = await enablePlugin(goal.id, value === DERIVED ? null : value)));
+		const id = goal?.id;
+		if (!id) return;
+		void data.run(async () => {
+			const list = await enablePlugin(id, value === DERIVED ? null : value);
+			if (page.params.id === id) pluginRows = tagged(id, list);
+		});
 	}
 </script>
 
@@ -243,6 +281,7 @@
 			goal={goalHeader(s, goal, clock.zone)}
 			{view}
 			{status}
+			loading={!chat.known}
 			steps={progressLines(chat.view?.events ?? [])}
 			research={chat.origin?.research ?? null}
 			answers={chat.origin?.answers ?? []}
@@ -255,6 +294,7 @@
 			{coaches}
 			helpersLoading={helpersFor !== goal.id}
 			plugins={pluginsUsed(plugins, goalRuns)}
+			pluginHref={(name) => pluginPageFor(plugins, name, goal.id)}
 			oncoaches={() => void goto(`/personas?goal=${goal.id}`)}
 			{versions}
 			version={shown?.id ?? DERIVED}
@@ -279,7 +319,7 @@
 	{#if places && goal.id !== places.routines_goal}
 		<div class="flex flex-col gap-2 px-4 pt-2 pb-6">
 			{#if !status.stop}
-				<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-fg outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:text-muted disabled:opacity-60" disabled={blocked} aria-describedby={blocked ? 'run-again-blocked' : undefined} onclick={() => (askRunAgain = true)}>Run again</button>
+				<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-fg outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:text-muted disabled:opacity-60" disabled={blocked || !chat.known} aria-describedby={blocked ? 'run-again-blocked' : undefined} onclick={() => (askRunAgain = true)}>Run again</button>
 				{#if blocked}<p id="run-again-blocked" class="text-sm text-muted">Approve or decline the waiting plan first.</p>{/if}
 			{/if}
 			<button type="button" class="min-h-11 w-full rounded-sm border border-border bg-bg text-sm text-muted outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => (confirmDelete = true)}>Delete goal</button>

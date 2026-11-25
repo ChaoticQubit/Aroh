@@ -60,7 +60,7 @@
 			{#each visible as g (g.id)}
 				{@const p = progress[g.id]}
 				<li>
-					<button type="button" class="flex w-full flex-col gap-2 px-4 py-3 text-left outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset" onclick={() => onopen?.(g.id)}>
+					<button type="button" class="flex w-full flex-col gap-2 px-4 py-3 text-left outline-none hover:bg-surface-2 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset" data-goal={g.id} onclick={() => onopen?.(g.id)}>
 						<span class="flex w-full items-start gap-2">
 							<span class="mt-1.5 size-2 shrink-0 rounded-full" style="background: var(--cat-{g.slot})" aria-hidden="true"></span>
 							<span class="flex min-w-0 flex-1 flex-col">

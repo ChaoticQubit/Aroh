@@ -77,7 +77,7 @@ pub async fn attach_file(app: AppHandle, request: tauri::ipc::Request<'_>) -> Re
 
 /// Adds the `https` link `url` to goal `goal_id` for the agents to fetch, then syncs.
 /// Output: the stored row.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_link(app: AppHandle, state: State<'_, AppState>, goal_id: String, url: String) -> Result<GoalFile, String> {
     let file = with_core(&state, |c| write::add_goal_link(&c.conn, &mut c.clock, &c.user_id.clone(), &goal_id, &url))?;
     sync_if_signed_in(&app);
@@ -85,7 +85,7 @@ pub fn attach_link(app: AppHandle, state: State<'_, AppState>, goal_id: String, 
 }
 
 /// Removes goal file `id` from its goal, then syncs.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_goal_file(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     with_core(&state, |c| write::remove_goal_file(&c.conn, &mut c.clock, &id))?;
     sync_if_signed_in(&app);
@@ -96,7 +96,7 @@ pub fn remove_goal_file(app: AppHandle, state: State<'_, AppState>, id: String) 
 /// calendar under Routines, else they go with it. Queues its file objects for removal with
 /// the owner's session on the next sync, reschedules reminders, then syncs.
 /// Errors for the Routines goal or a missing goal; nothing changes then.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_goal(app: AppHandle, state: State<'_, AppState>, goal_id: String, keep_actions: bool) -> Result<(), String> {
     with_core(&state, |c| {
         let paths = aroh_app::remove::delete_goal(&c.conn, &mut c.clock, &goal_id, keep_actions)?;
@@ -109,14 +109,14 @@ pub fn delete_goal(app: AppHandle, state: State<'_, AppState>, goal_id: String, 
 
 /// Guesses the category of a new goal from `title` and `description` without a model call.
 /// Output: the id of the owner's matching seeded category, or null.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn guess_category(state: State<'_, AppState>, title: String, description: Option<String>) -> Result<Option<String>, String> {
     with_core(&state, |c| Ok(write::guess_category(&c.user_id, &title, description.as_deref())))
 }
 
 /// Sets goal `goal_id`'s reminders, calendar reads and run time limit (null: the Settings
 /// limit), then reschedules reminders. Output: the stored goal.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_goal_controls(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -132,7 +132,7 @@ pub fn set_goal_controls(
 
 /// Sets whether replans keep goal `goal_id`'s sessions in order (Q79).
 /// Output: the stored goal.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_goal_ordered(app: AppHandle, state: State<'_, AppState>, goal_id: String, ordered: bool) -> Result<Goal, String> {
     let goal = with_core(&state, |c| write::set_goal_ordered(&c.conn, &mut c.clock, &goal_id, ordered))?;
     after_write(&app);
@@ -140,26 +140,26 @@ pub fn set_goal_ordered(app: AppHandle, state: State<'_, AppState>, goal_id: Str
 }
 
 /// Edits profile fact `id` to `fact`, dated now. Output: the stored fact.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn edit_fact(state: State<'_, AppState>, id: String, fact: String) -> Result<Preference, String> {
     with_core(&state, |c| write::edit_fact(&c.conn, &mut c.clock, &id, &fact, chrono::Utc::now()))
 }
 
 /// "Never learn this": turns fact `id` into a blocked topic. Output: the stored row.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn block_topic(state: State<'_, AppState>, id: String) -> Result<Preference, String> {
     with_core(&state, |c| write::block_topic(&c.conn, &mut c.clock, &id))
 }
 
 /// "Allow again": removes blocked topic `id`, so it may be learned again.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn allow_topic(state: State<'_, AppState>, id: String) -> Result<(), String> {
     with_core(&state, |c| write::allow_topic(&c.conn, &mut c.clock, &id))
 }
 
 /// Adds the owner's category `name` on `color` (one of the 6 hues), or on the next free
 /// hue when `color` is null. Synced like every row. Output: the stored category.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_category(state: State<'_, AppState>, name: String, color: Option<String>) -> Result<Category, String> {
     with_core(&state, |c| write::add_category(&c.conn, &mut c.clock, &c.user_id, &name, color.as_deref()))
 }

@@ -182,7 +182,8 @@ pub async fn materialize(
 
 /// One `runs` row as the engine reads it: owner, goal, workflow name, the
 /// persona snapshot (name to TOML text) taken at start, and the goal plugin
-/// version the run used. Every store derives a run's `user_id` from this row.
+/// version the run used, and `sealed` when it read the diary (its checkpoints and
+/// events are stored sealed). Every store derives a run's `user_id` from this row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunRow {
     pub id: RunId,
@@ -192,6 +193,7 @@ pub struct RunRow {
     pub personas: BTreeMap<String, String>,
     pub plugin_id: Option<Uuid>,
     pub plugin_version: Option<i64>,
+    pub sealed: bool,
 }
 
 /// Inserts the `runs` row of a new run in state `queued`.
@@ -201,8 +203,8 @@ pub async fn insert_run(pool: &PgPool, run: &RunRow) -> Result<(), ServerError> 
     let personas = serde_json::to_value(&run.personas).expect("persona map serializes");
     assert_eq!(run.plugin_id.is_some(), run.plugin_version.is_some(), "a run records a plugin id with its version");
     db::query(
-        "insert into public.runs (id, user_id, goal_id, workflow, state, personas, plugin_id, plugin_version)
-         values ($1, $2, $3, $4, 'queued', $5, $6, $7)",
+        "insert into public.runs (id, user_id, goal_id, workflow, state, personas, plugin_id, plugin_version, sealed)
+         values ($1, $2, $3, $4, 'queued', $5, $6, $7, $8)",
     )
     .bind(run.id.0)
     .bind(run.user_id)
@@ -211,6 +213,7 @@ pub async fn insert_run(pool: &PgPool, run: &RunRow) -> Result<(), ServerError> 
     .bind(personas)
     .bind(run.plugin_id)
     .bind(run.plugin_version)
+    .bind(run.sealed)
     .execute(pool)
     .await?;
     Ok(())
@@ -220,15 +223,15 @@ pub async fn insert_run(pool: &PgPool, run: &RunRow) -> Result<(), ServerError> 
 /// Requests from users go through `run_row_for` instead.
 /// `None` when there is no such run.
 pub async fn run_row(pool: &PgPool, id: RunId) -> Result<Option<RunRow>, ServerError> {
-    type Columns = (Uuid, Uuid, Option<Uuid>, String, Value, Option<Uuid>, Option<i64>);
+    type Columns = (Uuid, Uuid, Option<Uuid>, String, Value, Option<Uuid>, Option<i64>, bool);
     let row: Option<Columns> =
-        db::query_as("select id, user_id, goal_id, workflow, personas, plugin_id, plugin_version from public.runs where id = $1")
+        db::query_as("select id, user_id, goal_id, workflow, personas, plugin_id, plugin_version, sealed from public.runs where id = $1")
             .bind(id.0)
             .fetch_optional(pool)
             .await?;
-    row.map(|(id, user_id, goal_id, workflow, personas, plugin_id, plugin_version)| {
+    row.map(|(id, user_id, goal_id, workflow, personas, plugin_id, plugin_version, sealed)| {
         let personas = serde_json::from_value(personas).map_err(|e| ServerError::Db(format!("runs.personas: {e}")))?;
-        Ok(RunRow { id: RunId(id), user_id, goal_id, workflow, personas, plugin_id, plugin_version })
+        Ok(RunRow { id: RunId(id), user_id, goal_id, workflow, personas, plugin_id, plugin_version, sealed })
     })
     .transpose()
 }

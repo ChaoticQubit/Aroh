@@ -3,7 +3,7 @@ use aroh_domain::lww::{remote_wins, Version};
 use aroh_domain::rows::{samples, Action, ActionSeries, Category, Goal, PreferenceOrigin};
 use aroh_domain::schema::{Kind, TableDef, SYNCED};
 use aroh_store::codec::WireRow;
-use aroh_store::sync::{apply_page, pending, sync_all, Remote};
+use aroh_store::sync::{apply_page, pending, sync_all, sync_with, Locked, Parts, Remote};
 use aroh_store::{db, repo, Error, Result};
 use chrono::{TimeZone, Utc};
 use rusqlite::Connection;
@@ -484,4 +484,141 @@ async fn places_and_links_converge_under_lww() {
     assert_eq!(repo::get::<Place>(&a.conn, &place.id).unwrap().name, "Gym");
     assert_eq!(repo::get::<Place>(&b.conn, &place.id).unwrap(), repo::get::<Place>(&a.conn, &place.id).unwrap());
     assert_eq!(repo::get::<PlaceLink>(&b.conn, &link.id).unwrap().series_id, link.series_id);
+}
+
+/// A store as the app shares it: connection, clock and local user behind one mutex.
+struct Core {
+    conn: Connection,
+    clock: Hlc,
+    user: String,
+}
+
+impl Parts for Core {
+    fn parts(&mut self) -> (&mut Connection, &mut Hlc, &str) {
+        (&mut self.conn, &mut self.clock, &self.user)
+    }
+}
+
+type Store = Arc<Mutex<Core>>;
+type Write = Box<dyn FnOnce(&mut Core) + Send>;
+
+/// A remote that asserts the local store is unlocked on every network call and can
+/// run one local write inside its first push and one inside its first pull.
+struct Guarded {
+    inner: MemoryRemote,
+    store: Store,
+    pushes: usize,
+    pulls: usize,
+    write_in_push: Option<Write>,
+    write_in_pull: Option<Write>,
+}
+
+impl Remote for Guarded {
+    fn push(&mut self, table: &'static TableDef, rows: &[WireRow]) -> impl Future<Output = Result<()>> + Send {
+        assert!(self.store.try_lock().is_ok(), "store locked during push of {}", table.name);
+        self.pushes += 1;
+        if let Some(write) = self.write_in_push.take() {
+            write(&mut self.store.lock().unwrap());
+        }
+        self.inner.push(table, rows)
+    }
+
+    fn pull(&mut self, table: &'static TableDef, after: i64, limit: usize) -> impl Future<Output = Result<Vec<WireRow>>> + Send {
+        assert!(self.store.try_lock().is_ok(), "store locked during pull of {}", table.name);
+        self.pulls += 1;
+        if let Some(write) = self.write_in_pull.take() {
+            write(&mut self.store.lock().unwrap());
+        }
+        self.inner.pull(table, after, limit)
+    }
+}
+
+fn insert_samples(conn: &Connection, stamp: &str) {
+    for (table, row) in SYNCED.iter().zip(samples::all()) {
+        let mut row = row.as_object().unwrap().clone();
+        row.insert("updated_at".into(), stamp.into());
+        let sql = format!("INSERT INTO {} ({}) VALUES ({})", table.name, table.names().join(", "), (1..=table.columns.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", "));
+        conn.execute(&sql, rusqlite::params_from_iter(aroh_store::codec::row_to_sql(table, &row).unwrap())).unwrap();
+    }
+}
+
+fn guarded(server: &Arc<Mutex<Server>>, node: &str) -> (Store, Guarded) {
+    let core = Core { conn: db::open_in_memory().unwrap(), clock: Hlc::with_wall_clock(node, 1_763_683_400_000), user: samples::USER.into() };
+    let store: Store = Arc::new(Mutex::new(core));
+    let remote = MemoryRemote { user: samples::USER.into(), server: server.clone() };
+    let guard = Guarded { inner: remote, store: store.clone(), pushes: 0, pulls: 0, write_in_push: None, write_in_pull: None };
+    (store, guard)
+}
+
+async fn sync_store(store: &Store, remote: &mut Guarded) -> Result<aroh_store::sync::Moved> {
+    sync_with(&mut Locked::new(&**store, samples::USER), remote, samples::USER).await
+}
+
+#[tokio::test]
+async fn sync_never_holds_the_store_across_a_network_call() {
+    let server = Arc::new(Mutex::new(Server::default()));
+    let mut a = Device::new("00000000000000aa", &server, 1_763_683_300_000);
+    let stamp = a.clock.tick();
+    insert_samples(&a.conn, &stamp);
+    assert_eq!(a.sync().await.pushed, SYNCED.len());
+
+    let (store, mut remote) = guarded(&server, "00000000000000bb");
+    {
+        let core = &mut *store.lock().unwrap();
+        let stamp = core.clock.tick();
+        insert_samples(&core.conn, &stamp);
+    }
+    let moved = sync_store(&store, &mut remote).await.unwrap();
+    assert_eq!(moved.pushed, SYNCED.len(), "every table had a pending row");
+    assert_eq!(remote.pushes, SYNCED.len());
+    assert!(remote.pulls >= SYNCED.len(), "every table was pulled");
+    assert!(moved.pulled == 0, "own newer rows win over the older pulled ones");
+}
+
+#[tokio::test]
+async fn a_write_during_a_push_is_pushed_by_the_next_sync() {
+    let server = Arc::new(Mutex::new(Server::default()));
+    let (store, mut remote) = guarded(&server, "00000000000000bb");
+    {
+        let core = &mut *store.lock().unwrap();
+        repo::put(&core.conn, &mut core.clock, &mut samples::goal()).unwrap();
+    }
+    let mut late = samples::goal();
+    late.id = "0190f2a0-0000-7000-8000-000000000385".into();
+    let late_id = late.id.clone();
+    remote.write_in_push = Some(Box::new(move |core| repo::put(&core.conn, &mut core.clock, &mut late).unwrap()));
+
+    assert_eq!(sync_store(&store, &mut remote).await.unwrap().pushed, 1);
+    assert_eq!(sync_store(&store, &mut remote).await.unwrap().pushed, 1, "the late write stayed pending");
+    assert_eq!(sync_store(&store, &mut remote).await.unwrap().pushed, 0);
+    let on_server = server.lock().unwrap().rows.keys().filter(|(t, _, id)| *t == "goals" && *id == late_id).count();
+    assert_eq!(on_server, 1);
+}
+
+#[test]
+fn shared_sync_future_is_send() {
+    fn send<T: Send>(_: T) {}
+    let server = Arc::new(Mutex::new(Server::default()));
+    let (store, mut remote) = guarded(&server, "00000000000000bb");
+    send(sync_store(&store, &mut remote));
+}
+
+#[tokio::test]
+async fn an_account_change_during_a_sync_stops_it_before_any_pulled_row_is_written() {
+    let server = Arc::new(Mutex::new(Server::default()));
+    let mut a = Device::new("00000000000000aa", &server, 1_763_683_300_000);
+    let stamp = a.clock.tick();
+    insert_samples(&a.conn, &stamp);
+    assert_eq!(a.sync().await.pushed, SYNCED.len());
+
+    let (store, mut remote) = guarded(&server, "00000000000000bb");
+    remote.write_in_pull = Some(Box::new(|core| core.user = "0190f2a0-0000-7000-8000-0000000000ff".into()));
+    let stopped = sync_store(&store, &mut remote).await;
+    assert!(matches!(stopped, Err(Error::SyncStopped(_))), "{stopped:?}");
+    assert_eq!(remote.pulls, 1, "the sync stopped at the first pulled page");
+    let core = store.lock().unwrap();
+    for table in SYNCED.iter() {
+        let rows: i64 = core.conn.query_row(&format!("SELECT count(*) FROM {}", table.name), [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 0, "{} got a row of the old account", table.name);
+    }
 }

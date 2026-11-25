@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coachesOn, editError, groupByTeam, loadCoaches, pluginsUsed, type PersonaView } from './personas';
+import { coachesOn, editError, groupByTeam, libraryMisses, loadCoaches, pluginsUsed, type PersonaView } from './personas';
 import type { Snapshot } from './client';
 
 const SAFETY = 'Safety: no individual investment, tax or legal advice; refer to a licensed financial professional for those.';
@@ -99,6 +99,27 @@ describe('persona library', () => {
 		const offline = { personas: async () => ({ ok: false as const, reason: 'needs_engine' as const, message: 'Offline.' }), runs: async () => ({ ok: false as const, reason: 'needs_engine' as const, message: 'Offline.' }) };
 		const away = await loadCoaches(s, 'g1', offline);
 		expect([away.views, away.coaches.map((c) => c.name), away.status]).toEqual([[], ['practice-coach'], 'Offline.']);
+	});
+
+	it('b87: after a run mark reads the runs again but the library only when a coach is missing from it', async () => {
+		const s = { personas: [{ id: '1', goal_id: 'g1', name: 'goal-planner' }] } as unknown as Snapshot;
+		const calls: string[] = [];
+		let slugs = ['goal-planner'];
+		const deps = {
+			personas: async () => (calls.push('personas'), { ok: true as const, value: views }),
+			runs: async () => (calls.push('runs'), { ok: true as const, value: [{ personas: slugs }] })
+		};
+		const again = await loadCoaches(s, 'g1', deps, views);
+		expect(calls).toEqual(['runs']);
+		expect(again.views).toBe(views);
+		expect(again.coaches.map((c) => c.name)).toEqual(['goal-planner']);
+		calls.length = 0;
+		slugs = ['brand-new-coach'];
+		await loadCoaches(s, 'g1', deps, views);
+		expect(calls).toEqual(['runs', 'personas']);
+		expect(libraryMisses(views, s.personas, [{ personas: ['goal-planner'] }], 'g1')).toBe(false);
+		expect(libraryMisses(views, s.personas, [{ personas: ['brand-new-coach'] }], 'g1')).toBe(true);
+		expect(libraryMisses(views, [{ goal_id: 'g1', name: 'made-by-agent' }] as unknown as Snapshot['personas'], [], 'g1')).toBe(true);
 	});
 
 	it('turns engine errors into owner text', () => {

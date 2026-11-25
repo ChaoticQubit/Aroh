@@ -10,10 +10,12 @@ const LATER: &[&str] = &[
     include_str!("../../../supabase/migrations/20261128000000_action_cards.sql"),
     include_str!("../../../supabase/migrations/20261203000000_run_provenance.sql"),
     include_str!("../../../supabase/migrations/20261204000000_ordered_goals.sql"),
+    include_str!("../../../supabase/migrations/20261205000000_diary.sql"),
 ];
 const CREATED: &[&str] = &[
     include_str!("../../../supabase/migrations/20261126010000_places.sql"),
     include_str!("../../../supabase/migrations/20261128000000_action_cards.sql"),
+    include_str!("../../../supabase/migrations/20261205000000_diary.sql"),
 ];
 
 fn added_columns(tables: &mut BTreeMap<String, Vec<String>>) {
@@ -68,7 +70,7 @@ fn sqlite_columns_match_the_registry() {
 #[test]
 fn postgres_columns_match_the_registry_plus_server_seq() {
     let tables = postgres_tables();
-    assert_eq!(tables.len(), 28, "21 synced and 7 server-only tables");
+    assert_eq!(tables.len(), 31, "23 synced and 8 server-only tables");
     for table in SYNCED.iter() {
         let mut expected: Vec<String> = table.names().iter().map(|c| c.to_string()).collect();
         expected.push("server_seq".into());
@@ -77,7 +79,7 @@ fn postgres_columns_match_the_registry_plus_server_seq() {
         found.sort();
         assert_eq!(found, expected, "{}", table.name);
     }
-    for server_only in ["jobs", "runs", "run_checkpoints", "run_events", "knowledge_chunks", "memory_logs", "provider_credentials"] {
+    for server_only in ["jobs", "runs", "run_checkpoints", "run_events", "knowledge_chunks", "memory_logs", "provider_credentials", "diary_keys"] {
         assert!(tables[server_only].contains(&"user_id".to_string()), "{server_only}");
     }
 }

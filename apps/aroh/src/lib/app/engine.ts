@@ -6,6 +6,7 @@ import type { Action } from './client';
 import { editError, type PersonaView } from './personas';
 import { deviceZone } from '$lib/ui/clock';
 import type { StartGoalBody } from './newgoal';
+import { caching, engineCache, type EngineCache } from './cache';
 
 /** Shown wherever an action needs the server engine (Q3) and the app is not connected to it. */
 export const NEEDS_ENGINE = 'This needs a connection to the engine. Sign in and set the server URL in Settings. Everything else works offline.';
@@ -301,6 +302,12 @@ function offline(e: unknown): { ok: false; reason: 'needs_engine' | 'error'; mes
 	return message.startsWith('needs_engine') ? { ok: false, reason: 'needs_engine', message: NEEDS_ENGINE } : { ok: false, reason: 'error', message };
 }
 
+/** The `GET /v1/runs` path for `filter`: one goal and one state, either or both optional. */
+function runsPath(filter: { goalId?: string; state?: string }): string {
+	const q = [filter.goalId && `goal_id=${filter.goalId}`, filter.state && `state=${filter.state}`].filter(Boolean).join('&');
+	return `/v1/runs${q ? `?${q}` : ''}`;
+}
+
 /** The default transport: the `app_engine` command, which adds the account token in Rust. */
 const tauriCall: Call = (method, path, body) => invoke<Answer>('app_engine', { method, path, body: body ?? null });
 
@@ -310,10 +317,89 @@ const tauriCall: Call = (method, path, body) => invoke<Answer>('app_engine', { m
  * and keeps nothing. `call` is injectable for tests.
  */
 export class Engine {
-	constructor(private call: Call = tauriCall) {}
+	private inflight = new Map<string, Promise<EngineResult<unknown>>>();
+	private call: Call;
 
-	/** Runs one call and maps transport errors and error statuses to a result. */
-	private async request<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, want = [200, 202]): Promise<EngineResult<T>> {
+	/** `call` is the transport; with `cache`, allowlisted reads are kept and writes drop what they change (B87). */
+	constructor(
+		call: Call = tauriCall,
+		private cache: EngineCache | null = null
+	) {
+		this.call = cache ? caching(call, cache) : call;
+	}
+
+	/** The kept answer of `GET path`, read synchronously so a page renders it in its first frame (B87). */
+	private kept<T>(path: string): T | undefined {
+		return this.cache?.get<T>(path);
+	}
+
+	/** The ticket of a read starting now (see `EngineCache.current`), for a view built from several reads. */
+	ticket(): string | null {
+		return this.cache?.current() ?? null;
+	}
+
+	/** Keeps `view`, a run's full view merged from several reads started under `ticket`, as its cached view. */
+	keepRun(ticket: string | null, view: RunView) {
+		this.cache?.put(ticket, `/v1/runs/${view.run_id}`, view);
+	}
+
+	/** The last runs list read for `filter`, or undefined. */
+	cachedRuns(filter: { goalId?: string; state?: string } = {}): RunSummary[] | undefined {
+		return this.kept(runsPath(filter));
+	}
+
+	/** The last full view read of run `runId`, or undefined. */
+	cachedRun(runId: string): RunView | undefined {
+		return this.kept(`/v1/runs/${runId}`);
+	}
+
+	/** The last persona library read, or undefined. */
+	cachedPersonas(): PersonaView[] | undefined {
+		return this.kept('/v1/personas');
+	}
+
+	/** The last run time limit read, or undefined. */
+	cachedRunLimit(): { minutes: number } | undefined {
+		return this.kept('/v1/settings/run-limit');
+	}
+
+	/** The last insights read, or undefined. */
+	cachedInsights(goalId?: string): Insight[] | undefined {
+		return this.kept(`/v1/insights${goalId ? `?goal_id=${goalId}` : ''}`);
+	}
+
+	/** Whether the last account read had the AI consent on file, or undefined. */
+	cachedConsent(): boolean | undefined {
+		const a = this.kept<{ ai_consent_at?: string | null }>('/v1/account');
+		return a ? typeof a.ai_consent_at === 'string' && a.ai_consent_at !== '' : undefined;
+	}
+
+	/** What each waiting run of `runs` waits for, from the kept run views only (see `waits`). */
+	cachedWaits(runs: RunSummary[]): Record<string, string> {
+		const out: Record<string, string> = {};
+		for (const r of runs.filter((x) => x.state === 'waiting_human')) {
+			const v = this.cachedRun(r.run_id);
+			const label = v ? waitLabel(v) : null;
+			if (label) out[r.run_id] = label;
+		}
+		return out;
+	}
+
+	/**
+	 * Runs one call and maps transport errors and error statuses to a result. A GET of a path
+	 * already in flight shares that request instead of sending a second one (B87).
+	 */
+	private request<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, want = [200, 202]): Promise<EngineResult<T>> {
+		if (method !== 'GET') return this.send<T>(method, path, body, want);
+		const held = this.inflight.get(path);
+		if (held) return held as Promise<EngineResult<T>>;
+		const sent = this.send<T>(method, path, body, want).finally(() => this.inflight.delete(path));
+		this.inflight.set(path, sent);
+		return sent;
+	}
+
+	/** Sends one call and maps transport errors and error statuses to a result. */
+	private async send<T>(method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body: unknown, want: number[]): Promise<EngineResult<T>> {
 		try {
 			const a = await this.call(method, path, body);
 			if (!want.includes(a.status)) return { ok: false, reason: 'error', message: failure(a) };
@@ -337,8 +423,7 @@ export class Engine {
 
 	/** Lists the 50 newest runs, optionally of one goal and one state. */
 	runs(filter: { goalId?: string; state?: string } = {}): Promise<EngineResult<RunSummary[]>> {
-		const q = [filter.goalId && `goal_id=${filter.goalId}`, filter.state && `state=${filter.state}`].filter(Boolean).join('&');
-		return this.request('GET', `/v1/runs${q ? `?${q}` : ''}`);
+		return this.request('GET', runsPath(filter));
 	}
 
 	/** What each `waiting_human` run of `runs` waits for (`waitLabel`), by run id; unread runs are left out. */
@@ -526,5 +611,5 @@ export class Engine {
 	}
 }
 
-/** The engine client the app uses. */
-export const engine = new Engine();
+/** The engine client the app uses, with its reads kept in the device cache. */
+export const engine = new Engine(tauriCall, engineCache);

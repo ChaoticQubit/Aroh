@@ -33,7 +33,7 @@ async fn env(pool: &PgPool, user: Uuid) -> ToolEnv {
         deleted: false,
     };
     put_row(pool, &hlc, user, &mut g).await.unwrap();
-    ToolEnv { pool: pool.clone(), hlc, clock: Arc::new(FixedClock::new(T0)), user, goal: Some(goal) }
+    ToolEnv { pool: pool.clone(), hlc, clock: Arc::new(FixedClock::new(T0)), user, goal: Some(goal), sealed: false, diary_key: None }
 }
 
 fn tool(env: &ToolEnv, name: &str) -> Arc<dyn Tool> {
@@ -374,7 +374,8 @@ async fn calendar(env: &ToolEnv) -> Value {
 async fn plan_sessions(env: &ToolEnv, ordered: bool, items: &[(&str, &str)]) -> Vec<String> {
     let items: Vec<Value> = items.iter().map(|(title, start)| json!({"title": title, "start": start, "minutes": 30, "rrule": null, "notes": "Read"})).collect();
     let plan = json!({"plan": {"summary": "s", "timezone": "UTC", "trackers": [], "items": items, "ordered": ordered}});
-    tool(env, "write_plan").call(plan, &ToolContext::for_call(RunId::new(), 1, 0)).await.unwrap();
+    let day_before = ToolEnv { clock: Arc::new(FixedClock::new(T0 - 86_400_000)), ..env.clone() };
+    tool(&day_before, "write_plan").call(plan, &ToolContext::for_call(RunId::new(), 1, 0)).await.unwrap();
     let stored: bool = db::query_scalar("select ordered from public.goals where id = $1").bind(env.goal.unwrap()).fetch_one(&env.pool).await.unwrap();
     assert_eq!(stored, ordered, "the planner's order switch lands on the goal");
     db::query_scalar("select id::text from public.actions where goal_id = $1 order by start_at").bind(env.goal.unwrap()).fetch_all(&env.pool).await.unwrap()
@@ -477,4 +478,95 @@ async fn unordered_replan_may_move_a_missed_workout_after_later_ones() {
     tool(&env, "apply_proposal").call(json!({"proposal_record": recorded}), &ctx).await.unwrap();
     let planned = |t: &str| (t.to_string(), "planned".to_string());
     assert_eq!(live_sessions(&env).await, vec![planned("Upper body"), planned("Core"), planned("Leg day")]);
+}
+
+fn one_off(title: &str, start: &str) -> Value {
+    json!({"title": title, "start": start, "minutes": 30, "rrule": null, "notes": null})
+}
+
+fn new_york(items: Vec<Value>) -> Value {
+    json!({"plan": {"summary": "s", "timezone": "America/New_York", "trackers": [], "items": items}})
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b80_write_plan_refuses_a_one_off_before_now_and_writes_nothing() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let goal = env.goal.unwrap();
+    let plan = new_york(vec![one_off("Shoes", "2026-11-24T18:00:00"), one_off("Core workout", "2026-11-22T06:59:00")]);
+    let err = tool(&env, "write_plan").call(plan, &ToolContext::for_call(RunId::new(), 1, 0)).await.unwrap_err();
+    let ToolError::InvalidArgs(message) = &err else { panic!("{err}") };
+    assert_eq!(message, "`Core workout` starts at 2026-11-22T06:59, before now (2026-11-22T07:00 local); plan it at or after now");
+    assert_eq!(count(&pool, "actions", goal).await, 0, "a refused plan writes no action, not even the valid one");
+    let status: String = db::query_scalar("select status from public.goals where id = $1").bind(goal).fetch_one(&pool).await.unwrap();
+    assert_eq!(status, "draft", "a refused plan leaves the goal a draft");
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b80_a_refused_replace_leaves_the_old_plan_in_place() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let goal = env.goal.unwrap();
+    tool(&env, "write_plan").call(new_york(vec![one_off("Old run", "2026-11-23T08:00:00")]), &ToolContext::for_call(RunId::new(), 1, 0)).await.unwrap();
+    let late = new_york(vec![one_off("New run", "2026-11-25T08:00:00"), one_off("Core workout", "2026-11-22T06:00:00")]);
+    let err = tool(&env, "replace_plan").call(late, &ToolContext::for_call(RunId::new(), 2, 0)).await.unwrap_err();
+    assert!(matches!(&err, ToolError::InvalidArgs(m) if m.contains("`Core workout`")), "{err}");
+    assert_eq!(live(&pool, "actions", goal).await, ["Old run"], "the old plan is not cleared by a refused replace");
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b80_write_plan_accepts_one_offs_at_and_after_now() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let goal = env.goal.unwrap();
+    let plan = new_york(vec![one_off("At now", "2026-11-22T07:00:00"), one_off("A minute later", "2026-11-22T07:01")]);
+    let out: Value = serde_json::from_str(&tool(&env, "write_plan").call(plan, &ToolContext::for_call(RunId::new(), 1, 0)).await.unwrap().content).unwrap();
+    assert_eq!(out["actions"], 2, "{out}");
+    assert_eq!(live(&pool, "actions", goal).await, ["A minute later", "At now"]);
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b80_a_series_with_a_past_start_writes_no_occurrence_before_now() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let goal = env.goal.unwrap();
+    let plan = json!({"plan": {"summary": "s", "timezone": "UTC", "trackers": [],
+        "items": [{"title": "Plank", "start": "2026-11-20T08:00:00", "minutes": 10, "rrule": "FREQ=DAILY;COUNT=5", "notes": null}]}});
+    let out: Value = serde_json::from_str(&tool(&env, "write_plan").call(plan, &ToolContext::for_call(RunId::new(), 1, 0)).await.unwrap().content).unwrap();
+    assert_eq!(out["series"], 1, "a series with a past start is not refused: {out}");
+    let starts: Vec<chrono::DateTime<chrono::Utc>> =
+        db::query_scalar("select start_at from public.actions where goal_id = $1 order by start_at").bind(goal).fetch_all(&pool).await.unwrap();
+    assert_eq!(starts.iter().map(|s| s.to_rfc3339()).collect::<Vec<_>>(), ["2026-11-23T08:00:00+00:00", "2026-11-24T08:00:00+00:00"], "the same-day 08:00 before now is skipped");
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn a_diary_run_keeps_no_profile_facts() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = ToolEnv { sealed: true, ..env(&pool, u).await };
+    let intake: aroh_server::profile::FactIntake =
+        serde_json::from_value(json!({"questions": [{"id": "q1", "lasting": {"topic": "mood", "label": "Mood"}}]})).unwrap();
+    let answers = vec![aroh_server::profile::FactAnswer { id: "q1".into(), answer: Some("DIARY-SENTINEL tired".into()) }];
+    let kept = aroh_server::profile::save_facts(&env, aroh_server::profile::SaveFactsArgs { intake, answers }).await.unwrap();
+    assert_eq!(kept["kept"], 0);
+    let args: aroh_server::learning::ProposeArgs =
+        serde_json::from_value(json!({"pattern": {"key": "k1", "text": "moved runs"}, "preference": {"fact": "DIARY-SENTINEL fact"}})).unwrap();
+    aroh_server::learning::propose_preference(&env, args).await.unwrap();
+    let facts: i64 = db::query_scalar("select count(*) from public.preferences where user_id = $1").bind(u).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, 0, "a run that read the diary writes no profile fact");
+    let open = ToolEnv { sealed: false, ..env.clone() };
+    let args: aroh_server::learning::ProposeArgs =
+        serde_json::from_value(json!({"pattern": {"key": "k1", "text": "moved runs"}, "preference": {"fact": "Runs in the evening"}})).unwrap();
+    aroh_server::learning::propose_preference(&open, args).await.unwrap();
+    let facts: i64 = db::query_scalar("select count(*) from public.preferences where user_id = $1").bind(u).fetch_one(&pool).await.unwrap();
+    assert_eq!(facts, 1, "an ordinary run still proposes");
 }

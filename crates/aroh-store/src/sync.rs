@@ -3,12 +3,13 @@
 
 use crate::codec::{normalize, row_from_sql, WireRow};
 use crate::repo::upsert;
-use crate::{bad_row, Result};
+use crate::{bad_row, Error, Result};
 use aroh_domain::hlc::Hlc;
 use aroh_domain::lww::{remote_wins, Version};
 use aroh_domain::schema::{TableDef, SYNCED};
 use rusqlite::{Connection, OptionalExtension};
 use std::future::Future;
+use std::sync::Mutex;
 
 /// Rows per push batch and per pull page.
 pub const PAGE: usize = 500;
@@ -124,18 +125,74 @@ pub fn apply_page(conn: &mut Connection, table: &'static TableDef, user_id: &str
     Ok(written)
 }
 
-async fn push<R: Remote>(conn: &mut Connection, remote: &mut R, table: &'static TableDef, user_id: &str, node: &str) -> Result<usize> {
+/// The local side of sync: runs one short step on the store and clock. Callers that
+/// share the store behind a lock take it for the step only, so no lock is ever held
+/// across a `Remote` call. Output: the step's result.
+pub trait Local {
+    fn with<T>(&mut self, f: impl FnOnce(&mut Connection, &mut Hlc) -> Result<T>) -> Result<T>;
+}
+
+/// A store this caller owns outright, used by `sync_all`.
+struct Owned<'a> {
+    conn: &'a mut Connection,
+    clock: &'a mut Hlc,
+}
+
+impl Local for Owned<'_> {
+    fn with<T>(&mut self, f: impl FnOnce(&mut Connection, &mut Hlc) -> Result<T>) -> Result<T> {
+        f(self.conn, self.clock)
+    }
+}
+
+/// The parts of a shared store a sync needs: its connection, clock and the local user id
+/// the store belongs to now. Output: all three, borrowed from the locked store.
+pub trait Parts {
+    fn parts(&mut self) -> (&mut Connection, &mut Hlc, &str);
+}
+
+/// A `Local` over a store behind a mutex: each step locks it for that step only and
+/// stops with `SyncStopped` once the store's local user is no longer `user`, so a
+/// sign-in or wipe made during a sync ends it before it writes the old account's rows.
+pub struct Locked<'a, S> {
+    store: &'a Mutex<S>,
+    user: String,
+}
+
+impl<'a, S> Locked<'a, S> {
+    /// Wraps `store` for one sync of `user`, the store's local user when the sync starts.
+    pub fn new(store: &'a Mutex<S>, user: impl Into<String>) -> Self {
+        let user = user.into();
+        assert!(!user.is_empty(), "sync needs a local user");
+        Locked { store, user }
+    }
+}
+
+impl<S: Parts> Local for Locked<'_, S> {
+    fn with<T>(&mut self, f: impl FnOnce(&mut Connection, &mut Hlc) -> Result<T>) -> Result<T> {
+        let mut guard = self.store.lock().map_err(|_| Error::SyncStopped("database lock poisoned"))?;
+        let (conn, clock, user) = guard.parts();
+        if user != self.user {
+            return Err(Error::SyncStopped("the local account changed"));
+        }
+        f(conn, clock)
+    }
+}
+
+async fn push<L: Local, R: Remote>(local: &mut L, remote: &mut R, table: &'static TableDef, user_id: &str, node: &str) -> Result<usize> {
     let cursor_key = key("push", user_id, table);
     let mut pushed = 0;
     loop {
-        let cursor = get_state(conn, &cursor_key)?.unwrap_or_default();
-        let rows = pending(conn, table, user_id, node, &cursor, PAGE)?;
+        let (cursor, rows) = local.with(|conn, _| {
+            let cursor = get_state(conn, &cursor_key)?.unwrap_or_default();
+            let rows = pending(conn, table, user_id, node, &cursor, PAGE)?;
+            Ok((cursor, rows))
+        })?;
         let Some(last) = rows.last().and_then(|r| r["updated_at"].as_str()).map(str::to_string) else {
             return Ok(pushed);
         };
         assert!(last > cursor, "push cursor must advance");
         remote.push(table, &rows).await?;
-        set_state(conn, &cursor_key, &last)?;
+        local.with(|conn, _| set_state(conn, &cursor_key, &last))?;
         pushed += rows.len();
         if rows.len() < PAGE {
             return Ok(pushed);
@@ -143,10 +200,10 @@ async fn push<R: Remote>(conn: &mut Connection, remote: &mut R, table: &'static 
     }
 }
 
-async fn pull<R: Remote>(conn: &mut Connection, remote: &mut R, table: &'static TableDef, user_id: &str, clock: &mut Hlc) -> Result<usize> {
+async fn pull<L: Local, R: Remote>(local: &mut L, remote: &mut R, table: &'static TableDef, user_id: &str) -> Result<usize> {
     let mut pulled = 0;
     loop {
-        let cursor = pulled_seq(conn, user_id, table)?;
+        let cursor = local.with(|conn, _| pulled_seq(conn, user_id, table))?;
         let rows = remote.pull(table, cursor, PAGE).await?;
         if rows.len() > PAGE {
             return Err(bad_row("page larger than requested"));
@@ -154,7 +211,7 @@ async fn pull<R: Remote>(conn: &mut Connection, remote: &mut R, table: &'static 
         if rows.is_empty() {
             return Ok(pulled);
         }
-        pulled += apply_page(conn, table, user_id, &rows, clock)?;
+        pulled += local.with(|conn, clock| apply_page(conn, table, user_id, &rows, clock))?;
         if rows.len() < PAGE {
             return Ok(pulled);
         }
@@ -165,13 +222,21 @@ async fn pull<R: Remote>(conn: &mut Connection, remote: &mut R, table: &'static 
 /// `user_id`, parents before children. Remote stamps advance `clock`.
 /// Output: rows pushed and rows written locally.
 pub async fn sync_all<R: Remote>(conn: &mut Connection, remote: &mut R, user_id: &str, clock: &mut Hlc) -> Result<Moved> {
-    let node = clock.node().to_string();
+    sync_with(&mut Owned { conn, clock }, remote, user_id).await
+}
+
+/// `sync_all` over a `Local`: every local step (read cursor and pending page, set push
+/// cursor, read pull cursor, apply page) is one `with` call and every `Remote` call runs
+/// outside it. A write made between reading a page and setting its cursor carries a
+/// later stamp, so it stays pending. Output: rows pushed and rows written locally.
+pub async fn sync_with<L: Local, R: Remote>(local: &mut L, remote: &mut R, user_id: &str) -> Result<Moved> {
+    let node = local.with(|_, clock| Ok(clock.node().to_string()))?;
     let mut moved = Moved::default();
     for table in SYNCED.iter().copied() {
-        moved.pushed += push(conn, remote, table, user_id, &node).await?;
+        moved.pushed += push(local, remote, table, user_id, &node).await?;
     }
     for table in SYNCED.iter().copied() {
-        moved.pulled += pull(conn, remote, table, user_id, clock).await?;
+        moved.pulled += pull(local, remote, table, user_id).await?;
     }
     Ok(moved)
 }

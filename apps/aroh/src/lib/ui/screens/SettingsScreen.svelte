@@ -89,6 +89,7 @@
 			]
 		},
 		{ title: 'Location', rows: [{ label: 'Location', detail: 'Places, nudges, pause tracking and visit history.', go: true, onclick: go('/settings/location') }] },
+		{ title: 'Diary', rows: [{ label: 'Diary', detail: 'Encryption, your keys and whether agents may read it.', go: true, onclick: go('/settings/diary') }] },
 		{
 			title: 'Privacy and what Aroh knows',
 			rows: [

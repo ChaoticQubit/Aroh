@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeMs, answersReason, goalStatus, originRun, pickRun, planWaits, settledMark } from './goalcard';
+import { activeMs, answersReason, goalStatus, markRead, originRun, pickRun, planWaits, settledMark } from './goalcard';
 import type { RunEvent, RunSummary, RunView } from './engine';
 
 const at = (seq: number, ms: number, type: string, step: string): RunEvent => ({ seq, at_ms: ms, body: { type, step } });
@@ -91,5 +91,16 @@ describe('settledMark (B73)', () => {
 		expect(new Set(marks.filter((m) => m !== null))).toEqual(new Set(['r:waiting_human', 'r:done']));
 		expect(marks.slice(0, 5)).toEqual([null, null, null, null, null]);
 		expect(settledMark(null)).toBeNull();
+	});
+});
+
+describe('run marks already read at open (B87)', () => {
+	it('a mark the runs read at open already holds refetches nothing; a later one does', () => {
+		const opened = [summary('r2', 'done'), summary('r1', 'waiting_human')];
+		expect(markRead('r2:done', opened)).toBe(true);
+		expect(markRead('r1:waiting_human', opened)).toBe(true);
+		expect(markRead('r1:done', opened)).toBe(false);
+		expect(markRead('r3:failed', opened)).toBe(false);
+		expect(markRead('r2:done', null)).toBe(false);
 	});
 });

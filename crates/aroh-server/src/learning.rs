@@ -187,8 +187,12 @@ pub struct ProposeArgs {
 
 /// Writes one unconfirmed preference for the run's user from `args`,
 /// insert-or-ignore under the pattern's derived id; the Inbox shows it
-/// as a suggestion. Returns `{preference_id, new}`.
+/// as a suggestion; a run that read the diary writes nothing.
+/// Returns `{preference_id, new}`.
 pub async fn propose_preference(env: &ToolEnv, args: ProposeArgs) -> Result<Value, ToolError> {
+    if env.sealed {
+        return Ok(json!({"preference_id": null, "new": false}));
+    }
     let fact = args.preference.fact.trim();
     if fact.is_empty() || fact.chars().count() > MAX_FACT_CHARS {
         return Err(ToolError::InvalidArgs(format!("a preference has 1 to {MAX_FACT_CHARS} characters")));

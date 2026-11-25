@@ -62,7 +62,7 @@ fn open(s: &Session) -> bool {
 }
 
 /// Checks `changes` (each `{op, action_id, title, start, minutes}`, local starts)
-/// against `bounds`. Rejects a move into the past, a create that repeats a missed
+/// against `bounds`. Rejects a move or create into the past, a create that repeats a missed
 /// session's title, a day a change touches going over the cap, and for an ordered
 /// goal a missed session left behind or any session landing out of sequence.
 /// Returns why the changes fail, worded for the analyst's repair round.
@@ -79,6 +79,9 @@ pub fn check(bounds: &Bounds, changes: &[Value]) -> Result<(), String> {
                 let (Some(start), Some(minutes)) = (start, minutes) else {
                     return Err(format!("`{title}` needs start and minutes"));
                 };
+                if start < bounds.now {
+                    return Err(format!("`{title}` starts in the past; place it after now"));
+                }
                 created.push((title.to_string(), start, minutes));
             }
             op @ ("move" | "resize" | "delete") => {
@@ -290,5 +293,16 @@ mod tests {
         let b = Bounds::from_calendar(&calendar, true, Some(0), at("2026-11-23T21:00:00")).unwrap();
         assert_eq!(b.sessions, vec![session("a3", "Chapters 3-6", "2026-11-23T08:00:00", "missed")]);
         assert_eq!(b.cap, None, "a zero cap is no cap");
+    }
+
+    #[test]
+    fn b80_a_create_that_starts_before_now_fails() {
+        let create = |start: &str| json!({"op": "create", "action_id": null, "title": "Core workout", "start": start, "minutes": 30});
+        let mut uncapped = reading(false);
+        uncapped.cap = None;
+        let err = check(&uncapped, &[create("2026-11-23T20:59:00")]).unwrap_err();
+        assert_eq!(err, "`Core workout` starts in the past; place it after now");
+        assert_eq!(check(&uncapped, &[create("2026-11-23T21:00:00")]), Ok(()), "a create at now is accepted");
+        assert_eq!(check(&uncapped, &[create("2026-11-24T07:00:00")]), Ok(()));
     }
 }

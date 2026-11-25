@@ -4,7 +4,7 @@ use crate::evals;
 use crate::ledger::{PgLedger, UsageModel, UsageWriter};
 use crate::rows::{get_row, list_rows, ServerClock};
 use crate::teams::{self, Kind};
-use aroh_domain::rows::Goal;
+use aroh_domain::rows::{Action, ActionSeries, BusyBlock, Goal};
 use crate::tools::{aroh_toolkit, ToolEnv};
 use crate::vault::Vault;
 use crate::workflows;
@@ -193,7 +193,12 @@ pub fn autonomy_gate(state: &Map<String, Value>, _args: &[Value]) -> Result<Stri
     Ok(if ask { "ask" } else { "apply" }.into())
 }
 
-async fn run_state(pool: &PgPool, run: RunId, key: &str) -> Result<Value, ServerError> {
+async fn run_state(pool: &PgPool, vault: &Vault, run: RunId, key: &str) -> Result<Value, ServerError> {
+    if crate::checkpoints::is_sealed(pool, run).await? {
+        let store = crate::checkpoints::PgCheckpoints::new(pool.clone(), vault.clone(), Arc::new(EventBuffer::default()));
+        let Some(cp) = troupekit_core::store::CheckpointStore::latest(&store, run).await? else { return Ok(Value::Null) };
+        return Ok(cp.state.get("state").and_then(|s| s.get(key)).cloned().unwrap_or(Value::Null));
+    }
     let value: Option<Option<Value>> =
         crate::db::query_scalar("select state->'state'->$2 from public.run_checkpoints where run_id = $1 order by step desc limit 1")
             .bind(run.0)
@@ -203,19 +208,52 @@ async fn run_state(pool: &PgPool, run: RunId, key: &str) -> Result<Value, Server
     Ok(value.flatten().unwrap_or(Value::Null))
 }
 
-/// Reads what a run plans around from its latest checkpoint's state: the `busy`
-/// key as eval slots, the ids of the `calendar` entries marked locked, and the
-/// replan sequence bounds (`calendar`, `ordered`, `daily_minutes`, `now` local
-/// to the goal's zone). All empty for a run without those keys, before its first
-/// checkpoint, or before the run exists.
+/// Days from `now` in `tz` through goal `g`'s deadline, at least [`evals::EVAL_WINDOW_DAYS`]
+/// and at most [`evals::MAX_HORIZON_DAYS`]; the maximum when it has no readable deadline.
+fn horizon(g: &Goal, tz: chrono_tz::Tz, now: chrono::DateTime<chrono::Utc>) -> u32 {
+    let today = now.with_timezone(&tz).date_naive();
+    let deadline = g.deadline.as_deref().and_then(|d| chrono::NaiveDate::parse_from_str(d.get(..10).unwrap_or(d), "%Y-%m-%d").ok());
+    let days = deadline.map_or(i64::from(evals::MAX_HORIZON_DAYS), |d| (d - today).num_days() + 1);
+    u32::try_from(days.clamp(i64::from(evals::EVAL_WINDOW_DAYS), i64::from(evals::MAX_HORIZON_DAYS))).expect("clamped to u32 range")
+}
+
+/// The busy slots `user`'s goal `goal` plans around and the horizon they cover, read from the
+/// rows at `now` in `tz` (B89): `day_inputs` over the calendar entries (when the goal uses
+/// calendars) and every action, with the occurrences of other goals' series that are not stored
+/// yet expanded in memory, through the goal's `horizon`. None when the goal row is gone.
+async fn live_busy(pool: &PgPool, user: Uuid, goal: Uuid, tz: chrono_tz::Tz, now: chrono::DateTime<chrono::Utc>) -> Result<Option<(Vec<evals::Slot>, u32)>, ServerError> {
+    let Some(g) = get_row::<Goal>(pool, user, &goal.to_string()).await? else { return Ok(None) };
+    let days = horizon(&g, tz, now);
+    let blocks: Vec<BusyBlock> = if g.use_calendars { list_rows::<BusyBlock>(pool, user, &[], false).await? } else { Vec::new() };
+    let mut actions: Vec<Action> = list_rows::<Action>(pool, user, &[], true).await?;
+    for series in list_rows::<ActionSeries>(pool, user, &[], false).await?.into_iter().filter(|s| s.goal_id != g.id) {
+        let stored: BTreeSet<_> = actions.iter().filter(|a| a.series_id.as_deref() == Some(series.id.as_str())).filter_map(|a| a.occurrence).collect();
+        actions.extend(aroh_domain::recur::materialize(&series, now, days, &stored)?);
+    }
+    let until = now + chrono::Duration::days(i64::from(days));
+    let (busy, _) = crate::engine::day_inputs(&blocks, &actions, &g.id, tz, now, until);
+    Ok(Some((evals::busy_slots(&Value::Array(busy)).map_err(ServerError::Setup)?, days)))
+}
+
+/// Reads what a run plans around: the busy slots and the horizon in days the overlap check
+/// expands plans over, from the rows now through the goal's deadline (at most a year) for a
+/// planning run of a goal (one whose state has `busy`, B89), else from that state key over the
+/// longest horizon;
+/// the ids of the `calendar` entries marked locked; and the replan sequence bounds
+/// (`calendar`, `ordered`, `daily_minutes`, `now` local to the goal's zone). Built on every
+/// job pickup, so a plan after a change request sees the calendar as it is then. All empty
+/// for a run without those keys, before its first checkpoint, or before the run exists.
 pub async fn run_bounds(
     pool: &PgPool,
+    vault: &Vault,
+    user: Uuid,
+    goal: Option<Uuid>,
     run: Option<RunId>,
     now: chrono::DateTime<chrono::Utc>,
-) -> Result<(Vec<evals::Slot>, BTreeSet<String>, crate::sequence::Bounds), ServerError> {
-    let Some(run) = run else { return Ok((Vec::new(), BTreeSet::new(), Default::default())) };
-    let busy = evals::busy_slots(&run_state(pool, run, "busy").await?).map_err(ServerError::Setup)?;
-    let calendar = run_state(pool, run, "calendar").await?;
+) -> Result<(Vec<evals::Slot>, BTreeSet<String>, crate::sequence::Bounds, u32), ServerError> {
+    let Some(run) = run else { return Ok((Vec::new(), BTreeSet::new(), Default::default(), evals::MAX_HORIZON_DAYS)) };
+    let planned = run_state(pool, vault, run, "busy").await?;
+    let calendar = run_state(pool, vault, run, "calendar").await?;
     let fixed = calendar
         .as_array()
         .into_iter()
@@ -223,11 +261,19 @@ pub async fn run_bounds(
         .filter(|a| a.get("locked").and_then(Value::as_bool) == Some(true))
         .filter_map(|a| a.get("id").and_then(Value::as_str).map(str::to_string))
         .collect();
-    let ordered = run_state(pool, run, "ordered").await?.as_bool().unwrap_or(false);
-    let cap = run_state(pool, run, "daily_minutes").await?.as_i64();
-    let zone = run_state(pool, run, "goal").await?.get("timezone").and_then(Value::as_str).map(crate::triggers::zone_or_utc).unwrap_or(chrono_tz::UTC);
+    let ordered = run_state(pool, vault, run, "ordered").await?.as_bool().unwrap_or(false);
+    let cap = run_state(pool, vault, run, "daily_minutes").await?.as_i64();
+    let zone = run_state(pool, vault, run, "goal").await?.get("timezone").and_then(Value::as_str).map(crate::triggers::zone_or_utc).unwrap_or(chrono_tz::UTC);
     let sequence = crate::sequence::Bounds::from_calendar(&calendar, ordered, cap, now.with_timezone(&zone).naive_local()).map_err(ServerError::Setup)?;
-    Ok((busy, fixed, sequence))
+    let live = match goal.filter(|_| !planned.is_null()) {
+        Some(goal) => live_busy(pool, user, goal, zone, now).await?,
+        None => None,
+    };
+    let (busy, days) = match live {
+        Some(found) => found,
+        None => (evals::busy_slots(&planned).map_err(ServerError::Setup)?, evals::MAX_HORIZON_DAYS),
+    };
+    Ok((busy, fixed, sequence, days))
 }
 
 /// The kind of `user`'s goal `goal` as its team reads it, so the intake
@@ -270,12 +316,17 @@ impl RunIo {
     ) -> Result<RunIo, ServerError> {
         let settings = list_rows::<ProviderSetting>(&deps.pool, user, &[], false).await?;
         let mut tools = ToolRegistry::new();
-        let env = ToolEnv { pool: deps.pool.clone(), hlc: deps.hlc.clone(), clock: deps.clock.clone(), user, goal };
+        let sealed = match run {
+            Some(r) => crate::checkpoints::is_sealed(&deps.pool, r).await?,
+            None => false,
+        };
+        let diary_key = if sealed { deps.vault.diary_get(user).await?.map(Arc::new) } else { None };
+        let env = ToolEnv { pool: deps.pool.clone(), hlc: deps.hlc.clone(), clock: deps.clock.clone(), user, goal, sealed, diary_key };
         tools.register_toolkit(aroh_toolkit(env.clone())).map_err(|e| ServerError::Setup(e.to_string()))?;
         let env_cards = env.clone();
         tools.register_toolkit(crate::triage::triage_toolkit(env)).map_err(|e| ServerError::Setup(e.to_string()))?;
         register_web(&mut tools, search_kit(&deps, user).await?, deps.web.clone())?;
-        let (busy, fixed, sequence) = run_bounds(&deps.pool, run, crate::rows::utc(deps.clock.now_ms())).await?;
+        let (busy, fixed, sequence, days) = run_bounds(&deps.pool, &deps.vault, user, goal, run, crate::rows::utc(deps.clock.now_ms())).await?;
         let kind = goal_kind(&deps.pool, user, goal).await?;
         let mut conditions = Conditions::new();
         conditions.register("autonomy_gate", Arc::new(autonomy_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
@@ -298,7 +349,7 @@ impl RunIo {
             writer,
             settings,
             tools,
-            evals: evals::registry_for(busy, fixed, kind, sequence),
+            evals: evals::registry_for(busy, fixed, kind, sequence, days),
             events,
             personas: workflows::loader(personas),
             conditions,

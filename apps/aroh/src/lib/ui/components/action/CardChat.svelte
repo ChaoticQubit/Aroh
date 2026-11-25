@@ -14,20 +14,55 @@
 	import * as Card from '$lib/ui/primitives/card';
 	import Persona from '../agent/Persona.svelte';
 	import CardComposer from './CardComposer.svelte';
+	import ChatTail from '../agent/ChatTail.svelte';
+	import LatestPill from '../agent/LatestPill.svelte';
+	import { atEnd } from '$lib/ui/atend';
+	import { followOf, type ChatTail as Tail } from '$lib/app/working';
+	import { untrack } from 'svelte';
 
 	/**
 	 * Chat of one action card (Q71): owner and coach messages, the applied edit as a diff card with
 	 * Undo, and the composer with the mic. Owner edits apply at once; `onundo` reverts entry `i`,
 	 * `onsend` sends a new message. `coach` names the persona of the goal; `keep` keeps the unsent draft.
+	 * `tail` is the working bubble or the failed send with Retry (`onretry`), followed unless the owner scrolled up (Q87).
 	 */
-	let { coach, entries, keep, onsend, onundo }: { coach: string; entries: CardChatEntry[]; keep?: string; onsend?: (text: string) => void; onundo?: (i: number) => void } = $props();
+	let {
+		coach,
+		entries,
+		keep,
+		tail = null,
+		onsend,
+		onundo,
+		onretry
+	}: { coach: string; entries: CardChatEntry[]; keep?: string; tail?: Tail | null; onsend?: (text: string) => void; onundo?: (i: number) => void; onretry?: () => void } = $props();
 
 	let draft = $state('');
+	let list = $state<HTMLOListElement>();
+	let tailEl = $state<HTMLElement>();
+	let end = $state(true);
+	let sentNow = false;
+	const pill = $derived(followOf(tail, end, false) === 'pill');
+	const heard = $derived(tail?.type === 'typing' ? 'Working' : tail?.type === 'failed' ? `Not sent. ${tail.text}` : '');
+
+	/** Scrolls the working bubble or failed send into view. */
+	const jump = () => tailEl?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+
+	$effect(() => {
+		void entries.length;
+		const t = tail;
+		void (t?.type === 'typing' ? t.step : t?.text);
+		if (!list) return;
+		const sent = sentNow;
+		sentNow = false;
+		const seen = untrack(() => end);
+		if (followOf(t, seen, sent) === 'scroll') queueMicrotask(jump);
+		else if (sent || seen) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' });
+	});
 	const mark = { add: 'text-status-done', remove: 'text-status-missed', change: 'text-muted' } as const;
 </script>
 
 <div class="flex h-full min-h-0 flex-col">
-	<ol class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" aria-label="Card chat">
+	<ol bind:this={list} class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" aria-label="Card chat">
 		{#each entries as e, i (i)}
 			<li class={e.kind === 'owner' ? 'flex justify-end' : 'flex flex-col gap-1'}>
 				{#if e.kind === 'owner'}
@@ -61,6 +96,14 @@
 				{/if}
 			</li>
 		{/each}
+		{#if tail}
+			<li bind:this={tailEl} class="flex flex-col"><ChatTail {tail} {onretry} /></li>
+		{/if}
+		<li aria-hidden="true" class="-mt-3 h-px shrink-0" use:atEnd={{ own: true, inset: 0, onchange: (v) => (end = v) }}></li>
 	</ol>
-	<CardComposer placeholder="Ask {coach.toLowerCase()} to change this" {keep} bind:draft onsend={(text) => ((draft = ''), onsend?.(text))} />
+	<p class="sr-only" aria-live="polite">{heard}</p>
+	<div class="relative">
+		{#if pill}<LatestPill onjump={jump} />{/if}
+		<CardComposer placeholder="Ask {coach.toLowerCase()} to change this" {keep} bind:draft onsend={(text) => ((draft = ''), (sentNow = true), onsend?.(text))} />
+	</div>
 </div>

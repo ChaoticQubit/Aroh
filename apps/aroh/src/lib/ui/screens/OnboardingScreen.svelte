@@ -26,8 +26,8 @@
 	import Mail from '@lucide/svelte/icons/mail';
 	import MapPin from '@lucide/svelte/icons/map-pin';
 	import Server from '@lucide/svelte/icons/server';
-	import Target from '@lucide/svelte/icons/target';
 	import { untrack } from 'svelte';
+	import Logo from '../brand/Logo.svelte';
 	import { Button } from '$lib/ui/primitives/button';
 	import { Input } from '$lib/ui/primitives/input';
 	import Field from '../components/Field.svelte';
@@ -148,7 +148,7 @@
 <div class="flex h-full flex-col overflow-y-auto bg-bg text-fg {pad}">
 	{#if step === 'welcome'}
 		<div class="flex flex-1 flex-col justify-center gap-5">
-			<span class="flex size-14 items-center justify-center rounded-sm bg-fg text-bg" aria-hidden="true"><Target class="size-7" /></span>
+			<Logo size={56} />
 			<div class="flex flex-col gap-3">
 				<h1 class="text-2xl leading-tight font-semibold">Goals that plan themselves around your week</h1>
 				<p class="text-lg text-muted">Tell Aroh what you want to reach. Agents research it, ask what they need and put sessions on your calendar. You approve every plan.</p>
@@ -164,6 +164,7 @@
 		</div>
 	{:else if step === 'signin'}
 		{@render top()}
+		<Logo size={48} class="mt-4" />
 		{@render heading('Sign in or create your account', 'Your goals sync across your devices and the agents work while the app is closed.')}
 		<div class="mt-auto flex flex-col gap-3 pt-6">
 			{@render failed()}

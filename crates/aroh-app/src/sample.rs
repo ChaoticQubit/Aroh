@@ -160,6 +160,7 @@ fn proposal(conn: &Connection, clock: &mut Hlc, goal: &Goal, missed: &Action, no
         status: ProposalStatus::Proposed,
         undo: None,
         created_at: now,
+        sealed_summary: None,
         updated_at: String::new(),
         deleted: false,
     };

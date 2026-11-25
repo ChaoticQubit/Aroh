@@ -8,16 +8,30 @@ const fake = vi.hoisted(() => ({
 	node: 'questions',
 	card: null as unknown,
 	answerStatus: 202,
-	runsStatus: 200
+	runsStatus: 200,
+	statuses: [] as string[],
+	hold: null as Promise<void> | null,
+	views: 0,
+	peak: 0
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
 	invoke: vi.fn(async (_cmd: string, args: { method: string; path: string; body: unknown }) => {
+		const view = args.method === 'GET' && /^\/v1\/runs\/r[02]$/.test(args.path);
+		if (view) fake.peak = Math.max(fake.peak, ++fake.views);
 		await new Promise((r) => setTimeout(r, fake.latencyMs));
+		if (view) fake.views--;
 		const { method, path, body } = args;
+		if (method === 'GET' && path.startsWith('/v1/runs/r1') && !fake.statuses.length && fake.hold) await fake.hold;
+		if (method === 'GET' && path === '/v1/runs?goal_id=g2')
+			return { status: 200, body: [{ run_id: 'r2', goal_id: 'g2', workflow: 'replan', state: 'done', created_at: '', updated_at: '' }, { run_id: 'r0', goal_id: 'g2', workflow: 'new-goal', state: 'done', created_at: '', updated_at: '' }] };
+		if (method === 'GET' && (path === '/v1/runs/r0' || path === '/v1/runs/r2'))
+			return { status: 200, body: { run_id: path.slice(-2), goal_id: 'g2', workflow: path.endsWith('r0') ? 'new-goal' : 'replan', status: { status: 'done' }, waiting: [], events: [], research: path.endsWith('r0') ? { summary: 'Found it.', sources: [] } : null } };
 		if (method === 'GET' && path === '/v1/runs?goal_id=g1&state=waiting_human') return { status: 200, body: [{ run_id: 'r1' }] };
 		if (method === 'GET' && path === '/v1/runs?goal_id=g1')
 			return fake.runsStatus === 200 ? { status: 200, body: [{ run_id: 'r1', goal_id: 'g1', workflow: 'run-again', state: 'waiting_human', created_at: '', updated_at: '' }] } : { status: fake.runsStatus, body: null };
+		if (method === 'GET' && path.startsWith('/v1/runs/r1') && fake.statuses.length)
+			return { status: 200, body: { run_id: 'r1', goal_id: 'g1', workflow: 'new-goal', status: { status: fake.statuses.shift() }, waiting: [], events: [{ seq: 0, at_ms: 1, body: { type: 'run_started' } }], usage: { cost_usd_micros: 1200 } } };
 		if (method === 'GET' && path.startsWith('/v1/runs/r1'))
 			return {
 				status: 200,
@@ -68,6 +82,19 @@ const TWO = [
 	{ id: 'food', kind: 'text', text: 'Anything you do not eat?', choices: [] }
 ];
 
+/** A question the profile already answers, with the remembered value and where it came from. */
+const KNOWN = { id: 'minutes', kind: 'text', text: 'Minutes a day?', choices: [], known: { fact_id: 'f1', value: '30 min', source: 'your answer on Run a 5k' } };
+
+/** Holds the fake's next waiting run read until the returned release is called, so a working run stays on screen. */
+function holdWaiting(): () => void {
+	let release = () => {};
+	fake.hold = new Promise<void>((r) => (release = r));
+	return () => {
+		fake.hold = null;
+		release();
+	};
+}
+
 /** Lets every pending fake call and follow-up settle. */
 async function settle() {
 	for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, Math.max(1, fake.latencyMs)));
@@ -103,6 +130,10 @@ beforeEach(() => {
 	fake.node = 'questions';
 	fake.answerStatus = 202;
 	fake.runsStatus = 200;
+	fake.statuses = [];
+	fake.hold = null;
+	fake.views = 0;
+	fake.peak = 0;
 });
 
 describe('limits card (Q64)', () => {
@@ -218,6 +249,47 @@ describe('stuck answers (Q58): the owner answered some cards and nothing was pos
 		expect(fake.posts.map((p) => p.body)).toEqual([{ node: 'questions', answer: [{ id: 'days', answer: '3' }, { id: 'food', answer: 'none' }] }]);
 	});
 
+	it('b82: a remembered answer counts as given, so Send needs no confirm tap', async () => {
+		fake.questions = [KNOWN, TWO[1]];
+		const chat = await opened();
+		expect(group(chat.messages)).toMatchObject({ values: { minutes: '30 min' }, missing: ['food'] });
+		chat.handle({ type: 'answer', id: 'food', value: 'none' });
+		chat.handle({ type: 'submit' });
+		await settle();
+		expect(fake.posts.map((p) => p.body)).toEqual([{ node: 'questions', answer: [{ id: 'minutes', answer: '30 min' }, { id: 'food', answer: 'none' }] }]);
+	});
+
+	it('b82: every remembered question answered by memory reads ready to send', async () => {
+		fake.questions = [KNOWN];
+		const chat = await opened();
+		expect(group(chat.messages)).toMatchObject({ missing: [], status: '1 of 1 answered. Ready to send.' });
+	});
+
+	it('b82: a remembered answer can still be edited, skipped or cleared', async () => {
+		fake.questions = [KNOWN, TWO[1]];
+		const chat = await opened();
+		chat.handle({ type: 'answer', id: 'minutes', value: '' });
+		chat.handle({ type: 'answer', id: 'food', value: 'none' });
+		chat.handle({ type: 'submit' });
+		await settle();
+		expect(fake.posts).toEqual([]);
+		expect(group(chat.messages)).toMatchObject({ missing: ['minutes'] });
+		chat.handle({ type: 'answer', id: 'minutes', value: '45 min' });
+		chat.handle({ type: 'skip', id: 'minutes', skipped: true });
+		chat.handle({ type: 'submit' });
+		await settle();
+		expect(fake.posts.map((p) => p.body)).toEqual([{ node: 'questions', answer: [{ id: 'minutes', answer: null }, { id: 'food', answer: 'none' }] }]);
+	});
+
+	it('b82: an edited remembered answer posts the edit', async () => {
+		fake.questions = [KNOWN];
+		const chat = await opened();
+		chat.handle({ type: 'answer', id: 'minutes', value: '45 min' });
+		chat.handle({ type: 'submit' });
+		await settle();
+		expect(fake.posts.map((p) => p.body)).toEqual([{ node: 'questions', answer: [{ id: 'minutes', answer: '45 min' }] }]);
+	});
+
 	it('typed composer text fills the next unanswered question and does not post', async () => {
 		fake.questions = TWO;
 		const chat = await opened();
@@ -311,5 +383,181 @@ describe('run again at approve (B70, B71)', () => {
 		await settle();
 		expect(chat.unreachable).toBe(false);
 		expect(chat.view?.waiting[0]?.node).toBe('approve');
+	});
+});
+
+describe('working bubble (Q87, B88)', () => {
+	/** The trailing bubble or error of the thread, if any. */
+	const tail = (messages: ChatMessage[]) => messages.findLast((m) => m.type === 'typing' || m.type === 'failed') ?? null;
+
+	it('shows the bubble from Send until the reply lands', async () => {
+		fake.node = 'approve';
+		const chat = await opened();
+		expect(tail(chat.thread)).toBeNull();
+		fake.latencyMs = 5;
+		const sending = chat.send('Move it to mornings');
+		expect(chat.thread.at(-1)).toEqual({ type: 'typing', step: null });
+		await sending;
+		await settle();
+		expect(tail(chat.thread)).toBeNull();
+	});
+
+	it('a refused send replaces the bubble with the error, and Retry sends the text once more without a second owner line', async () => {
+		fake.node = 'approve';
+		fake.answerStatus = 409;
+		const chat = await opened();
+		await chat.send('Move it to mornings');
+		await settle();
+		expect(chat.thread.at(-1)).toEqual({ type: 'failed', text: 'conflict: answer does not match `answers`' });
+		expect(texts(chat.thread).filter((t) => t === 'Move it to mornings')).toHaveLength(1);
+		fake.answerStatus = 202;
+		fake.posts = [];
+		chat.handle({ type: 'resend' });
+		await settle();
+		expect(tail(chat.thread)).toBeNull();
+		expect(fake.posts).toHaveLength(1);
+		expect(texts(chat.thread).filter((t) => t === 'Move it to mornings')).toHaveLength(1);
+	});
+
+	it('opening a goal whose run is already working shows the bubble until the run waits', async () => {
+		fake.node = 'approve';
+		fake.statuses = ['running', 'checkpointed', 'running'];
+		const release = holdWaiting();
+		const chat = new GoalChat('g1', 'What changed?');
+		const opening = chat.resume();
+		await vi.waitFor(() => expect([fake.statuses.length, chat.view?.status.status]).toEqual([0, 'running']), { interval: 1 });
+		expect(chat.thread.at(-1)).toEqual({ type: 'typing', step: null });
+		release();
+		await opening;
+		await settle();
+		expect(chat.view?.status.status).toBe('waiting_human');
+		expect(tail(chat.thread)).toBeNull();
+	});
+
+	it('header Retry shows the bubble while the restarted run works', async () => {
+		fake.node = 'approve';
+		const chat = await opened();
+		expect(tail(chat.thread)).toBeNull();
+		fake.statuses = ['queued', 'running'];
+		const release = holdWaiting();
+		const retrying = chat.retry();
+		await vi.waitFor(() => expect([fake.statuses.length, chat.view?.status.status]).toEqual([0, 'running']), { interval: 1 });
+		expect(chat.thread.at(-1)).toEqual({ type: 'typing', step: null });
+		release();
+		await retrying;
+		await settle();
+		expect(tail(chat.thread)).toBeNull();
+	});
+
+	it('a run that ended shows no bubble', async () => {
+		fake.statuses = ['failed'];
+		const chat = new GoalChat('g1', 'What changed?');
+		await chat.resume();
+		await settle();
+		expect(tail(chat.thread)).toBeNull();
+	});
+
+	it('typing into an open question group starts nothing, so no bubble shows', async () => {
+		fake.questions = TWO;
+		const chat = await opened();
+		const sending = chat.send('3');
+		expect(tail(chat.thread)).toBeNull();
+		await sending;
+	});
+});
+
+describe('goal engine state known (B87)', () => {
+	it('is unknown until the runs list and the picked run are read, so no false "No run yet" shows', async () => {
+		fake.node = 'approve';
+		const chat = new GoalChat('g1', 'Hi');
+		expect(chat.known).toBe(false);
+		const opening = chat.open();
+		expect(chat.known).toBe(false);
+		await settle();
+		await opening;
+		expect(chat.known).toBe(true);
+		expect(chat.view?.run_id).toBe('r1');
+	});
+
+	it('is known once the runs read failed, so Offline shows instead of a skeleton', async () => {
+		fake.runsStatus = 500;
+		const chat = new GoalChat('g1', 'Hi');
+		await chat.open();
+		expect(chat.known).toBe(true);
+		expect(chat.unreachable).toBe(true);
+	});
+});
+
+describe('goal page reads (B87)', () => {
+	it('opens from a runs read the page already started, without reading the runs again', async () => {
+		fake.node = 'approve';
+		const { invoke } = await import('@tauri-apps/api/core');
+		const mock = vi.mocked(invoke);
+		const shared = Promise.resolve({ ok: true as const, value: [{ run_id: 'r1', goal_id: 'g1', workflow: 'new-goal', state: 'waiting_human', created_at: '', updated_at: '' }] });
+		mock.mockClear();
+		const chat = new GoalChat('g1', 'Hi');
+		await chat.open(shared);
+		await settle();
+		const paths = mock.mock.calls.map((c) => (c[1] as { path: string }).path);
+		expect(paths.filter((p) => p.startsWith('/v1/runs?'))).toEqual([]);
+		expect(chat.view?.run_id).toBe('r1');
+	});
+});
+
+describe('goal page run views (B87)', () => {
+	it('reads the origin run and the picked run at the same time', async () => {
+		fake.latencyMs = 20;
+		const chat = new GoalChat('g2', 'Hi');
+		await chat.open();
+		expect(fake.peak).toBe(2);
+		expect([chat.view?.run_id, chat.origin?.research?.summary, chat.known]).toEqual(['r2', 'Found it.', true]);
+	});
+});
+
+describe('goal chat from the device cache (B87)', () => {
+	it('shows the last read run at once, then the fresh one once the engine answers', async () => {
+		const { engineCache } = await import('./cache');
+		engineCache.owner('u1');
+		const ticket = engineCache.current();
+		engineCache.put(ticket, '/v1/runs?goal_id=g1', [{ run_id: 'r1', goal_id: 'g1', workflow: 'new-goal', state: 'done', created_at: '', updated_at: '' }]);
+		engineCache.put(ticket, '/v1/runs/r1', { run_id: 'r1', goal_id: 'g1', workflow: 'new-goal', status: { status: 'done' }, waiting: [], events: [] });
+		fake.node = 'approve';
+		const chat = new GoalChat('g1', 'Hi');
+		expect([chat.known, chat.view?.status.status]).toEqual([true, 'done']);
+		await chat.open();
+		await settle();
+		expect(chat.view?.status.status).toBe('waiting_human');
+		engineCache.owner(null);
+		expect(new GoalChat('g1', 'Hi').known).toBe(false);
+	});
+});
+
+describe('goal chat cache stays true (B87)', () => {
+	it('keeps the run view a follow ended on, so the next open never shows a stale Working', async () => {
+		const { engineCache } = await import('./cache');
+		engineCache.owner('u1');
+		fake.node = 'approve';
+		fake.statuses = ['running'];
+		const chat = new GoalChat('g1', 'Hi');
+		await chat.resume();
+		await settle();
+		expect(engineCache.get<{ status: { status: string } }>('/v1/runs/r1')?.status.status).toBe('waiting_human');
+		engineCache.owner(null);
+	});
+
+	it('b70: a failed runs read drops the cached view, so Offline with Retry shows', async () => {
+		const { engineCache } = await import('./cache');
+		const { goalStatus } = await import('./goalcard');
+		engineCache.owner('u1');
+		const ticket = engineCache.current();
+		engineCache.put(ticket, '/v1/runs?goal_id=g1', [{ run_id: 'r1', goal_id: 'g1', workflow: 'new-goal', state: 'done', created_at: '', updated_at: '' }]);
+		engineCache.put(ticket, '/v1/runs/r1', { run_id: 'r1', goal_id: 'g1', workflow: 'new-goal', status: { status: 'done' }, waiting: [], events: [] });
+		fake.runsStatus = 500;
+		const chat = new GoalChat('g1', 'Hi');
+		expect(chat.view?.run_id).toBe('r1');
+		await chat.open();
+		expect(chat.view).toBeNull();
+		expect(goalStatus(chat.view, 5, 0, chat.unreachable)).toMatchObject({ chip: 'Offline', retry: true });
+		engineCache.owner(null);
 	});
 });

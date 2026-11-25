@@ -3,7 +3,7 @@ start = "research"
 max_steps = 200
 
 [state]
-goal = "{id: string, title: string, context: string?, deadline: string?, timezone: string, today: string}"
+goal = "{id: string, title: string, context: string?, deadline: string?, timezone: string, today: string, now: string}"
 calendar = "list<{title: string, start: string, minutes: int}>"
 busy = "list<{title: string, start: string, minutes: int}>"
 away_days = "list<string>"

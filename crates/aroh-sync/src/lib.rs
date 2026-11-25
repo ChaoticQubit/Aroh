@@ -40,14 +40,26 @@ impl From<reqwest::Error> for Error {
 /// Result alias for aroh-sync.
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// One HTTP client for every call: rustls, 30 s timeout, no redirects, so a
-/// bearer token is never replayed to another host.
-pub fn http() -> reqwest::Client {
+/// The process-wide HTTP client: rustls, 30 s timeout, no redirects, so a
+/// bearer token is never replayed to another host. Built once, so every call
+/// reuses its connection pool instead of a fresh TCP and TLS handshake.
+static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("http client builds")
+});
+
+/// The one shared client itself, for tests that check every call gets the same one.
+fn shared() -> &'static reqwest::Client {
+    &CLIENT
+}
+
+/// A handle to the shared HTTP client; clones share one connection pool.
+/// Input: none. Output: a cheap clone of the process-wide client.
+pub fn http() -> reqwest::Client {
+    shared().clone()
 }
 
 /// Turns a non-2xx response into `Error::Status` with a 200-char body excerpt.
@@ -59,4 +71,18 @@ pub async fn check(response: reqwest::Response) -> Result<reqwest::Response> {
     }
     let body: String = response.text().await.unwrap_or_default().chars().take(200).collect();
     Err(Error::Status(status.as_u16(), body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_call_shares_one_client_and_its_connection_pool() {
+        let first: *const reqwest::Client = shared();
+        let second: *const reqwest::Client = shared();
+        assert!(std::ptr::eq(first, second));
+        let _ = http();
+        assert!(std::ptr::eq(first, shared()));
+    }
 }
