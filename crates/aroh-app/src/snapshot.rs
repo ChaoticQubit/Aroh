@@ -3,7 +3,7 @@
 use crate::local::{self, Note, PendingLog};
 use crate::Result;
 use aroh_domain::rows::{
-    Action, Budget, BusyBlock, Category, Goal, GoalFile, Persona, Preference, Proposal, ProposalStatus, ProviderSetting, SearchSetting, Tracker,
+    Action, ActionSeries, Budget, BusyBlock, Category, Goal, GoalFile, Persona, Preference, Proposal, ProposalStatus, ProviderSetting, SearchSetting, Tracker,
     TrackerEntry,
 };
 use aroh_store::repo;
@@ -48,23 +48,29 @@ fn busy_in(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateTime<U
     Ok(busy)
 }
 
-/// Whether `user_id`'s Routines goal holds a live series or a live action at any time, so the
-/// screens list it. An empty Routines goal is left out of every goal list (B96).
-fn routines_in_use(conn: &Connection, user_id: &str) -> Result<bool> {
+/// Whether `user_id`'s Routines goal shows at `now` (Q93): it lists a routine
+/// ([`crate::location::listed`]) or holds an action a delete from `now` would remove
+/// (`write::closes_from`). Routines holding only history is left out of every goal list.
+fn routines_in_use(conn: &Connection, user_id: &str, now: DateTime<Utc>) -> Result<bool> {
     let id = aroh_domain::seed::routines_id();
-    let used: bool = conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM action_series WHERE user_id = ?1 AND goal_id = ?2 AND deleted = 0)
-             OR EXISTS (SELECT 1 FROM actions WHERE user_id = ?1 AND goal_id = ?2 AND deleted = 0)",
-        [user_id, id.as_str()],
-        |r| r.get(0),
-    )?;
-    Ok(used)
+    let by_goal = [("user_id", user_id), ("goal_id", id.as_str())];
+    for a in repo::list::<Action>(conn, &by_goal)? {
+        if crate::write::closes_from(conn, &a, now)? {
+            return Ok(true);
+        }
+    }
+    for series in repo::list::<ActionSeries>(conn, &by_goal)? {
+        if crate::location::listed(conn, &series, now)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Reads the snapshot of `user_id`: actions overlapping `[from, to)` in start order and
 /// entries logged at or after `since`, newest first. Every other table is read whole, but the
-/// Routines goal is left out while it holds no live series and no live action.
-pub fn snapshot(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateTime<Utc>, since: DateTime<Utc>) -> Result<Snapshot> {
+/// Routines goal is left out while it shows nothing at `now` (see `routines_in_use`).
+pub fn snapshot(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateTime<Utc>, since: DateTime<Utc>, now: DateTime<Utc>) -> Result<Snapshot> {
     assert!(from < to, "snapshot range must not be empty");
     let mine = [("user_id", user_id)];
     let mut actions: Vec<Action> = repo::list::<Action>(conn, &mine)?.into_iter().filter(|a| a.start_at < to && a.end_at > from).collect();
@@ -74,7 +80,7 @@ pub fn snapshot(conn: &Connection, user_id: &str, from: DateTime<Utc>, to: DateT
     let mut prefs: Vec<Preference> = repo::list::<Preference>(conn, &mine)?;
     prefs.sort_by(|a, b| b.noted_at.cmp(&a.noted_at));
     let routines = aroh_domain::seed::routines_id();
-    let keep_routines = routines_in_use(conn, user_id)?;
+    let keep_routines = routines_in_use(conn, user_id, now)?;
     let goals: Vec<Goal> = repo::list::<Goal>(conn, &mine)?.into_iter().filter(|g| keep_routines || g.id != routines).collect();
     Ok(Snapshot {
         user_id: user_id.to_string(),

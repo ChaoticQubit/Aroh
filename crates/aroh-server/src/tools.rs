@@ -225,6 +225,16 @@ struct PlanArgs {
     plan: Plan,
     #[serde(default)]
     limits: Option<Value>,
+    #[serde(default)]
+    intake: Option<Value>,
+}
+
+impl PlanArgs {
+    /// Whether the intake already set the goal's order switch before the
+    /// questions (B109), so the plan leaves the switch as the owner left it.
+    fn order_decided(&self) -> bool {
+        self.intake.as_ref().and_then(|i| i.get("ordered")).is_some_and(Value::is_boolean)
+    }
 }
 
 /// Whether a row `id` of `R` exists for the user, live or tombstoned, so a
@@ -285,12 +295,12 @@ async fn refuse_past_one_offs(env: &ToolEnv, plan: &Plan, tz: Tz, ctx: &ToolCont
 }
 
 /// Stores an approved plan as actions, series and trackers, activates a draft
-/// goal with the plan's `ordered` (a later plan keeps the owner's switch) and, when the owner moved the date on the limits card (B41), sets the
+/// goal with the plan's `ordered` unless `order_decided` (the intake set it, B109; a later plan keeps the owner's switch) and, when the owner moved the date on the limits card (B41), sets the
 /// goal's deadline to `move_to`. With `replace` it first ends the old plan
 /// (`clear_old_plan`) and adds no tracker whose name the goal already has.
 /// Rows a replay of the same call wrote before are left as they are.
 /// Returns the counts in the plan.
-async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, replace: bool, ctx: &ToolContext) -> Result<Value, ToolError> {
+async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, replace: bool, order_decided: bool, ctx: &ToolContext) -> Result<Value, ToolError> {
     let goal = env.live_goal().await?;
     let tz = timezone(&plan.timezone)?;
     let (user, goal_text) = (env.user.to_string(), goal.to_string());
@@ -403,7 +413,9 @@ async fn write_plan(env: &ToolEnv, plan: &Plan, move_to: Option<&str>, replace: 
         if g.status == GoalStatus::Draft || moved.is_some() {
             if g.status == GoalStatus::Draft {
                 g.status = GoalStatus::Active;
-                g.ordered = plan.ordered.unwrap_or(false);
+                if !order_decided {
+                    g.ordered = plan.ordered.unwrap_or(false);
+                }
             }
             if let Some(d) = moved {
                 g.deadline = Some(d.to_string());
@@ -781,15 +793,15 @@ fn json_output(v: Value) -> ToolOutput {
 }
 
 /// The Aroh toolkit of one run: `write_plan`, `replace_plan`, `record_proposal`,
-/// `apply_proposal`, `reject_proposal`, `write_entries`, `store_plugin` and
-/// `propose_preference`, all writing through the domain rules as `env.user`. Workflow tool nodes call them.
+/// `apply_proposal`, `reject_proposal`, `write_entries`, `store_plugin`,
+/// `propose_preference`, `save_facts` and `ready_questions`, all writing through the domain rules as `env.user`. Workflow tool nodes call them.
 pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
     let e1 = env.clone();
     let write = typed_tool("write_plan", "Store an approved plan as actions, series and trackers.", move |a: PlanArgs, ctx: ToolContext| {
         let env = e1.clone();
         async move {
             let move_to = a.limits.as_ref().and_then(|l| l.get("move_to")).and_then(Value::as_str);
-            write_plan(&env, &a.plan, move_to, false, &ctx).await.map(json_output)
+            write_plan(&env, &a.plan, move_to, false, a.order_decided(), &ctx).await.map(json_output)
         }
     });
     let e0 = env.clone();
@@ -800,7 +812,7 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
             let env = e0.clone();
             async move {
                 let move_to = a.limits.as_ref().and_then(|l| l.get("move_to")).and_then(Value::as_str);
-                write_plan(&env, &a.plan, move_to, true, &ctx).await.map(json_output)
+                write_plan(&env, &a.plan, move_to, true, false, &ctx).await.map(json_output)
             }
         },
     );
@@ -838,6 +850,15 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
             async move { crate::learning::propose_preference(&env, a).await.map(json_output) }
         },
     );
+    let e9 = env.clone();
+    let ready = typed_tool(
+        "ready_questions",
+        "Bound per-week day counts in the intake and set a draft goal's order switch from it.",
+        move |a: crate::questions::ReadyArgs, _ctx: ToolContext| {
+            let env = e9.clone();
+            async move { crate::questions::ready_questions(&env, a).await.map(json_output) }
+        },
+    );
     let e8 = env;
     let facts = typed_tool(
         "save_facts",
@@ -857,6 +878,7 @@ pub fn aroh_toolkit(env: ToolEnv) -> Toolkit {
         .with(Arc::new(plugin))
         .with(Arc::new(propose))
         .with(Arc::new(facts))
+        .with(Arc::new(ready))
 }
 
 /// Returns a naive local time as the `YYYY-MM-DDTHH:MM:SS` text plans use.

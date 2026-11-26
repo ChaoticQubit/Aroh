@@ -78,6 +78,7 @@ describe('engine client', () => {
 		expect(pauseMessage({ status: 'failed', error: 'no key' })).toBe('The run stopped: no key.');
 		const clash = 'node `place_check`: tool `check_overlap`: blocked: Could not fit sessions around your calendar: Gym: Upper body A clashes with Gym: Full body A (legs, chest, back)';
 		expect(pauseMessage({ status: 'failed', error: clash })).toBe('Could not fit sessions around your calendar: Gym: Upper body A clashes with Gym: Full body A (legs, chest, back).');
+		expect(pauseMessage({ status: 'failed', error: 'node `plan`: BadRequest: The plan was too long to finish' })).toBe('The plan was too long to finish.');
 		const events = [{ seq: 1, at_ms: 0, body: { type: 'step_started', step: 'place' } }];
 		expect(progressLines(events)).toEqual([{ text: 'Moving sessions around your calendar', done: false }]);
 		expect(pauseMessage({ status: 'checkpointed' })).toBeNull();

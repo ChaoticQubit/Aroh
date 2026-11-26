@@ -83,6 +83,32 @@ pub fn delete_goal(conn: &Connection, clock: &mut Hlc, goal_id: &str, keep_actio
     Ok(paths)
 }
 
+/// Deletes the Routines goal of `user_id` at `now` (Q93) in one transaction: every routine
+/// series ends from now, its open sessions and Routines' open one-offs from now are tombstoned
+/// (logged ones locked), Routines' place links and proposals are tombstoned, then the goal.
+/// Done and logged history stays under the tombstone; [`settle_orphans`] leaves it there, and
+/// [`ensure_routines`] revives the goal when a new routine is approved. Errors when Routines is gone.
+pub fn delete_routines(conn: &Connection, clock: &mut Hlc, user_id: &str, now: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    let id = routines_id();
+    let tx = conn.unchecked_transaction()?;
+    let goal: Goal = repo::get(&tx, &id)?;
+    if goal.user_id != user_id {
+        return Err(invalid("goal of another user"));
+    }
+    let by_goal = [("goal_id", id.as_str())];
+    for series in repo::list::<ActionSeries>(&tx, &by_goal)? {
+        crate::write::end_series_in(&tx, clock, series, now)?;
+    }
+    let one_offs = repo::list::<Action>(&tx, &by_goal)?.into_iter().filter(|a| a.series_id.is_none() && a.start_at >= now);
+    crate::write::close_open(&tx, clock, one_offs)?;
+    tombstone_all::<PlaceLink>(&tx, clock, &by_goal)?;
+    tombstone_all::<Proposal>(&tx, clock, &by_goal)?;
+    repo::delete::<Goal>(&tx, clock, &id)?;
+    assert!(repo::list::<ActionSeries>(&tx, &by_goal)?.iter().all(|s| aroh_domain::recur::upcoming(s, now, 1).is_ok_and(|d| d.is_empty())), "no routine has a rule date after now");
+    tx.commit()?;
+    Ok(())
+}
+
 fn deleted_goals(conn: &Connection, user_id: &str) -> Result<BTreeSet<String>> {
     let mut stmt = conn.prepare("SELECT id FROM goals WHERE user_id = ?1 AND deleted = 1")?;
     let ids = stmt.query_map([user_id], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<BTreeSet<_>>>()?;
@@ -94,7 +120,8 @@ fn deleted_goals(conn: &Connection, user_id: &str) -> Result<BTreeSet<String>> {
 /// series' goal, an action of a gone series is tombstoned, everything else moves to Routines,
 /// so no owner row is lost. Output: rows changed. Runs in every tick, before materializing.
 pub fn settle_orphans(conn: &Connection, clock: &mut Hlc, user_id: &str) -> Result<usize> {
-    let dead = deleted_goals(conn, user_id)?;
+    let mut dead = deleted_goals(conn, user_id)?;
+    dead.remove(&routines_id());
     if dead.is_empty() {
         return Ok(0);
     }

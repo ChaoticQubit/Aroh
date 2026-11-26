@@ -47,6 +47,16 @@ export function stepNumber(value: number | null, delta: number, step: number, mi
 	return snap(from + delta, step, floor);
 }
 
+/**
+ * A number kept inside `bounds` (B106): below min becomes min, above max becomes max. Null bounds
+ * keep the number as is, as unbounded inputs do. Output: the kept number, or null for no number.
+ */
+export function boundedNumber(value: number | null, bounds: { min: number; max: number } | null): number | null {
+	if (value === null || bounds === null) return value;
+	if (bounds.min > bounds.max) throw new RangeError(`bad bounds ${bounds.min}..${bounds.max}`);
+	return Math.min(bounds.max, Math.max(bounds.min, value));
+}
+
 /** Formats minutes as "45 min", "1 h 30 min" or "2 h". Input must be a non-negative integer. */
 export function formatDuration(minutes: number): string {
 	if (!Number.isInteger(minutes) || minutes < 0) throw new RangeError(`bad minutes ${minutes}`);

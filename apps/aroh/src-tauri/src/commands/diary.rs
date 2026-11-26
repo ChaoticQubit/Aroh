@@ -106,7 +106,8 @@ async fn ensure_ring(app: &AppHandle, state: &State<'_, AppState>) -> Result<Key
     ring(app, state).await?.ok_or_else(|| "the diary key could not be kept".to_string())
 }
 
-fn claude_key() -> Option<String> {
+/// The device copy of the owner's Claude key, or none. Never returned to the webview or logged.
+pub(crate) fn claude_key() -> Option<String> {
     keyring::Entry::new(KEYCHAIN_SERVICE, CLAUDE_DEVICE_KEY).ok()?.get_password().ok()
 }
 

@@ -181,16 +181,16 @@ impl Api {
 /// minutes cap and the body, activity, diet and injury facts the
 /// `coach_questions` eval needs for a fitness goal.
 fn coach_intake() -> Value {
-    let q = |id: &str, text: &str| json!({"id": id, "text": text, "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null});
+    let q = |id: &str, text: &str| json!({"id": id, "text": text, "kind": "text", "choices": [], "multi": null, "unit": null, "min": null, "max": null, "lasting": null, "known": null});
     json!({"questions": [
-        {"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "unit": "runs", "min": 0, "max": 7, "lasting": null, "known": null},
-        {"id": "daily_minutes", "text": "How many minutes a day can you give this?", "kind": "number", "choices": [], "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null},
+        {"id": "weekly_runs", "text": "How many runs a week?", "kind": "number", "choices": [], "multi": null, "unit": "runs", "min": 0, "max": 7, "lasting": null, "known": null},
+        {"id": "daily_minutes", "text": "How many minutes a day can you give this?", "kind": "number", "choices": [], "multi": null, "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null},
         q("weight_kg", "What is your body weight now?"),
         q("height_cm", "How tall are you?"),
         q("activity", "How active are you on a normal day?"),
         q("diet", "Do you eat meat, or are you vegetarian or vegan?"),
         q("injuries", "Any injuries or pain to plan around?"),
-    ]})
+    ], "ordered": null, "ordered_why": null})
 }
 
 fn plan() -> Value {
@@ -1197,7 +1197,7 @@ fn music_models() -> Arc<FnTransport> {
             return builder_reply(aroh_plugins::template("music").unwrap());
         }
         if body.contains("You are Intake interviewer") {
-            return sse_text(&json!({"questions": [{"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null}, {"id": "daily_minutes", "text": "Minutes a day to practise?", "kind": "number", "choices": [], "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null}]}).to_string());
+            return sse_text(&json!({"questions": [{"id": "level", "text": "How long have you played piano?", "kind": "text", "choices": [], "multi": null, "unit": null, "min": null, "max": null, "lasting": null, "known": null}, {"id": "daily_minutes", "text": "Minutes a day to practise?", "kind": "number", "choices": [], "multi": null, "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null}], "ordered": null, "ordered_why": null}).to_string());
         }
         if body.contains("You are Instrument teacher") {
             return sse_text(&json!({"summary": "Learn it in four sections, slow practice first.", "sources": [{"title": "Clair de Lune guide", "url": "https://example.org/clair"}]}).to_string());
@@ -1378,7 +1378,7 @@ async fn persona_fields_edit_the_copy_and_keep_safety_rules() {
 /// The six intake questions of the owner's stuck build 1 run, with the unit and slider bounds new runs carry.
 fn reading_intake() -> Value {
     let q = |id: &str, kind: &str, text: &str, choices: Value, unit: Value, min: Value, max: Value| {
-        json!({"id": id, "kind": kind, "text": text, "choices": choices, "unit": unit, "min": min, "max": max, "lasting": null, "known": null})
+        json!({"id": id, "kind": kind, "text": text, "choices": choices, "multi": null, "unit": unit, "min": min, "max": max, "lasting": null, "known": null})
     };
     json!({"questions": [
         q("chapters_done", "number", "How many chapters of The Joy of X have you finished?", json!([]), json!("chapters"), json!(0), json!(30)),
@@ -1387,7 +1387,7 @@ fn reading_intake() -> Value {
         q("reading_days", "number", "How many days this week can you read?", json!([]), json!("days"), json!(1), json!(7)),
         q("book_format", "choice", "What format are you reading the book in?", json!(["Print book", "E-reader", "Phone or tablet", "Audiobook"]), Value::Null, Value::Null, Value::Null),
         q("busy_days_limits", "text", "Any days you cannot read this week?", json!([]), Value::Null, Value::Null, Value::Null),
-    ]})
+    ], "ordered": true, "ordered_why": "Chapters build on each other"})
 }
 
 fn reading_models() -> Arc<FnTransport> {
@@ -1579,18 +1579,18 @@ fn profile_models() -> Arc<FnTransport> {
         let body = body_text(req);
         if body.contains("You are Intake interviewer") {
             let minutes = if body.contains("Free minutes a day: 30 min") {
-                json!({"id": "minutes", "text": "Minutes a day?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "known": {"fact_id": "a-made-up-id", "value": "30 min", "source": "your answer on Run a 5k"}, "lasting": {"topic": "daily_minutes", "label": "Free minutes a day"}})
+                json!({"id": "minutes", "text": "Minutes a day?", "kind": "text", "choices": [], "multi": null, "unit": null, "min": null, "max": null, "known": {"fact_id": "a-made-up-id", "value": "30 min", "source": "your answer on Run a 5k"}, "lasting": {"topic": "daily_minutes", "label": "Free minutes a day"}})
             } else {
-                json!({"id": "minutes", "text": "Minutes a day?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": {"topic": "daily_minutes", "label": "Free minutes a day"}, "known": null})
+                json!({"id": "minutes", "text": "Minutes a day?", "kind": "text", "choices": [], "multi": null, "unit": null, "min": null, "max": null, "lasting": {"topic": "daily_minutes", "label": "Free minutes a day"}, "known": null})
             };
             let questions = json!([
                 minutes,
-                {"id": "runs_done", "text": "Runs done so far?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null},
-                {"id": "when", "text": "When do you run?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": {"topic": "time_of_day", "label": "Running time of day"}, "known": null},
-                {"id": "weight", "text": "Your weight?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": {"topic": "weight", "label": "Body weight"}, "known": null},
-                {"id": "body", "text": "How tall are you, how active are you, what do you eat, and any injuries?", "kind": "text", "choices": [], "unit": null, "min": null, "max": null, "lasting": null, "known": null},
+                {"id": "runs_done", "text": "Runs done so far?", "kind": "text", "choices": [], "multi": null, "unit": null, "min": null, "max": null, "lasting": null, "known": null},
+                {"id": "when", "text": "When do you run?", "kind": "text", "choices": [], "multi": null, "unit": null, "min": null, "max": null, "lasting": {"topic": "time_of_day", "label": "Running time of day"}, "known": null},
+                {"id": "weight", "text": "Your weight?", "kind": "text", "choices": [], "multi": null, "unit": null, "min": null, "max": null, "lasting": {"topic": "weight", "label": "Body weight"}, "known": null},
+                {"id": "body", "text": "How tall are you, how active are you, what do you eat, and any injuries?", "kind": "text", "choices": [], "multi": null, "unit": null, "min": null, "max": null, "lasting": null, "known": null},
             ]);
-            return sse_text(&json!({"questions": questions}).to_string());
+            return sse_text(&json!({"questions": questions, "ordered": null, "ordered_why": null}).to_string());
         }
         if body.contains("You are Goal researcher") {
             return sse_text(&json!({"summary": "Easy runs.", "sources": []}).to_string());
@@ -1850,9 +1850,9 @@ fn limits_models() -> Arc<FnTransport> {
         let body = body_text(req);
         if body.contains("You are Intake interviewer") {
             return sse_text(&json!({"questions": [
-                {"id": "chapters_done", "text": "How many chapters have you read so far?", "kind": "number", "choices": [], "unit": "chapters", "min": 0, "max": 30, "lasting": null, "known": null},
-                {"id": "daily_minutes", "text": "How many minutes a day can you read?", "kind": "number", "choices": [], "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null}
-            ]}).to_string());
+                {"id": "chapters_done", "text": "How many chapters have you read so far?", "kind": "number", "choices": [], "multi": null, "unit": "chapters", "min": 0, "max": 30, "lasting": null, "known": null},
+                {"id": "daily_minutes", "text": "How many minutes a day can you read?", "kind": "number", "choices": [], "multi": null, "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null}
+            ], "ordered": null, "ordered_why": null}).to_string());
         }
         if body.contains("You are Tutor") {
             return sse_text(&json!({"summary": "The book has 22 chapters of about 20 minutes each.", "sources": []}).to_string());
@@ -1863,6 +1863,46 @@ fn limits_models() -> Arc<FnTransport> {
         }
         json_reply(400, json!({}))
     })
+}
+
+/// Models for the build 10 reading goal: the interviewer answers only when its state holds the
+/// owner's description, with a days-a-week question over 7, a known value from the description,
+/// and ordered set from the research.
+fn description_models() -> Arc<FnTransport> {
+    FnTransport::new(|req| {
+        let body = body_text(req);
+        if body.contains("You are Intake interviewer") && body.contains("I have read 3 of its 22 chapters") {
+            return sse_text(&json!({"questions": [
+                {"id": "chapters_done", "text": "How many chapters have you read so far?", "kind": "number", "choices": [], "multi": null, "unit": "chapters", "min": 0, "max": 22, "lasting": null,
+                 "known": {"fact_id": "", "value": "3", "source": "goal description"}},
+                {"id": "reading_days", "text": "How many days a week can you read?", "kind": "number", "choices": [], "multi": null, "unit": "days per week", "min": 1, "max": 14, "lasting": null, "known": null},
+                {"id": "daily_minutes", "text": "How many minutes a day can you read?", "kind": "number", "choices": [], "multi": null, "unit": "minutes per day", "min": 5, "max": 480, "lasting": null, "known": null}
+            ], "ordered": true, "ordered_why": "Chapters build on each other"}).to_string());
+        }
+        if body.contains("You are Tutor") {
+            return sse_text(&json!({"summary": "The book has 22 chapters that build on each other.", "sources": []}).to_string());
+        }
+        json_reply(400, json!({}))
+    })
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b105_b106_b109_the_description_reaches_the_intake_and_the_questions_come_bounded_and_ordered() {
+    let api = api(description_models(), offline()).await;
+    let (_, t) = api.signed_up().await;
+    let body = json!({"title": "Finish reading The Joy of X", "context": "I have read 3 of its 22 chapters.", "timezone": "UTC"});
+    let (status, started) = api.call(Method::Post, "/v1/goals", Some(&t), Some(body)).await;
+    assert_eq!(status, 202, "{started}");
+    let run = started["run_id"].as_str().unwrap().to_string();
+    api.tick().await;
+    let view = api.run(&t, &run).await;
+    assert_eq!(view["waiting"][0]["node"], "questions", "the intake saw the description: {view}");
+    let asked = &view["waiting"][0]["data"]["intake"]["questions"];
+    assert_eq!(asked[0]["known"]["source"], "goal description");
+    assert_eq!((asked[1]["min"].clone(), asked[1]["max"].clone()), (json!(1), json!(7)), "a week holds 7 days: {asked}");
+    let goal = started["goal_id"].as_str().unwrap();
+    assert_eq!(api.count("select count(*) from public.goals where id::text = $1 and ordered", goal).await, 1, "the switch is on before the questions");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

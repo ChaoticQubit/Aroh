@@ -132,7 +132,8 @@ fn cut(text: &str, max: usize) -> String {
 }
 
 /// The fact writes `answers` ask for, in question order: a known question answered gives
-/// `Known`, a lasting one gives `Keep` with a lowercased topic; skipped answers, blank
+/// `Known`, a lasting one gives `Keep` with a lowercased topic (also when its known value
+/// came from the goal description, which has no fact id, B105); skipped answers, blank
 /// topics or labels and questions marked neither give nothing.
 pub fn fact_writes(intake: &FactIntake, answers: &[FactAnswer]) -> Vec<FactWrite> {
     let given: BTreeMap<&str, &str> = answers.iter().filter_map(|a| Some((a.id.as_str(), a.answer.as_deref()?.trim()))).filter(|(_, a)| !a.is_empty()).collect();
@@ -142,7 +143,7 @@ pub fn fact_writes(intake: &FactIntake, answers: &[FactAnswer]) -> Vec<FactWrite
         .filter_map(|q| {
             let answer = cut(given.get(q.id.as_str())?, MAX_ANSWER_CHARS);
             let lasting = q.lasting.as_ref().map(|l| (cut(&l.topic, MAX_TOPIC_CHARS).to_lowercase(), cut(&l.label, MAX_LABEL_CHARS))).filter(|(t, l)| !t.is_empty() && !l.is_empty());
-            if let Some(k) = &q.known {
+            if let Some(k) = q.known.as_ref().filter(|k| !k.fact_id.trim().is_empty()) {
                 let same = k.value.trim().eq_ignore_ascii_case(&answer);
                 let (topic, label) = lasting.map_or((None, None), |(t, l)| (Some(t), Some(l)));
                 return Some(FactWrite::Known { fact_id: k.fact_id.clone(), answer, same, label, topic });
@@ -266,6 +267,13 @@ mod tests {
             ],
             "a one-off answer, a skipped answer and a blank topic keep nothing"
         );
+    }
+
+    #[test]
+    fn b105_a_lasting_answer_known_from_the_description_is_kept() {
+        let intake = FactIntake { questions: vec![q("minutes", Some(("daily_minutes", "Free minutes a day")), Some(("", "30"))), q("chapters", None, Some((" ", "3")))] };
+        let answers = [a("minutes", Some("30")), a("chapters", Some("3"))];
+        assert_eq!(fact_writes(&intake, &answers), vec![FactWrite::Keep { topic: "daily_minutes".into(), label: "Free minutes a day".into(), answer: "30".into() }]);
     }
 
     #[test]

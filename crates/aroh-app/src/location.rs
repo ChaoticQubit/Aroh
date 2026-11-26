@@ -157,6 +157,7 @@ pub struct PlaceView {
 /// The next occurrence a routine row shows: its start and status (planned or missed).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct NextView {
+    pub action_id: String,
     pub start_at: DateTime<Utc>,
     pub status: ActionStatus,
 }
@@ -746,11 +747,39 @@ fn weekday_name(d: i64) -> Option<String> {
     Weekday::try_from(d as u8).ok().map(|w| ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][w.num_days_from_monday() as usize].to_string())
 }
 
+/// How many rule dates [`listed`] reads past `now` looking for one whose slot is not a tombstone.
+const LISTED_SCAN: u16 = 400;
+
+/// Whether routine `series` is listed on the Routines card at `now` (Q93): a session of it that
+/// a delete from `now` would remove ([`write::closes_from`]), or a rule date after `now` whose
+/// slot is not a tombstone (a deleted occurrence never comes back). Reads at most [`LISTED_SCAN`] dates.
+pub fn listed(conn: &Connection, series: &ActionSeries, now: DateTime<Utc>) -> Result<bool> {
+    if series.deleted {
+        return Ok(false);
+    }
+    for a in repo::list::<Action>(conn, &[("series_id", series.id.as_str())])? {
+        if write::closes_from(conn, &a, now)? {
+            return Ok(true);
+        }
+    }
+    let mut gone = conn.prepare("SELECT EXISTS (SELECT 1 FROM actions WHERE id = ?1 AND deleted = 1)")?;
+    for at in aroh_domain::recur::upcoming(series, now, LISTED_SCAN)? {
+        let id = aroh_domain::recur::occurrence_id(&series.id, &at);
+        if !gone.query_row([id.as_str()], |r| r.get::<_, bool>(0))? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn routine_views(conn: &Connection, user_id: &str, places: &[Place], links: &[PlaceLink], now: DateTime<Utc>) -> Result<Vec<RoutineView>> {
     let routines = aroh_domain::seed::routines_id();
     let series = repo::list::<ActionSeries>(conn, &[("user_id", user_id), ("goal_id", routines.as_str())])?;
     let mut out = Vec::new();
     for s in series {
+        if !listed(conn, &s, now)? {
+            continue;
+        }
         let actions = repo::list::<Action>(conn, &[("series_id", s.id.as_str())])?;
         let place = links.iter().find(|l| l.series_id.as_deref() == Some(s.id.as_str())).and_then(|l| places.iter().find(|p| p.id == l.place_id)).map(|p| p.name.clone());
         let last_done = actions.iter().filter_map(|a| a.done_at).max();
@@ -759,7 +788,7 @@ fn routine_views(conn: &Connection, user_id: &str, places: &[Place], links: &[Pl
             .iter()
             .filter(|a| (a.status == ActionStatus::Missed && a.start_at >= recent) || (a.status == ActionStatus::Planned && a.end_at > now - Duration::hours(1)))
             .min_by_key(|a| a.start_at)
-            .map(|a| NextView { start_at: a.start_at, status: a.status });
+            .map(|a| NextView { action_id: a.id.clone(), start_at: a.start_at, status: a.status });
         out.push(RoutineView {
             series_id: s.id.clone(),
             title: s.title.clone(),

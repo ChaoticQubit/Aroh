@@ -191,6 +191,17 @@ pub fn end_at(series: &ActionSeries, at: DateTime<Utc>) -> Result<ActionSeries> 
     Ok(bound(series, at)?.0)
 }
 
+/// The first `limit` rule dates of `series` strictly after `after`, in order, so a caller can
+/// end a series from now (Q93) or tell whether it has a date left. Input: a series, an
+/// instant and a bound of at most 1000. Output: the dates. Errors when the rule does not validate.
+pub fn upcoming(series: &ActionSeries, after: DateTime<Utc>, limit: u16) -> Result<Vec<DateTime<Utc>>> {
+    assert!((1..=1000).contains(&limit), "upcoming scans 1 to 1000 dates");
+    let found = rule_set(series)?.after(after.with_timezone(&Tz::UTC)).all(limit + 1);
+    let dates: Vec<DateTime<Utc>> = found.dates.iter().map(|d| d.with_timezone(&Utc)).filter(|d| *d > after).take(usize::from(limit)).collect();
+    assert!(dates.windows(2).all(|w| w[0] < w[1]), "rule dates come in order");
+    Ok(dates)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,5 +369,15 @@ mod tests {
         assert_eq!(berlin_hour(&starts[1]), 3);
         s.dtstart_local = "2027-03-28T02:30:00".into();
         assert!(matches!(rule_set(&s), Err(Error::Recurrence(_))));
+    }
+
+    #[test]
+    fn upcoming_dates_are_strictly_after_and_stop_at_until() {
+        let mut s = samples::series();
+        let seven = utc(2026, 11, 23, 6);
+        assert_eq!(upcoming(&s, seven, 2).unwrap(), vec![utc(2026, 11, 24, 6), utc(2026, 11, 25, 6)]);
+        assert_eq!(upcoming(&s, seven - Duration::seconds(1), 1).unwrap(), vec![seven]);
+        s.rrule = "FREQ=DAILY;UNTIL=20261124T060000Z".into();
+        assert_eq!(upcoming(&s, seven, 5).unwrap(), vec![utc(2026, 11, 24, 6)]);
     }
 }

@@ -6,6 +6,7 @@ pub mod card;
 pub mod dashboard;
 pub mod diary;
 pub mod health;
+pub mod image_text;
 pub mod local;
 pub mod location;
 pub mod remind;

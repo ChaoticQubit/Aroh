@@ -34,7 +34,8 @@ pub async fn files_available(app: AppHandle) -> Result<bool, String> {
 }
 
 /// Attaches the file in the raw request body to a goal: reads its text off the main thread
-/// (a PDF that cannot be read is stored with ingest status failed), uploads the bytes to the
+/// (a PDF that cannot be read is stored with ingest status failed; an image is read by OCR,
+/// then by Claude when unsure, Q91), uploads the bytes to the
 /// owner's folder, stores the row and syncs. Details come in the `x-aroh-file` header.
 /// Output: the stored row without its text. Nothing is stored when the upload fails.
 #[tauri::command]
@@ -60,6 +61,7 @@ pub async fn attach_file(app: AppHandle, request: tauri::ipc::Request<'_>) -> Re
     }
     let (read_mime, read_name, data) = (mime.clone(), meta.name.clone(), bytes.clone());
     let read = tauri::async_runtime::spawn_blocking(move || files::extract(&read_mime, &read_name, &data)).await.map_err(|e| e.to_string())?;
+    let read = if mime.starts_with("image/") { (read.0, files::image_text(&app, &mime, &bytes).await) } else { read };
     let file = write::stored_file(&user, &meta.goal_id, &meta.name, &mime, bytes.len() as i64, read);
     let path = file.storage_path.clone().expect("a stored file has a storage path");
     let session = auth::valid_session(&config).await.map_err(|e| e.to_string())?;

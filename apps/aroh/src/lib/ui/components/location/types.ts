@@ -38,7 +38,7 @@ export type PlacePromptView = {
 /** One map search result on the Places screen. */
 export type PlaceResult = { id: string; name: string; address: string; distance: string; x: number; y: number };
 
-/** One routine on the Routines dashboard. `streak` carries its unit; `tone` and `due` describe the next occurrence, `nextDue` null when none is planned (B96). */
+/** One routine on the Routines dashboard. `id` is its series id; `streak` carries its unit; `tone` and `due` describe the next occurrence, `nextDue` and `nextId` (its session) null when none is planned (B96). */
 export type RoutineRow = {
 	id: string;
 	title: string;
@@ -47,6 +47,7 @@ export type RoutineRow = {
 	streak: string;
 	lastDone: string | null;
 	nextDue: string | null;
+	nextId: string | null;
 	tone: Tone;
 	due: string;
 };

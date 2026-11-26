@@ -158,14 +158,14 @@ fn snapshot_returns_live_rows_of_the_range() {
     tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();
     let from = now() - Duration::days(1);
     let to = now() + Duration::days(1);
-    let snap = snapshot::snapshot(&conn, &user, from, to, now() - Duration::days(30)).unwrap();
+    let snap = snapshot::snapshot(&conn, &user, from, to, now() - Duration::days(30), now()).unwrap();
     assert!(!snap.actions.is_empty());
     assert!(snap.actions.iter().all(|a| a.start_at < to && a.end_at > from && !a.deleted));
     assert_eq!(snap.goals.len(), 3);
     assert_eq!(snap.user_id, user);
     let gone = snap.actions[0].id.clone();
     repo::delete::<Action>(&conn, &mut clock, &gone).unwrap();
-    let again = snapshot::snapshot(&conn, &user, from, to, now() - Duration::days(30)).unwrap();
+    let again = snapshot::snapshot(&conn, &user, from, to, now() - Duration::days(30), now()).unwrap();
     assert!(again.actions.iter().all(|a| a.id != gone));
 }
 
@@ -454,7 +454,7 @@ fn facts_are_edited_blocked_and_allowed_again() {
     assert_eq!(blocked.fact, "Free minutes a day", "the answer is dropped, the label kept");
     assert!(write::edit_fact(&conn, &mut clock, &p.id, "x", now()).is_err(), "a blocked topic holds no fact");
 
-    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now()).unwrap();
+    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now(), now()).unwrap();
     assert_eq!(snap.facts.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), vec![p.id.as_str()], "kept facts, blocked included");
     assert!(snap.preferences.iter().all(|s| s.id != p.id), "kept facts never show as Inbox suggestions");
 
@@ -502,12 +502,12 @@ fn goal_files_are_added_listed_without_text_and_removed() {
     let late = write::stored_file(&user, &gone.id, "x.txt", "text/plain", 1, (IngestStatus::Done, None));
     assert!(write::add_goal_file(&conn, &mut clock, late).is_err(), "a deleted goal takes no files");
 
-    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now() - Duration::days(30)).unwrap();
+    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now() - Duration::days(30), now()).unwrap();
     assert_eq!(snap.files.len(), 3);
     assert!(snap.files.iter().all(|f| f.extracted_text.is_none()), "the snapshot never carries file text");
     assert_eq!(repo::get::<GoalFile>(&conn, &pdf.id).unwrap().extracted_text.as_deref(), Some("Chapter one"));
     write::remove_goal_file(&conn, &mut clock, &pdf.id).unwrap();
-    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now() - Duration::days(30)).unwrap();
+    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now() - Duration::days(30), now()).unwrap();
     assert_eq!(snap.files.len(), 2);
 }
 

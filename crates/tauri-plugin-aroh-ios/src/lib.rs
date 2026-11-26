@@ -10,7 +10,8 @@ tauri::ios_plugin_binding!(init_plugin_aroh_ios);
 /// `health_seed` in debug builds), remote notification registration (`push_register`), the
 /// next tapped run or proposal push (`push_tap_next`, held until one arrives), cancelling
 /// every pending reminder (`reminders_cancel`), location (`location_*`) and the iCloud
-/// Keychain diary key (`diary_key_get`, `diary_key_put`, `diary_key_delete`).
+/// Keychain diary key (`diary_key_get`, `diary_key_put`, `diary_key_delete`) and attached image
+/// text (`image_ocr` with Apple Vision, `image_copy` for a downscaled JPEG).
 /// The webview cannot call it; only the app's Rust commands do.
 pub struct Ios<R: Runtime> {
     #[cfg(target_os = "ios")]

@@ -60,9 +60,9 @@ export const routinesHeader: GoalHeader = {
 
 /** Routines as of Thursday 26 Nov: groceries due Saturday, books missed, a morning walk with no place. */
 export const routines: RoutineRow[] = [
-	{ id: 'rt-groceries', title: 'Groceries', place: "Trader Joe's", cadence: 'Weekly, Sat', streak: '6 weeks', lastDone: '2026-11-21T10:05:00Z', nextDue: '2026-11-28T10:00:00Z', tone: 'planned', due: 'Planned' },
-	{ id: 'rt-books', title: 'Return books', place: 'Mission library', cadence: 'Every 3 weeks', streak: '2 times', lastDone: '2026-11-02T17:30:00Z', nextDue: '2026-11-23T17:30:00Z', tone: 'missed', due: 'Missed' },
-	{ id: 'rt-walk', title: 'Morning walk', place: null, cadence: 'Daily', streak: '9 days', lastDone: '2026-11-25T07:10:00Z', nextDue: '2026-11-26T07:00:00Z', tone: 'warn', due: 'Due today' }
+	{ id: 'rt-groceries', title: 'Groceries', place: "Trader Joe's", cadence: 'Weekly, Sat', streak: '6 weeks', lastDone: '2026-11-21T10:05:00Z', nextDue: '2026-11-28T10:00:00Z', nextId: 'a-groceries', tone: 'planned', due: 'Planned' },
+	{ id: 'rt-books', title: 'Return books', place: 'Mission library', cadence: 'Every 3 weeks', streak: '2 times', lastDone: '2026-11-02T17:30:00Z', nextDue: '2026-11-23T17:30:00Z', nextId: 'a-books', tone: 'missed', due: 'Missed' },
+	{ id: 'rt-walk', title: 'Morning walk', place: null, cadence: 'Daily', streak: '9 days', lastDone: '2026-11-25T07:10:00Z', nextDue: '2026-11-26T07:00:00Z', nextId: 'a-walk', tone: 'warn', due: 'Due today' }
 ];
 
 /** Routines dashboard view: two tiles and the last four weeks of done routines. */

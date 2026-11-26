@@ -67,6 +67,11 @@ class LocationSnapshotArgs: Decodable {
   let height: Double
 }
 
+/// Arguments of `image_ocr` and `image_copy`: the attached image's bytes as base64.
+class ImageArgs: Decodable {
+  let data: String
+}
+
 /// Native bridges the Aroh Rust commands call: HealthKit import, remote notification
 /// registration, tapped run and proposal pushes (`push_tap_next`) and cancelling pending reminders. Loading it also installs the reminder delegate. Every command answers on
 /// the main queue's completion of its work and rejects with a code the Rust side turns into
@@ -257,6 +262,34 @@ class ArohPlugin: Plugin {
     switch DiaryKeychain.delete(args.version) {
     case .success: invoke.resolve()
     case .failure(let error): invoke.reject(error.message, code: "keychain")
+    }
+  }
+
+  @objc public func image_ocr(_ invoke: Invoke) {
+    guard let args = try? invoke.parseArgs(ImageArgs.self), let data = Data(base64Encoded: args.data) else {
+      invoke.reject("Bad arguments.", code: "bad_args")
+      return
+    }
+    DispatchQueue.global(qos: .userInitiated).async {
+      if let reading = ImageText.read(data) {
+        invoke.resolve(reading)
+      } else {
+        invoke.reject("The image could not be read.", code: "ocr_failed")
+      }
+    }
+  }
+
+  @objc public func image_copy(_ invoke: Invoke) {
+    guard let args = try? invoke.parseArgs(ImageArgs.self), let data = Data(base64Encoded: args.data) else {
+      invoke.reject("Bad arguments.", code: "bad_args")
+      return
+    }
+    DispatchQueue.global(qos: .userInitiated).async {
+      if let jpeg = ImageText.jpegCopy(data) {
+        invoke.resolve(ImageCopy(jpeg: jpeg.base64EncodedString()))
+      } else {
+        invoke.reject("The image could not be copied.", code: "copy_failed")
+      }
     }
   }
 

@@ -38,3 +38,4 @@ tauri-plugin-aroh-calendar = { path = "../../../crates/tauri-plugin-aroh-calenda
 iana-time-zone = "0.1"
 tokio = { workspace = true, features = ["sync", "time"] }
 pdf-extract = "0.12.1"
+base64 = "0.22"

@@ -33,12 +33,13 @@ export type KeyInfo = { setting_id: string; vendor: string; last4: string; updat
 /** One run of `GET /v1/runs`; `personas` are the slugs of the coaches its snapshot holds, `stop` how a failed run was stopped (`cancelled`, `time_limit`). */
 export type RunSummary = { run_id: string; goal_id: string | null; workflow: string; state: string; created_at: string; updated_at: string; personas?: string[]; plugin_id?: string | null; plugin_version?: number | null; stop?: string | null };
 
-/** One intake question of the new-goal run. Number questions may carry a unit and slider bounds; runs from before units have none. */
+/** One intake question of the new-goal run. Number questions may carry a unit and slider bounds; runs from before units have none. A choice question with `multi` takes several picks. */
 export type Question = {
 	id: string;
 	text: string;
 	kind: 'text' | 'number' | 'choice';
 	choices: string[];
+	multi?: boolean | null;
 	unit?: string | null;
 	min?: number | null;
 	max?: number | null;
@@ -111,8 +112,8 @@ const STEP_TEXT: Record<string, string> = {
 	save_rules: 'Saving your calendar rules'
 };
 
-/** Start of a failure reason the server words for the owner (Q88), shown as is without the node and tool around it. */
-const PLAIN_REASON = 'Could not fit sessions around your calendar:';
+/** Starts of failure reasons the server words for the owner (Q88 calendar clash, Q90 cut-off plan), shown as is without the node and tool around them. */
+const PLAIN_REASONS = ['Could not fit sessions around your calendar:', 'The plan was too long to finish'];
 
 /** The owner-facing line for a paused or failed run, or null when it is neither. */
 export function pauseMessage(status: RunStatus): string | null {
@@ -121,7 +122,7 @@ export function pauseMessage(status: RunStatus): string | null {
 		if (limit === 'unverified_price') return "Paused: this model's price is not verified, so spend cannot be checked. Pick an Anthropic, OpenAI or Google model in Settings.";
 		return `Paused: the ${limit} budget is reached. Raise it in Settings to continue.`;
 	}
-	const plain = status.error?.indexOf(PLAIN_REASON) ?? -1;
+	const plain = PLAIN_REASONS.map((r) => status.error?.indexOf(r) ?? -1).find((i) => i >= 0) ?? -1;
 	if (status.status === 'failed' && plain >= 0) return `${status.error?.slice(plain)}.`;
 	if (status.status === 'failed') return `The run stopped: ${status.error ?? 'unknown error'}.`;
 	return null;

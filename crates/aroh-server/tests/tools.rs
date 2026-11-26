@@ -570,3 +570,36 @@ async fn a_diary_run_keeps_no_profile_facts() {
     let facts: i64 = db::query_scalar("select count(*) from public.preferences where user_id = $1").bind(u).fetch_one(&pool).await.unwrap();
     assert_eq!(facts, 1, "an ordinary run still proposes");
 }
+
+async fn stored_order(pool: &PgPool, goal: Uuid) -> bool {
+    db::query_scalar("select ordered from public.goals where id = $1").bind(goal).fetch_one(pool).await.unwrap()
+}
+
+#[tokio::test]
+#[ignore = "needs AROH_TEST_PG"]
+async fn b109_the_intake_sets_the_order_before_the_questions_and_the_owner_switch_wins() {
+    let pool = pg().await;
+    let u = user(&pool).await;
+    let env = env(&pool, u).await;
+    let goal = env.goal.unwrap();
+    let intake = json!({"questions": [{"id": "reading_days", "text": "How many days a week can you read?", "kind": "number", "choices": [], "unit": "days per week", "min": 1, "max": 10}],
+        "ordered": true, "ordered_why": "Chapters build on each other"});
+    let ctx = ToolContext::for_call(RunId::new(), 2, 0);
+    let out: Value = serde_json::from_str(&tool(&env, "ready_questions").call(json!({"intake": intake}), &ctx).await.unwrap().content).unwrap();
+    assert_eq!(out["questions"][0]["max"], json!(7), "B106: a week holds 7 days whatever the model sent");
+    assert_eq!(out["ordered"], json!(true));
+    assert!(stored_order(&pool, goal).await, "the switch is on before the owner sees the questions");
+
+    let mut g = get_row::<Goal>(&pool, u, &goal.to_string()).await.unwrap().unwrap();
+    g.ordered = false;
+    put_row(&pool, &env.hlc, u, &mut g).await.unwrap();
+    let plan = json!({"plan": {"summary": "s", "timezone": "UTC", "trackers": [], "ordered": true,
+        "items": [{"title": "Chapter 1", "start": "2026-11-23T07:00:00", "minutes": 30, "rrule": null, "notes": "Read"}]}, "intake": out});
+    tool(&env, "write_plan").call(plan, &ToolContext::for_call(RunId::new(), 9, 0)).await.unwrap();
+    assert!(!stored_order(&pool, goal).await, "the owner's switch made during the questions wins over the plan");
+    let status: String = db::query_scalar("select status from public.goals where id = $1").bind(goal).fetch_one(&pool).await.unwrap();
+    assert_eq!(status, "active");
+
+    tool(&env, "ready_questions").call(json!({"intake": intake}), &ctx).await.unwrap();
+    assert!(!stored_order(&pool, goal).await, "a live goal keeps the owner's switch");
+}

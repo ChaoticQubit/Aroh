@@ -206,6 +206,8 @@ pub fn run() {
             commands::location::app_location_delete_place,
             commands::location::app_location_decide_pattern,
             commands::location::app_location_clear,
+            commands::location::app_location_end_routine,
+            commands::location::app_location_delete_routines,
             commands::location::app_dev_location_seed,
         ])
         .build(tauri::generate_context!())

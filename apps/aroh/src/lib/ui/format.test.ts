@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { daysUntil, deadlineState, dayLabels, formatDuration, formatNumber, formatTime, formatYmd, minuteOfDay, shiftDay, shiftMonth, mondayOf, daysBetween, formatDate, sliderRange, snap, stepNumber, typedNumber } from './format';
+import { daysUntil, deadlineState, dayLabels, formatDuration, formatNumber, formatTime, formatYmd, minuteOfDay, shiftDay, shiftMonth, mondayOf, daysBetween, formatDate, boundedNumber, sliderRange, snap, stepNumber, typedNumber } from './format';
 
 describe('format', () => {
 	it('formats numbers with units', () => {
@@ -56,6 +56,15 @@ describe('format', () => {
 		expect(stepNumber(null, 1, 1, 0)).toBe(1);
 		expect(stepNumber(null, -0.1, 0.1, undefined)).toBe(-0.1);
 		expect(stepNumber(-3, -1, 1, 0)).toBe(-3);
+	});
+	it('b106: a bounded input keeps a number inside min and max; an unbounded one keeps it as is', () => {
+		expect(boundedNumber(stepNumber(7, 1, 1, 1), { min: 1, max: 7 })).toBe(7);
+		expect(boundedNumber(12, { min: 1, max: 7 })).toBe(7);
+		expect(boundedNumber(-2, { min: 0, max: 7 })).toBe(0);
+		expect(boundedNumber(4, { min: 0, max: 7 })).toBe(4);
+		expect(boundedNumber(null, { min: 0, max: 7 })).toBeNull();
+		expect(boundedNumber(315, null)).toBe(315);
+		expect(() => boundedNumber(3, { min: 7, max: 1 })).toThrow(RangeError);
 	});
 	it('counts whole days to a deadline', () => {
 		expect(daysUntil('2027-02-01T00:00:00Z', '2026-11-21T00:00:00Z')).toBe(72);

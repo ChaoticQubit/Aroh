@@ -108,7 +108,7 @@ fn snapshot_carries_notes_and_zone() {
     let (conn, mut clock, user) = seeded();
     follow(&conn, &mut clock, &user, now(), Some(Berlin)).unwrap();
     follow(&conn, &mut clock, &user, now(), Some(New_York)).unwrap();
-    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now() - Duration::days(1)).unwrap();
+    let snap = snapshot::snapshot(&conn, &user, now(), now() + Duration::days(1), now() - Duration::days(1), now()).unwrap();
     assert_eq!(snap.zone.as_deref(), Some("America/New_York"));
     assert_eq!(snap.notes.len(), 1);
     let json = serde_json::to_value(&snap).unwrap();

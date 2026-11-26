@@ -304,8 +304,9 @@ def pod15(data, plan, now):
 
 
 def with_profile_fields(rule):
-    """Gives every intake question in a rule's reply the lasting and known keys, null when unset,
-    since the intake schema requires both. Input: one script rule, changed in place."""
+    """Gives every intake question in a rule's reply the multi, lasting and known keys, and the reply
+    the ordered keys, null when unset, since the intake schema requires them. Input: one script rule,
+    changed in place."""
     try:
         reply = json.loads(rule["reply"]["text"])
     except (KeyError, TypeError, ValueError):
@@ -313,8 +314,11 @@ def with_profile_fields(rule):
     if not isinstance(reply, dict) or not isinstance(reply.get("questions"), list):
         return
     for q in reply["questions"]:
+        q.setdefault("multi", None)
         q.setdefault("lasting", None)
         q.setdefault("known", None)
+    reply.setdefault("ordered", None)
+    reply.setdefault("ordered_why", None)
     rule["reply"]["text"] = json.dumps(reply)
 
 
