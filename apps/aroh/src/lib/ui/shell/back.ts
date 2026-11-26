@@ -4,7 +4,7 @@ export type NavKind = 'enter' | 'form' | 'leave' | 'link' | 'goto' | 'popstate';
 /** Where the top bar's back arrow goes: its label, whether it is a history step, and the path. */
 export type Back = { label: string; history: boolean; path: string };
 
-const ROOTS: Record<string, string> = { '/today': 'Today', '/calendar': 'Calendar', '/goals': 'Goals', '/dashboard': 'Dashboard', '/log': 'Log', '/settings': 'Settings', '/inbox': 'Inbox' };
+const ROOTS: Record<string, string> = { '/today': 'Today', '/calendar': 'Calendar', '/goals': 'Goals', '/notes': 'Notes', '/dashboard': 'Dashboard', '/log': 'Log', '/settings': 'Settings', '/inbox': 'Inbox' };
 const SUBS: Record<string, string> = { '/goals/new': 'New goal', '/settings/location': 'Location', '/settings/location/log': 'Location log', '/settings/places': 'Places', '/settings/profile': 'What Aroh knows', '/settings/key': 'Claude key', '/settings/agents': 'Agent defaults', '/settings/delete': 'Delete account', '/settings/diary': 'Diary' };
 
 /** Splits "/path?query" into its path and query. */
@@ -24,6 +24,7 @@ export function screenTitle(url: string): string {
 	if (/^\/actions\/[^/]+$/.test(path)) return 'Session';
 	if (/^\/goals\/[^/]+$/.test(path)) return 'Goal';
 	if (/^\/log\/diary\/[^/]+$/.test(path)) return 'Diary';
+	if (/^\/notes\/[^/]+\/[^/]+$/.test(path)) return 'Page';
 	return 'Aroh';
 }
 
@@ -42,6 +43,7 @@ export function parentOf(url: string): { path: string; label: string } | null {
 	if (chat) return up(chat[1]);
 	if (path.startsWith('/goals/')) return up('/goals');
 	if (path.startsWith('/log/')) return up('/log');
+	if (path.startsWith('/notes/')) return up('/notes');
 	return up('/today');
 }
 

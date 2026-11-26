@@ -9,7 +9,7 @@
 	import type { Back } from './back';
 
 	/**
-	 * Desktop frame of the app: left sidebar with the five tabs, a category filter with colour dots,
+	 * Desktop frame of the app: left sidebar with the six tabs, a category filter with colour dots,
 	 * Inbox with its unread count and Settings, then a titled main area with a back arrow to `back`
 	 * on screens below a tab (`onback`). The main area is a size container.
 	 */

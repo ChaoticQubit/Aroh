@@ -124,6 +124,8 @@ pub enum Table {
     Days,
     Proposals,
     ProposalDiffs,
+    Pages,
+    PageBlocks,
 }
 
 impl Table {
@@ -134,6 +136,8 @@ impl Table {
             Table::Days => "diary_days",
             Table::Proposals => "proposals",
             Table::ProposalDiffs => "proposals.diff",
+            Table::Pages => "pages",
+            Table::PageBlocks => "page_blocks",
         }
     }
 
@@ -142,6 +146,8 @@ impl Table {
             Table::Entries => ENTRY_CIPHERTEXT_MAX,
             Table::Days | Table::Proposals => CARD_CIPHERTEXT_MAX,
             Table::ProposalDiffs => DIFF_CIPHERTEXT_MAX,
+            Table::Pages => ENTRY_CIPHERTEXT_MAX,
+            Table::PageBlocks => CARD_CIPHERTEXT_MAX,
         }
     }
 }

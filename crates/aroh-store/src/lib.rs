@@ -3,6 +3,7 @@
 pub mod codec;
 pub mod db;
 pub mod local;
+pub mod notebook;
 pub mod repo;
 pub mod sync;
 

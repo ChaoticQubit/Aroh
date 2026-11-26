@@ -11,6 +11,9 @@
 	import { speech } from '$lib/app/speech.svelte';
 	import { actionViews, checkInData, dueCheckIns } from '$lib/app/views';
 	import { allDayViews, confirmDay, refreshSuggestions } from '$lib/app/calendar';
+	import FileText from '@lucide/svelte/icons/file-text';
+	import { formatYmd } from '$lib/ui/format';
+	import { pageHref } from '$lib/app/notes';
 
 	const clock = getClock();
 	const s = $derived(data.snapshot);
@@ -43,6 +46,9 @@
 {#if catchUp.offer || catchUp.note}
 	<div class="px-4 pt-3"><CatchUpBanner offer={catchUp.offer} note={catchUp.note} onremove={() => catchUp.remove()} onkeep={() => catchUp.keep()} /></div>
 {/if}
+<div class="flex justify-end px-4 pt-2">
+	<a href={pageHref('day', formatYmd(clock.now, clock.zone))} class="flex min-h-11 items-center gap-2 rounded-sm px-2 text-sm text-muted no-underline outline-none hover:text-fg focus-visible:ring-3 focus-visible:ring-ring/50"><FileText class="size-4" aria-hidden="true" />Open day page</a>
+</div>
 {#if s}
 	<TodayScreen
 		actions={actionViews(s)}

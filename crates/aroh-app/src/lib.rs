@@ -9,6 +9,7 @@ pub mod health;
 pub mod image_text;
 pub mod local;
 pub mod location;
+pub mod notebook;
 pub mod remind;
 pub mod remove;
 pub mod sample;

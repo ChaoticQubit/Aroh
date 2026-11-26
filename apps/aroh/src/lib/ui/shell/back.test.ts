@@ -18,7 +18,7 @@ describe('screenTitle', () => {
 
 describe('parentOf', () => {
 	it('has no parent on tab roots, Settings and Inbox', () => {
-		for (const p of ['/today', '/calendar', '/goals', '/dashboard', '/log', '/settings', '/inbox']) expect(parentOf(p)).toBeNull();
+		for (const p of ['/today', '/calendar', '/goals', '/notes', '/dashboard', '/log', '/settings', '/inbox']) expect(parentOf(p)).toBeNull();
 	});
 
 	it('gives the screen above each sub-screen', () => {
@@ -38,6 +38,9 @@ describe('parentOf', () => {
 		expect(parentOf('/settings/location/log')).toEqual({ path: '/settings/location', label: 'Location' });
 		expect(parentOf('/personas?goal=abc')).toEqual({ path: '/goals/abc', label: 'Goal' });
 		expect(parentOf('/personas')).toEqual({ path: '/settings', label: 'Settings' });
+		expect(screenTitle('/notes')).toBe('Notes');
+		expect(screenTitle('/notes/day/2026-11-26')).toBe('Page');
+		expect(parentOf('/notes/page/p1')).toEqual({ path: '/notes', label: 'Notes' });
 	});
 });
 

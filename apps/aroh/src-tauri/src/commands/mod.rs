@@ -11,6 +11,7 @@ pub mod plugins;
 pub mod health;
 pub mod learning;
 pub mod location;
+pub mod notebook;
 pub mod push;
 pub mod replan;
 
