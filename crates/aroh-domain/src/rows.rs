@@ -615,8 +615,98 @@ synced! {
     }
 }
 
+/// What a notebook page belongs to (Q96): a local day, an action, a goal, or nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageKind {
+    Day,
+    Action,
+    Goal,
+    Free,
+}
+
+impl PageKind {
+    /// The kind as stored and sent: `day`, `action`, `goal` or `free`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PageKind::Day => "day",
+            PageKind::Action => "action",
+            PageKind::Goal => "goal",
+            PageKind::Free => "free",
+        }
+    }
+}
+
+synced! {
+    /// One notebook page (Q96). Title and ref (the date, action id or goal id)
+    /// live only in the sealed payload; day, action and goal pages take a
+    /// uuid v5 id of owner, kind and ref so devices converge on one row.
+    Page, PAGES, "pages" {
+        kind: PageKind => Text,
+        parent_id: Option<String> => Text,
+        created_at: DateTime<Utc> => Time,
+        key_version: i64 => Int,
+        nonce: String => Text,
+        ciphertext: String => Text,
+    }
+}
+
+synced! {
+    /// One block of a notebook page (Q96): type, fractional order and one
+    /// ProseMirror node, all sealed. Merged per block by HLC.
+    PageBlock, PAGE_BLOCKS, "page_blocks" {
+        page_id: String => Text,
+        created_at: DateTime<Utc> => Time,
+        key_version: i64 => Int,
+        nonce: String => Text,
+        ciphertext: String => Text,
+    }
+}
+
+synced! {
+    /// A block version a merge dropped (Q96): the losing block's sealed value
+    /// kept verbatim, so it opens with the block's own associated data.
+    PageBlockHistory, PAGE_BLOCK_HISTORY, "page_block_history" {
+        block_id: String => Text,
+        page_id: String => Text,
+        created_at: DateTime<Utc> => Time,
+        key_version: i64 => Int,
+        nonce: String => Text,
+        ciphertext: String => Text,
+    }
+}
+
 const TOML_MAX: usize = 64 * 1024;
 const NOTES_MAX: usize = 4000;
+const PAGE_MAX: usize = 16 * 1024;
+const PAGE_BLOCK_MAX: usize = 96 * 1024;
+
+impl Page {
+    fn check_fields(&self) -> Result<()> {
+        if let Some(parent) = &self.parent_id {
+            check_uuid("pages.parent_id", parent)?;
+            if *parent == self.id {
+                return Err(invalid("pages.parent_id", "a page cannot be its own parent"));
+            }
+        }
+        check_sealed("pages.ciphertext", self.key_version, &self.nonce, &self.ciphertext, PAGE_MAX)
+    }
+}
+
+impl PageBlock {
+    fn check_fields(&self) -> Result<()> {
+        check_uuid("page_blocks.page_id", &self.page_id)?;
+        check_sealed("page_blocks.ciphertext", self.key_version, &self.nonce, &self.ciphertext, PAGE_BLOCK_MAX)
+    }
+}
+
+impl PageBlockHistory {
+    fn check_fields(&self) -> Result<()> {
+        check_uuid("page_block_history.block_id", &self.block_id)?;
+        check_uuid("page_block_history.page_id", &self.page_id)?;
+        check_sealed("page_block_history.ciphertext", self.key_version, &self.nonce, &self.ciphertext, PAGE_BLOCK_MAX)
+    }
+}
 
 /// Checks that `s` is a lowercase hyphenated uuid, as every row id is.
 /// Errors with `Invalid` naming `field`.
@@ -1293,6 +1383,9 @@ pub mod samples {
             to(PlaceLink { id: id(21), user_id: user(), place_id: id(20), goal_id: goal_id(), series_id: Some(id(9)), updated_at: stamp(), deleted: false }),
             to(DiaryEntry { id: id(22), user_id: user(), day: "2026-11-23".into(), at: at(8), key_version: 1, nonce: "AAAAAAAAAAAAAAAA".into(), ciphertext: "c2VhbGVkIGVudHJ5".into(), updated_at: stamp(), deleted: false }),
             to(DiaryDay { id: id(23), user_id: user(), day: "2026-11-23".into(), key_version: 1, nonce: "AAAAAAAAAAAAAAAA".into(), ciphertext: "c2VhbGVkIGNhcmQh".into(), updated_at: stamp(), deleted: false }),
+            to(Page { id: id(24), user_id: user(), kind: PageKind::Free, parent_id: None, created_at: at(8), key_version: 1, nonce: "AAAAAAAAAAAAAAAA".into(), ciphertext: "c2VhbGVkIHBhZ2Uh".into(), updated_at: stamp(), deleted: false }),
+            to(PageBlock { id: id(25), user_id: user(), page_id: id(24), created_at: at(8), key_version: 1, nonce: "AAAAAAAAAAAAAAAA".into(), ciphertext: "c2VhbGVkIGJsb2Nr".into(), updated_at: stamp(), deleted: false }),
+            to(PageBlockHistory { id: id(26), user_id: user(), block_id: id(25), page_id: id(24), created_at: at(8), key_version: 1, nonce: "AAAAAAAAAAAAAAAA".into(), ciphertext: "b2xkIGJsb2Nr".into(), updated_at: stamp(), deleted: false }),
         ];
         assert_eq!(rows.len(), crate::schema::SYNCED.len());
         rows

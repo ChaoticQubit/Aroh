@@ -3,12 +3,15 @@
 	import ActionEditor from '../components/planning/ActionEditor.svelte';
 	import type { ActionView, DeleteScope } from '$lib/ui/contract';
 	import type { ActionEdit, GoalChoice, NewAction } from './types';
+	import FileText from '@lucide/svelte/icons/file-text';
+	import { pageHref } from '$lib/app/notes';
 
 	/**
 	 * Bottom sheet with the action editor on the sheet primitive: scrim, hairline top edge, grab
 	 * bar, focus trap. Tapping the scrim or pressing Escape calls `onclose`. `inline` draws the same
 	 * sheet in place, without portal, scroll lock or focus trap, for the `/mockups` frames. With
-	 * `oncreate` the same sheet adds a new item from a Calendar slot (B121).
+	 * `oncreate` the same sheet adds a new item from a Calendar slot (B121). Open page goes to the
+	 * action's notebook page (Q96).
 	 */
 	let {
 		action,
@@ -40,6 +43,9 @@
 {#snippet body()}
 	<span class="mx-auto h-1 w-9 rounded-full bg-border-strong" aria-hidden="true"></span>
 	<ActionEditor {action} {confirming} {goals} {onstatus} {onsave} {onlock} {ondelete} {oncreate} {onclose} />
+	{#if !inline && !oncreate}
+		<a href={pageHref('action', action.id)} onclick={() => onclose?.()} class="flex min-h-11 items-center justify-center gap-2 rounded-sm border border-border text-sm text-fg no-underline outline-none focus-visible:ring-3 focus-visible:ring-ring/50"><FileText class="size-4" aria-hidden="true" />Open page</a>
+	{/if}
 {/snippet}
 
 {#if inline}

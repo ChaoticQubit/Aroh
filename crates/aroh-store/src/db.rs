@@ -530,6 +530,55 @@ CREATE TABLE diary_days (
     deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
 ) STRICT;
 CREATE INDEX diary_days_day ON diary_days (day);
+"#, r#"
+CREATE TABLE pages (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('day', 'action', 'goal', 'free')),
+    parent_id TEXT,
+    created_at TEXT NOT NULL,
+    key_version INTEGER NOT NULL CHECK (key_version BETWEEN 1 AND 1000000),
+    nonce TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+CREATE INDEX pages_parent ON pages (parent_id);
+CREATE TABLE page_blocks (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    page_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    key_version INTEGER NOT NULL CHECK (key_version BETWEEN 1 AND 1000000),
+    nonce TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+CREATE INDEX page_blocks_page ON page_blocks (page_id);
+CREATE TABLE page_block_history (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    block_id TEXT NOT NULL,
+    page_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    key_version INTEGER NOT NULL CHECK (key_version BETWEEN 1 AND 1000000),
+    nonce TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    deleted INTEGER NOT NULL CHECK (deleted IN (0, 1))
+) STRICT;
+CREATE INDEX page_block_history_block ON page_block_history (block_id, created_at);
+CREATE TABLE page_links (
+    page_id TEXT NOT NULL,
+    target_kind TEXT NOT NULL CHECK (target_kind IN ('page', 'day', 'action', 'goal')),
+    target TEXT NOT NULL,
+    PRIMARY KEY (page_id, target_kind, target)
+) STRICT;
+CREATE INDEX page_links_target ON page_links (target_kind, target);
+CREATE TABLE page_links_dirty (
+    page_id TEXT PRIMARY KEY NOT NULL
+) STRICT;
 "#];
 
 /// Schema version after every migration ran.

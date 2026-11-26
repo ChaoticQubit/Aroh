@@ -10,7 +10,7 @@
 	/**
 	 * Phone frame of the app: a top bar with the title (left on a tab root; centred after a back
 	 * arrow to `back` below a tab, Q66), the Inbox bell with its unread count and the Settings gear
-	 * (Q69), a scrolling body that is a size container, and the five-tab bar.
+	 * (Q69), a scrolling body that is a size container, and the six-tab bar.
 	 */
 	let {
 		title,

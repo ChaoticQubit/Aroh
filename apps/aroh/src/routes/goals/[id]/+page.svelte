@@ -30,6 +30,8 @@
 	import { AHEAD_DAYS } from '$lib/app/calendar';
 	import { forGoal, openGoalId, tagged, type Tagged } from '$lib/app/goalpage';
 	import { formatYmd, shiftDay } from '$lib/ui/format';
+	import FileText from '@lucide/svelte/icons/file-text';
+	import { pageHref } from '$lib/app/notes';
 
 	const DERIVED = 'derived';
 	const SHOWN_VERSIONS = 3;
@@ -351,6 +353,9 @@
 			onremove={(fid) => (retries.has(fid) ? ((retries.delete(fid)), (failed = failed.filter((f) => f.id !== fid))) : attaching(() => client.removeGoalFile(fid)))}
 		/>
 	{/key}
+	<div class="px-4 pt-2">
+		<a href={pageHref('goal', goal.id)} class="flex min-h-11 w-full items-center justify-center gap-2 rounded-sm border border-border bg-bg text-sm text-fg no-underline outline-none focus-visible:ring-3 focus-visible:ring-ring/50"><FileText class="size-4" aria-hidden="true" />Open page</a>
+	</div>
 	{#if places && goal.id !== places.routines_goal}
 		<div class="flex flex-col gap-2 px-4 pt-2 pb-6">
 			{#if !status.stop}

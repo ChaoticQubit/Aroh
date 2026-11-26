@@ -7,6 +7,7 @@ use super::engine::{engine_call, engine_call_model, engine_error, sync_now};
 use super::with_core;
 use crate::AppState;
 use aroh_app::diary::{self, DayView, Keyring};
+use aroh_app::notebook;
 use aroh_diary::{CardEdit, DiaryKey, Source, StructuredDay};
 use aroh_domain::rows::Proposal;
 use chrono::Utc;
@@ -40,7 +41,7 @@ async fn held(app: &AppHandle, state: &State<'_, AppState>) -> Result<Vec<i64>, 
     Ok(ring(app, state).await?.map(|r| r.all().iter().map(|k| k.version()).collect()).unwrap_or_default())
 }
 
-fn ios_only() -> Result<(), String> {
+pub(crate) fn ios_only() -> Result<(), String> {
     if cfg!(target_os = "ios") {
         Ok(())
     } else {
@@ -72,10 +73,15 @@ async fn key_delete(app: &AppHandle, version: i64) -> Result<(), String> {
     Ok(())
 }
 
+/// The newest key version any diary or notebook row uses, 0 for none.
+fn newest_version(conn: &rusqlite::Connection) -> aroh_app::Result<i64> {
+    Ok(diary::newest_version(conn)?.max(notebook::newest_version(conn)?))
+}
+
 /// Every diary key this phone holds, probing versions 1 to one above the newest row's.
 /// Returns None when it holds none.
 async fn ring(app: &AppHandle, state: &State<'_, AppState>) -> Result<Option<Keyring>, String> {
-    let newest = with_core(state, |c| diary::newest_version(&c.conn))?;
+    let newest = with_core(state, |c| newest_version(&c.conn))?;
     let mut keys = Vec::new();
     for version in 1..=newest.max(0) + 1 {
         if let Some(k) = key_get(app, version).await? {
@@ -91,7 +97,7 @@ async fn ring(app: &AppHandle, state: &State<'_, AppState>) -> Result<Option<Key
 /// The phone's diary keys, creating key 1 only when the keychain holds none and a
 /// fresh pull shows no diary rows (another device would have made one). Errors
 /// `locked` when rows exist but the key has not arrived through iCloud Keychain yet.
-async fn ensure_ring(app: &AppHandle, state: &State<'_, AppState>) -> Result<Keyring, String> {
+pub(crate) async fn ensure_ring(app: &AppHandle, state: &State<'_, AppState>) -> Result<Keyring, String> {
     with_core(state, |c| diary::account(&c.conn).map(|_| ()))?;
     if let Some(r) = ring(app, state).await? {
         return Ok(r);
@@ -100,7 +106,7 @@ async fn ensure_ring(app: &AppHandle, state: &State<'_, AppState>) -> Result<Key
     if let Some(r) = ring(app, state).await? {
         return Ok(r);
     }
-    if with_core(state, |c| diary::newest_version(&c.conn))? > 0 {
+    if with_core(state, |c| newest_version(&c.conn))? > 0 {
         return Err("locked: the diary key has not reached this phone yet; check iCloud Keychain".into());
     }
     key_put(app, &DiaryKey::generate(1).map_err(|e| e.to_string())?).await?;
@@ -225,9 +231,10 @@ async fn day_answer(state: &State<'_, AppState>, keys: &Keyring, day: &str, outc
 /// deletes each old key once no row is left at its version.
 async fn finish_rotation(app: &AppHandle, state: &State<'_, AppState>, keys: &Keyring) -> Result<(), String> {
     with_core(state, |c| diary::resume_rotation(&c.conn, &mut c.clock, keys).map(|_| ()))?;
+    with_core(state, |c| notebook::resume_rotation(&c.conn, &mut c.clock, keys).map(|_| ()))?;
     sync_now(app, state).await?;
     for old in keys.all().iter().filter(|k| k.version() < keys.newest().version()) {
-        if with_core(state, |c| diary::rows_at(&c.conn, old.version()))? == 0 {
+        if with_core(state, |c| Ok(diary::rows_at(&c.conn, old.version())? + notebook::rows_at(&c.conn, old.version())?))? == 0 {
             key_delete(app, old.version()).await?;
         }
     }

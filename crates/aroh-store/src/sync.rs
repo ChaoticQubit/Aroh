@@ -115,6 +115,7 @@ pub fn apply_page(conn: &mut Connection, table: &'static TableDef, user_id: &str
             .query_row(&local_sql, [id], |r| Ok(Version { updated_at: r.get(0)?, deleted: r.get::<_, i64>(1)? != 0 }))
             .optional()?;
         if remote_wins(local.as_ref(), &remote) {
+            crate::notebook::before_replace(&tx, table, &row, local.as_ref(), clock)?;
             upsert(&tx, table, &row, false)?;
             written += 1;
         }

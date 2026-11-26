@@ -5,8 +5,8 @@ use crate::Result;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::Connection;
 
-/// Tables that exist only on this device and never sync.
-pub const LOCAL_TABLES: [&str; 5] = ["visits", "place_candidates", "pattern_candidates", "nudge_sent", "place_kinds"];
+/// Tables that exist only on this device and never sync, with the notebook links index (Q96).
+pub const LOCAL_TABLES: [&str; 7] = ["visits", "place_candidates", "pattern_candidates", "nudge_sent", "place_kinds", "page_links", "page_links_dirty"];
 
 /// Days a raw visit is kept on the phone before it is deleted (owner 2026-11-22).
 pub const VISIT_DAYS: i64 = 90;

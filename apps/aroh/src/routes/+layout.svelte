@@ -24,7 +24,7 @@
 
 	let { children }: { children: Snippet } = $props();
 
-	const PLACES: Place[] = ['today', 'calendar', 'goals', 'dashboard', 'log', 'inbox', 'settings'];
+	const PLACES: Place[] = ['today', 'calendar', 'goals', 'notes', 'dashboard', 'log', 'inbox', 'settings'];
 	const bare = $derived((page.data as { bare?: boolean }).bare === true);
 	const coaches = $derived(page.url.pathname.startsWith('/personas') || page.url.pathname.startsWith('/plugins'));
 	const tab = $derived(PLACES.find((t) => page.url.pathname.startsWith(`/${t}`)) ?? (coaches ? (page.url.searchParams.has('goal') ? 'goals' : 'settings') : 'today'));
