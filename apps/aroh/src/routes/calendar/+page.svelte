@@ -38,6 +38,8 @@
 		onlock={(id, locked) => data.run(() => client.setLocked(id, locked))}
 		ondelete={(id, scope) => data.run(() => client.deleteAction(id, scope).then(() => editStatus.track(id)))}
 		onchoose={(p) => data.run(() => confirmDay(p.id, p.kind))}
+		goals={s.goals.filter((g) => g.status === 'active').map((g) => ({ id: g.id, title: g.title }))}
+		oncreate={(n) => data.run(() => client.createAction(n.title, n.start, n.minutes, n.goalId))}
 	>
 		{#snippet dayTop(day: string)}<DiaryDayTop {day} actions={actionViews(s)} zone={clock.zone} />{/snippet}
 	</CalendarScreen>

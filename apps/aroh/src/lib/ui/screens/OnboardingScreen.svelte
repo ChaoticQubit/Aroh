@@ -43,7 +43,7 @@
 
 	const ICONS = { calendar: CalendarDays, notifications: Bell, location: MapPin, health: HeartPulse };
 	const EXAMPLES = ['Read 12 books this year', 'Run a half marathon by March', 'Save 3,000 for a trip'];
-	const pad = 'px-6 pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+1.5rem)]';
+	const pad = 'pr-[max(1.5rem,env(safe-area-inset-right))] pl-[max(1.5rem,env(safe-area-inset-left))] pt-[calc(env(safe-area-inset-top)+1.5rem)] pb-[calc(env(safe-area-inset-bottom)+1.5rem)]';
 	const input = 'h-11 text-lg';
 
 	let trail = $state<OnboardingStep[]>(untrack(() => [start.step]));

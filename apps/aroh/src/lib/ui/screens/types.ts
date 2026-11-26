@@ -64,6 +64,12 @@ export type DayPick = { id: string; kind: DayKind };
 /** An edit of one action from the Calendar or Today: its new start and end instants. */
 export type ActionEdit = { id: string; start: string; end: string };
 
+/** A one-off item added from a Calendar slot (B121): title, ISO start, minutes, goal id or null for Routines. */
+export type NewAction = { title: string; start: string; minutes: number; goalId: string | null };
+
+/** A goal the add sheet can file a new item under. */
+export type GoalChoice = { id: string; title: string };
+
 /** A goal row of the Goals list. */
 export type GoalRow = { id: string; title: string; category: string; slot: CategorySlot; deadline: string | null; autonomy: AutonomyLabel };
 

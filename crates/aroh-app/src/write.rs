@@ -327,6 +327,43 @@ pub fn edit_action(conn: &Connection, clock: &mut Hlc, id: &str, span: Option<(D
     Ok(action)
 }
 
+/// Creates a one-off action the owner placed on the Calendar (B121): `title` trimmed, from
+/// `start_at` for `minutes` (1 to 1440), under `goal_id` or, with none, the built-in Routines
+/// goal. It is planned and locked like an owner edit. Output: the stored action. Errors with
+/// `Invalid` or `NotFound` and writes nothing when the input or the goal is refused.
+pub fn create_action(conn: &Connection, clock: &mut Hlc, user_id: &str, title: &str, start_at: DateTime<Utc>, minutes: i64, goal_id: Option<&str>) -> Result<Action> {
+    let title = title.trim();
+    if title.is_empty() || title.chars().count() > 200 {
+        return Err(invalid("an action title has 1 to 200 characters"));
+    }
+    if !(1..=1440).contains(&minutes) {
+        return Err(invalid("an action lasts more than 0 minutes and at most a day"));
+    }
+    let tx = conn.unchecked_transaction()?;
+    let goal = crate::location::target_goal(&tx, clock, user_id, goal_id.unwrap_or(&aroh_domain::seed::routines_id()))?;
+    let mut action = Action {
+        id: aroh_domain::new_id(),
+        user_id: user_id.to_string(),
+        goal_id: goal.id,
+        series_id: None,
+        occurrence: None,
+        title: title.to_string(),
+        notes: None,
+        start_at,
+        end_at: start_at + chrono::Duration::minutes(minutes),
+        status: ActionStatus::Planned,
+        locked: true,
+        done_at: None,
+        card: None,
+        updated_at: String::new(),
+        deleted: false,
+    };
+    repo::put(&tx, clock, &mut action)?;
+    tx.commit()?;
+    assert!(action.end_at > action.start_at, "a created action has a positive span");
+    Ok(action)
+}
+
 /// "This and all future" delete of series session `id` (Q89), in one transaction: the series
 /// ends before the session's own slot (`occurrence`, not its moved time), so it is bounded by
 /// UNTIL or tombstoned when the session is its first; the session and the series' later

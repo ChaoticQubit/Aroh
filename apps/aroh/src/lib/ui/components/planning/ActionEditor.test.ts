@@ -15,3 +15,15 @@ describe('ActionEditor delete confirm (B100)', () => {
 		expect(single).toMatch(/>\s*Delete\s*</);
 	});
 });
+
+describe('ActionEditor create mode (B121)', () => {
+	it('b121: a slot tap opens the same editor with a title field and Add, without the edit-only controls', () => {
+		const html = render(ActionEditor, { props: { action: { ...base, id: '', title: '' }, oncreate: () => {}, goals: [{ id: 'g1', title: 'Run a 10k' }] } }).body;
+		expect(html).toContain('New item');
+		expect(html).toMatch(/<input[^>]*aria-label="Title"/);
+		expect(html).toMatch(/>\s*Add\s*</);
+		expect(html).not.toContain('Open session card');
+		expect(html).not.toContain('Fixed time');
+		expect(html).not.toMatch(/>\s*Delete\s*</);
+	});
+});

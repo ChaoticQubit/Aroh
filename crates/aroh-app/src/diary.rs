@@ -1,10 +1,11 @@
 //! The device side of the encrypted diary (Q85, Q94): appending sealed entries,
 //! reading a day back, the sealed body of the engine's structure call and saving
-//! the card it returns with its tracker numbers, and key rotation. Keys are
-//! passed in and nothing here stores them or calls the network.
+//! the card it returns with its tracker numbers, the owner's edits of the card and
+//! of entries (B120), and key rotation. Keys are passed in and nothing here stores
+//! them or calls the network.
 
 use crate::{invalid, local, Result};
-use aroh_diary::{day_id, Card, DiaryKey, Entry, NumericField, Sealed, SealedEntry, Source, StructureRequest, StructuredDay, Table};
+use aroh_diary::{day_id, Card, CardEdit, DiaryKey, Entry, EntryMove, NumericField, Sealed, SealedEntry, Source, StructureRequest, StructuredDay, Table};
 use aroh_domain::hlc::Hlc;
 use aroh_domain::rows::{DiaryDay, DiaryEntry, EntrySource, FieldKind, Proposal, Tracker, TrackerEntry};
 use aroh_store::repo;
@@ -97,6 +98,7 @@ fn sealed_of(version: i64, nonce: &str, ciphertext: &str) -> Sealed {
 pub fn read_day(conn: &Connection, ring: &Keyring, day: &str) -> Result<DayView> {
     let user = account(conn)?;
     let rows: Vec<DiaryEntry> = repo::list(conn, &[("user_id", user.as_str()), ("day", day)])?;
+    let live: Vec<String> = rows.iter().filter(|r| !r.deleted).map(|r| r.id.clone()).collect();
     let mut entries = Vec::new();
     let mut locked = 0;
     for row in rows.into_iter().filter(|r| !r.deleted) {
@@ -120,7 +122,8 @@ pub fn read_day(conn: &Connection, ring: &Keyring, day: &str) -> Result<DayView>
         _ => None,
     };
     let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
-    let stale = !entries.is_empty() && card.as_ref().is_none_or(|c| c.is_stale(&ids));
+    let left = |c: &Card| c.entry_ids.iter().any(|id| !live.contains(id));
+    let stale = !entries.is_empty() && card.as_ref().is_none_or(|c| c.is_stale(&ids) || left(c));
     Ok(DayView { day: day.to_string(), entries, card, stale, locked })
 }
 
@@ -148,7 +151,7 @@ pub fn structure_request(conn: &Connection, view: &DayView) -> Result<Option<Str
         let row: DiaryEntry = repo::get(conn, &e.id)?;
         entries.push(SealedEntry { id: row.id, sealed: sealed_of(row.key_version, &row.nonce, &row.ciphertext) });
     }
-    let request = StructureRequest { day: view.day.clone(), entries, fields: numeric_fields(conn)? };
+    let request = StructureRequest { day: view.day.clone(), entries, fields: numeric_fields(conn)?, utc_offset_minutes: None };
     request.check().map_err(|e| invalid(e.to_string()))?;
     Ok(Some(request))
 }
@@ -196,6 +199,129 @@ pub fn save_card(conn: &Connection, clock: &mut Hlc, ring: &Keyring, view: &DayV
         repo::put(conn, clock, &mut entry)?;
     }
     Ok(card)
+}
+
+/// Whether the engine should structure `view` now: the day has entries and either
+/// `force` (Redo summary, B118) or the card is stale and not edited by the owner, so a
+/// new entry never silently replaces a manual edit (B120).
+pub fn structure_due(view: &DayView, force: bool) -> bool {
+    let edited = view.card.as_ref().is_some_and(|c| c.edited_at.is_some());
+    !view.entries.is_empty() && (force || (view.stale && !edited))
+}
+
+/// Applies the owner's `edit` at `at` to the card of local `day`, reseals it with the
+/// newest key under the day's row and writes it with a newer HLC stamp. The covered
+/// entries stay, so the card is not marked stale. Returns the edited card, or `Invalid`
+/// when the day has no card this phone opens or the edit breaks a card bound.
+pub fn edit_card(conn: &Connection, clock: &mut Hlc, ring: &Keyring, day: &str, edit: CardEdit, at: DateTime<Utc>) -> Result<Card> {
+    let user = account(conn)?;
+    aroh_diary::card::check_day(day).map_err(|e| invalid(e.to_string()))?;
+    let id = day_id(&user, day);
+    let mut row: DiaryDay = repo::get(conn, &id).map_err(|_| invalid("this day has no card to edit yet"))?;
+    let key = ring.get(row.key_version).ok_or_else(|| invalid("the card was sealed with a diary key this phone lacks"))?;
+    let plain = aroh_diary::open(key, &user, Table::Days, &id, &sealed_of(row.key_version, &row.nonce, &row.ciphertext)).map_err(|_| invalid("the card did not open"))?;
+    let card = Card::from_bytes(&plain).map_err(|e| invalid(e.to_string()))?.with_edit(edit, at).map_err(|e| invalid(e.to_string()))?;
+    let sealed = aroh_diary::seal(ring.newest(), &user, Table::Days, &id, &card.to_bytes()).map_err(|e| invalid(e.to_string()))?;
+    (row.key_version, row.nonce, row.ciphertext) = (sealed.key_version, sealed.nonce, sealed.ciphertext);
+    repo::put(conn, clock, &mut row)?;
+    Ok(card)
+}
+
+/// The live entry row `id` of the signed-in account with its opened words.
+/// Returns `Invalid` when it is missing, another account's, or does not open.
+fn opened_entry(conn: &Connection, ring: &Keyring, id: &str) -> Result<(String, DiaryEntry, Entry)> {
+    let user = account(conn)?;
+    let row: DiaryEntry = repo::get(conn, id).map_err(|_| invalid("this diary entry is gone"))?;
+    if row.user_id != user {
+        return Err(invalid("this diary entry is gone"));
+    }
+    let key = ring.get(row.key_version).ok_or_else(|| invalid("the entry was sealed with a diary key this phone lacks"))?;
+    let plain = aroh_diary::open(key, &user, Table::Entries, &row.id, &sealed_of(row.key_version, &row.nonce, &row.ciphertext)).map_err(|_| invalid("the entry did not open"))?;
+    let entry = Entry::from_bytes(&plain).map_err(|e| invalid(e.to_string()))?;
+    Ok((user, row, entry))
+}
+
+/// Replaces the words of entry `id` with `text` (trimmed), keeping when and how it was
+/// logged, resealed with the newest key under the same row. The day's card keeps covering
+/// it, so Redo summary is how the card picks the change up. Returns `Invalid` for bad text
+/// or an entry that is gone or does not open.
+pub fn edit_entry(conn: &Connection, clock: &mut Hlc, ring: &Keyring, id: &str, text: &str) -> Result<()> {
+    let (user, mut row, old) = opened_entry(conn, ring, id)?;
+    let entry = Entry { text: text.trim().to_string(), ..old };
+    entry.validate().map_err(|e| invalid(e.to_string()))?;
+    let sealed = aroh_diary::seal(ring.newest(), &user, Table::Entries, &row.id, &entry.to_bytes()).map_err(|e| invalid(e.to_string()))?;
+    (row.key_version, row.nonce, row.ciphertext) = (sealed.key_version, sealed.nonce, sealed.ciphertext);
+    repo::put(conn, clock, &mut row)?;
+    Ok(())
+}
+
+/// A sealed empty JSON object, written over a row's ciphertext when it is deleted so the
+/// tombstone that syncs keeps no words, not even sealed.
+fn wiped(ring: &Keyring, user: &str, table: Table, id: &str) -> Result<Sealed> {
+    aroh_diary::seal(ring.newest(), user, table, id, b"{}").map_err(|e| invalid(e.to_string()))
+}
+
+/// Deletes entry `id`: its row becomes a tombstone holding no words. When it was the day's
+/// last entry the day's card is deleted the same way. Returns `Invalid` when the entry is
+/// gone or does not open.
+pub fn delete_entry(conn: &Connection, clock: &mut Hlc, ring: &Keyring, id: &str) -> Result<()> {
+    let (user, mut row, _) = opened_entry(conn, ring, id)?;
+    let s = wiped(ring, &user, Table::Entries, &row.id)?;
+    (row.key_version, row.nonce, row.ciphertext, row.deleted) = (s.key_version, s.nonce, s.ciphertext, true);
+    repo::put(conn, clock, &mut row)?;
+    drop_card_if_empty(conn, clock, ring, &user, &row.day)
+}
+
+/// Deletes the card of `user`'s local `day` the way a deleted entry goes, once the day holds
+/// no live entries, so no summary of words that left the day stays behind.
+fn drop_card_if_empty(conn: &Connection, clock: &mut Hlc, ring: &Keyring, user: &str, day: &str) -> Result<()> {
+    if !repo::list::<DiaryEntry>(conn, &[("user_id", user), ("day", day)])?.is_empty() {
+        return Ok(());
+    }
+    if let Ok(mut card) = repo::get::<DiaryDay>(conn, &day_id(user, day)) {
+        let s = wiped(ring, user, Table::Days, &card.id)?;
+        (card.key_version, card.nonce, card.ciphertext, card.deleted) = (s.key_version, s.nonce, s.ciphertext, true);
+        repo::put(conn, clock, &mut card)?;
+    }
+    Ok(())
+}
+
+/// Moves entry `id` to local day `to` (B127), resealed with the newest key under the same row
+/// (the day is not part of the sealed data or the id, so it opens on the new day). Both days'
+/// cards then no longer match their entries and are rebuilt; a day left empty loses its card.
+/// Returns the day it left, or `Invalid` for a bad or unchanged day or an entry that is gone.
+pub fn move_entry(conn: &Connection, clock: &mut Hlc, ring: &Keyring, id: &str, to: &str) -> Result<String> {
+    aroh_diary::card::check_day(to).map_err(|e| invalid(e.to_string()))?;
+    let (user, mut row, entry) = opened_entry(conn, ring, id)?;
+    if row.day == to {
+        return Err(invalid("the entry is already on that day"));
+    }
+    let from = std::mem::replace(&mut row.day, to.to_string());
+    let sealed = aroh_diary::seal(ring.newest(), &user, Table::Entries, &row.id, &entry.to_bytes()).map_err(|e| invalid(e.to_string()))?;
+    (row.key_version, row.nonce, row.ciphertext) = (sealed.key_version, sealed.nonce, sealed.ciphertext);
+    repo::put(conn, clock, &mut row)?;
+    drop_card_if_empty(conn, clock, ring, &user, &from)?;
+    Ok(from)
+}
+
+/// Applies the engine's `moves` for `view` (B127): only entries of that day, only to a day
+/// `aroh_diary::move_allowed` accepts; others are dropped. Returns the distinct days entries
+/// moved to, in order.
+pub fn apply_moves(conn: &Connection, clock: &mut Hlc, ring: &Keyring, view: &DayView, moves: &[EntryMove]) -> Result<Vec<String>> {
+    let mut days: Vec<String> = Vec::new();
+    for m in moves {
+        if !view.entries.iter().any(|e| e.id == m.id) || !aroh_diary::move_allowed(&view.day, &m.day) {
+            continue;
+        }
+        if repo::get::<DiaryEntry>(conn, &m.id).is_ok_and(|r| r.day != view.day) {
+            continue;
+        }
+        move_entry(conn, clock, ring, &m.id, &m.day)?;
+        if !days.contains(&m.day) {
+            days.push(m.day.clone());
+        }
+    }
+    Ok(days)
 }
 
 /// Re-encrypts every diary entry, card and sealed proposal summary of the

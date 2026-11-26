@@ -158,7 +158,7 @@
 </div>
 {#if asking}
 	<Sheet.Root open={true} onOpenChange={(open) => !open && (asking = null)}>
-		<Sheet.Content side="bottom" showCloseButton={false} class="flex flex-col gap-2 border-none bg-transparent px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] text-fg shadow-none">
+		<Sheet.Content side="bottom" showCloseButton={false} class="flex flex-col gap-2 border-none bg-transparent pr-[max(0.5rem,env(safe-area-inset-right))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))] text-fg shadow-none">
 			<div class="flex flex-col divide-y divide-border overflow-hidden rounded-[var(--radius-dialog)] bg-bg">
 				<div class="flex flex-col gap-1 px-4 py-3 text-center">
 					<Sheet.Title class="text-sm font-medium text-fg">{asking.title}</Sheet.Title>

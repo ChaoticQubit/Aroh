@@ -4,6 +4,7 @@
 	import { formatDate, formatTime, formatYmd, minuteOfDay } from '$lib/ui/format';
 	import { actionStyle } from '$lib/ui/status';
 	import { allDayOn, dayShift, shiftMinutes } from './edits';
+	import { edgeSpeed, HOLD_MS, holdMove, releaseOf, slotMinute, SLOP_PX, snapMinutes, SNAP_MIN, zonedIso } from './gesture';
 	import { overlapColumns } from './overlap';
 	import type { ActionView } from '$lib/ui/contract';
 	import type { ActionEdit, AllDayView, BusyView } from './types';
@@ -13,9 +14,11 @@
 	 * all-day event falls in range (a chip tap calls `onpick`), hour rows from `startHour` to
 	 * `endHour`, actions as light cards with a category edge, busy device events as neutral grey
 	 * blocks, Busy days shaded, today tinted, and a now line. Tapping an action calls `onopen`; the
-	 * `selected` action drags at once, any other after a long press, and a drop calls `onedit`. With
-	 * several days a drag also moves sideways to another shown day. `compact` is the phone week
-	 * (Q78): a narrow hour gutter, one-letter weekdays, and blocks with only a short title.
+	 * `selected` action drags at once, any other after a 300 ms hold, a drag near the scroller's
+	 * edge scrolls it, and a drop calls `onedit`. With several days a drag also moves sideways to
+	 * another shown day. Tapping an empty slot calls `oncreate` with its snapped start; tapping a
+	 * day header calls `onday`. `compact` is the phone week (Q78): a narrow hour gutter, one-letter
+	 * weekdays, and blocks with only a short title.
 	 */
 	let {
 		days,
@@ -28,7 +31,9 @@
 		compact = false,
 		onopen,
 		onedit,
-		onpick
+		onpick,
+		oncreate,
+		onday
 	}: {
 		days: string[];
 		actions: ActionView[];
@@ -41,13 +46,12 @@
 		onopen?: (id: string) => void;
 		onedit?: (edit: ActionEdit) => void;
 		onpick?: (id: string) => void;
+		oncreate?: (start: string) => void;
+		onday?: (date: string) => void;
 	} = $props();
 
 	const { now, zone } = getClock();
 	const HOUR = 48;
-	const SNAP = 15;
-	const LONG_PRESS_MS = 350;
-	const SLOP_PX = 6;
 	const today = formatYmd(now, zone);
 	const gutter = $derived(compact ? 24 : 52);
 	const hours = $derived(Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour + i));
@@ -57,10 +61,13 @@
 	 * A press on an action in day column `col`: `live` once it may drag, `delta` the snapped minutes
 	 * and `days` the whole days moved so far.
 	 */
-	type Press = { id: string; mode: 'move' | 'resize'; col: number; x0: number; y0: number; delta: number; days: number; live: boolean };
+	type Press = { id: string; mode: 'move' | 'resize'; col: number; x0: number; y0: number; x: number; y: number; scroll0: number; travel: number; delta: number; days: number; live: boolean; held: boolean };
 	let press = $state<Press | null>(null);
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let frame = 0;
+	let scroller: HTMLElement | null = null;
 	let grid = $state<HTMLElement | null>(null);
+	let body = $state<HTMLElement | null>(null);
 
 	$effect(() => {
 		const el = grid;
@@ -69,8 +76,63 @@
 			if (press?.live) e.preventDefault();
 		};
 		el.addEventListener('touchmove', hold, { passive: false });
-		return () => el.removeEventListener('touchmove', hold);
+		return () => {
+			el.removeEventListener('touchmove', hold);
+			cancel();
+		};
 	});
+
+	$effect(() => {
+		const el = body;
+		if (!el || !oncreate) return;
+		const tap = (e: MouseEvent) => {
+			const target = e.target as Element | null;
+			const column = target?.closest<HTMLElement>('[data-day]');
+			if (!column || target?.closest('[role="listitem"], button')) return;
+			const y = e.clientY - column.getBoundingClientRect().top;
+			oncreate?.(zonedIso(column.dataset.day!, slotMinute(y, HOUR, startHour, endHour), zone));
+		};
+		el.addEventListener('click', tap);
+		return () => el.removeEventListener('click', tap);
+	});
+
+	/** Nearest scrolling ancestor of the grid, or the page's scrolling element. */
+	function scrollParent(): HTMLElement | null {
+		for (let el = grid?.parentElement; el; el = el.parentElement) {
+			if (/(auto|scroll)/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight) return el;
+		}
+		return (document.scrollingElement as HTMLElement | null) ?? null;
+	}
+
+	/** Recomputes a live drag from the finger and how far the scroller moved since the press; tap jitter on an item draggable at once stays put. */
+	function follow(p: Press) {
+		if (!p.held && p.travel <= SLOP_PX) return;
+		const scrolled = (scroller?.scrollTop ?? 0) - p.scroll0;
+		p.delta = snapMinutes(p.y - p.y0 + scrolled, HOUR);
+		if (p.mode === 'move' && days.length > 1) p.days = dayShift(p.x - p.x0, columnWidth(), p.col, days.length);
+	}
+
+	/** One frame of edge auto-scroll while a drag is live: scrolls when the finger is near an edge. */
+	function autoScroll() {
+		const p = press;
+		if (!p?.live || !scroller) return void (frame = 0);
+		const rect = scroller === document.scrollingElement ? { top: 0, bottom: innerHeight } : scroller.getBoundingClientRect();
+		const speed = edgeSpeed(p.y, rect.top, rect.bottom);
+		if (speed) {
+			scroller.scrollTop += speed;
+			follow(p);
+		}
+		frame = requestAnimationFrame(autoScroll);
+	}
+
+	/** Makes the current press a live drag, `held` when the hold lifted it, and starts edge auto-scroll. */
+	function lift(held: boolean) {
+		if (!press) return;
+		press.live = true;
+		press.held = held;
+		cancelAnimationFrame(frame);
+		frame = requestAnimationFrame(autoScroll);
+	}
 
 	/** Pixel offset of a minute of day from the top of the grid, clamped to the visible hours. */
 	function top(minute: number): number {
@@ -134,43 +196,43 @@
 	function down(e: PointerEvent, id: string, mode: Press['mode'], col: number) {
 		e.stopPropagation();
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		cancel();
+		scroller = onedit ? scrollParent() : null;
 		const live = Boolean(onedit) && (mode === 'resize' || id === selected);
-		press = { id, mode, col, x0: e.clientX, y0: e.clientY, delta: 0, days: 0, live };
-		clearTimeout(timer);
-		if (!live && onedit) timer = setTimeout(() => press && (press.live = true), LONG_PRESS_MS);
+		press = { id, mode, col, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, scroll0: scroller?.scrollTop ?? 0, travel: 0, delta: 0, days: 0, live: false, held: false };
+		if (live) lift(false);
+		else if (onedit) timer = setTimeout(() => lift(true), HOLD_MS);
 	}
 
-	/** Tracks the pointer: snaps a live drag to 15 minutes, drops a press that turns into a scroll. */
+	/** Tracks the pointer: a live drag follows the finger in 15 minute steps, a hold that travels becomes a scroll. */
 	function drag(e: PointerEvent) {
 		if (!press) return;
-		const dy = e.clientY - press.y0;
-		const dx = e.clientX - press.x0;
-		if (!press.live) {
-			if (Math.hypot(dx, dy) > SLOP_PX) cancel();
-			return;
-		}
-		press.delta = Math.round(((dy / HOUR) * 60) / SNAP) * SNAP;
-		if (press.mode === 'move' && days.length > 1) press.days = dayShift(dx, columnWidth(), press.col, days.length);
+		press.x = e.clientX;
+		press.y = e.clientY;
+		press.travel = Math.max(press.travel, Math.hypot(e.clientX - press.x0, e.clientY - press.y0));
+		if (press.live) follow(press);
+		else if (holdMove(e.clientX - press.x0, e.clientY - press.y0) === 'scroll') cancel();
 	}
 
-	/** Ends a press: a drop with movement reports the edit, a plain tap opens the action. */
+	/** Ends a press: a drop with movement reports the edit, a tap opens the action, a put back does nothing. */
 	function up(a: ActionView) {
 		const p = press;
 		cancel();
 		if (!p || p.id !== a.id) return;
-		if (p.live && (p.delta !== 0 || p.days !== 0)) {
-			const shift = p.delta + p.days * 1440;
-			const end = shiftMinutes(a.end, shift);
-			const start = p.mode === 'move' ? shiftMinutes(a.start, shift) : a.start;
-			if (Date.parse(end) - Date.parse(start) >= SNAP * 60_000) onedit?.({ id: a.id, start, end });
-			return;
-		}
-		onopen?.(a.id);
+		const kind = releaseOf(p);
+		if (kind === 'open') return onopen?.(a.id);
+		if (kind === 'none') return;
+		const shift = p.delta + p.days * 1440;
+		const end = shiftMinutes(a.end, shift);
+		const start = p.mode === 'move' ? shiftMinutes(a.start, shift) : a.start;
+		if (Date.parse(end) - Date.parse(start) >= SNAP_MIN * 60_000) onedit?.({ id: a.id, start, end });
 	}
 
-	/** Forgets the current press and its long-press timer. */
+	/** Forgets the current press, its hold timer and its auto-scroll. */
 	function cancel() {
 		clearTimeout(timer);
+		cancelAnimationFrame(frame);
+		frame = 0;
 		press = null;
 	}
 
@@ -190,11 +252,26 @@
 	<div class="grid border-b border-border" style="grid-template-columns: {gutter}px repeat({days.length}, minmax(0, 1fr))">
 		<div></div>
 		{#each columns as c (c.date)}
-			<div class="flex flex-col items-center gap-0.5 border-l border-border {compact ? 'py-1.5' : 'py-2'} {compact && c.date === today ? 'bg-accent/10' : ''}" aria-current={c.date === today ? 'date' : undefined}>
+			{#snippet head()}
 				{#if compact}<span class="sr-only">{c.label}</span>{/if}
 				<span class="text-xs {compact && c.date === today ? 'font-semibold text-fg' : 'text-muted'}" aria-hidden={compact || undefined}>{c.name}</span>
 				<span class="min-w-6 rounded-sm px-1 text-center text-sm leading-6 font-semibold tabular-nums {c.date === today ? 'bg-accent text-accent-fg' : 'text-fg'}" aria-hidden={compact || undefined}>{c.num}</span>
-			</div>
+			{/snippet}
+			{#if onday}
+				<button
+					type="button"
+					class="flex flex-col items-center gap-0.5 border-l border-border outline-none focus-visible:ring-3 focus-visible:ring-ring/50 {compact ? 'py-1.5' : 'py-2'} {compact && c.date === today ? 'bg-accent/10' : ''}"
+					aria-current={c.date === today ? 'date' : undefined}
+					aria-label="Open {c.label}"
+					onclick={() => onday?.(c.date)}
+				>
+					{@render head()}
+				</button>
+			{:else}
+				<div class="flex flex-col items-center gap-0.5 border-l border-border {compact ? 'py-1.5' : 'py-2'} {compact && c.date === today ? 'bg-accent/10' : ''}" aria-current={c.date === today ? 'date' : undefined}>
+					{@render head()}
+				</div>
+			{/if}
 		{/each}
 	</div>
 	{#if showAllDay}
@@ -210,14 +287,17 @@
 	{#if days.length === 1 && columns[0]?.blocked}
 		<p class="border-b border-border bg-surface-2 px-3 py-1.5 text-center text-xs text-muted">{columns[0].blocked.title} is a busy day.</p>
 	{/if}
-	<div class="relative grid" style="grid-template-columns: {gutter}px repeat({days.length}, minmax(0, 1fr)); height: {height}px">
+	<div bind:this={body} class="relative grid" style="grid-template-columns: {gutter}px repeat({days.length}, minmax(0, 1fr)); height: {height}px">
 		<div class="relative">
 			{#each hours.slice(0, -1) as h (h)}
 				<span class="absolute text-xs text-muted tabular-nums {compact ? 'right-1' : 'right-2'} {h === startHour ? 'translate-y-0.5' : '-translate-y-1/2'}" style="top: {(h - startHour) * HOUR}px">{compact ? h : `${String(h).padStart(2, '0')}:00`}</span>
 			{/each}
 		</div>
 		{#each columns as c, ci (c.date)}
-			<div class="relative border-l border-border {c.blocked ? 'bg-surface-2' : compact && c.date === today ? 'bg-accent/5' : ''}" role="list" aria-label="{c.label}, {c.blocked ? `busy day, ${c.blocked.title}, ` : ''}{c.items.length} actions">
+			<div data-day={c.date} class="relative border-l border-border {oncreate ? 'cursor-pointer' : ''} {c.blocked ? 'bg-surface-2' : compact && c.date === today ? 'bg-accent/5' : ''}" role="list" aria-label="{c.label}, {c.blocked ? `busy day, ${c.blocked.title}, ` : ''}{c.items.length} actions">
+				{#if oncreate}
+					<button type="button" class="sr-only" onclick={() => oncreate?.(zonedIso(c.date, Math.max(startHour * 60, Math.min(9 * 60, endHour * 60 - SNAP_MIN)), zone))}>New item on {c.label}</button>
+				{/if}
 				{#each hours.slice(1, -1) as h (h)}
 					<div class="absolute inset-x-0 border-t border-border/70" style="top: {(h - startHour) * HOUR}px"></div>
 				{/each}
@@ -243,9 +323,9 @@
 						role="listitem"
 						data-no-swipe={active || undefined}
 						data-dragging={(press?.live && press.id === a.id) || undefined}
-						class="absolute overflow-hidden rounded-sm border outline-none select-none {compact ? 'border-l-2 px-0.5' : 'border-l-3 px-1.5 py-0.5'} {active ? 'z-20 ring-2 ring-fg' : ''} {a.status === 'missed' ? 'border-dashed border-status-missed' : compact && a.cols > 1 ? 'border-status-warn' : 'border-border'} {onopen ? 'cursor-pointer' : ''}"
+						class="absolute overflow-hidden rounded-sm border outline-none select-none {compact ? 'border-l-2 px-0.5' : 'border-l-3 px-1.5 py-0.5'} {active ? 'z-20 ring-2 ring-fg' : ''} {at.moving ? 'shadow-lg' : ''} {a.status === 'missed' ? 'border-dashed border-status-missed' : compact && a.cols > 1 ? 'border-status-warn' : 'border-border'} {onopen ? 'cursor-pointer' : ''}"
 						data-overlap={a.cols > 1 || undefined}
-						style="top: {at.y + 1}px; height: {at.h - 2}px; {lane(a.col, a.cols)}; {at.x ? `transform: translateX(${at.x}px);` : ''} border-left-color: var(--cat-{a.category}); border-left-style: solid; background: color-mix(in oklch, var(--cat-{a.category}) {active ? 16 : compact ? Math.max(look.tint, 14) : look.tint}%, var(--bg)); touch-action: {a.id === selected ? 'none' : 'pan-y'}"
+						style="top: {at.y + 1}px; height: {at.h - 2}px; {lane(a.col, a.cols)}; {at.x ? `transform: translateX(${at.x}px);` : ''} border-left-color: var(--cat-{a.category}); border-left-style: solid; background: color-mix(in oklch, var(--cat-{a.category}) {active ? 16 : compact ? Math.max(look.tint, 14) : look.tint}%, var(--bg)); touch-action: {a.id === selected ? 'none' : 'pan-y'}; -webkit-touch-callout: none; -webkit-user-select: none"
 						title="{a.title}, {formatTime(at.start, zone)} - {formatTime(at.end, zone)}"
 						onpointerdown={(e) => down(e, a.id, 'move', ci)}
 						onpointermove={drag}
@@ -261,7 +341,7 @@
 						{#if onopen}
 							<button type="button" class="sr-only" onclick={() => onopen?.(a.id)}>Edit {a.title}</button>
 						{/if}
-						{#if active && onedit}
+						{#if active && onedit && a.h >= 36}
 							<span
 								class="absolute inset-x-0 bottom-0 flex h-3 cursor-ns-resize items-end justify-center pb-0.5"
 								style="touch-action: none"

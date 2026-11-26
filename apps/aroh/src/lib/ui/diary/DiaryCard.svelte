@@ -4,19 +4,25 @@
 	import Dumbbell from '@lucide/svelte/icons/dumbbell';
 	import KeyRound from '@lucide/svelte/icons/key-round';
 	import Lock from '@lucide/svelte/icons/lock';
-	import Mic from '@lucide/svelte/icons/mic';
 	import NotebookPen from '@lucide/svelte/icons/notebook-pen';
+	import Pencil from '@lucide/svelte/icons/pencil';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import Sunrise from '@lucide/svelte/icons/sunrise';
 	import Utensils from '@lucide/svelte/icons/utensils';
 	import { Button } from '$lib/ui/primitives/button';
-	import { formatDate, formatTime } from '$lib/ui/format';
-	import type { DiaryDayView } from '$lib/app/diary';
+	import { formatDate, formatTime, formatYmd } from '$lib/ui/format';
+	import DiaryCardEdit from './DiaryCardEdit.svelte';
+	import DiaryWords from './DiaryWords.svelte';
+	import { diaryDeleteEntry, diaryEditCard, diaryEditEntry, diaryMoveEntry, diaryRedo, redoNeedsConfirm, type CardDraft, type DayResult, type DiaryDayView } from '$lib/app/diary';
 
 	/**
 	 * One diary day card (Q85). `compact` is the summary row used on the calendar day and for past
 	 * days (`onopen` opens the full card); `full` shows the summary, mood and energy, highlights, the
-	 * done sessions (`onaction`), food, water, workout, notes for tomorrow and every verbatim entry.
-	 * With no structure it shows the words and `note` (the no-key line by default, `onsettings`).
+	 * done sessions (`onaction`), food, water, workout, notes for tomorrow and the verbatim entries
+	 * behind a toggle. With no structure it shows `note` (the no-key line by default, `onsettings`).
+	 * Given `onchange`, the full card offers Redo summary, editing every card field and editing or
+	 * deleting entries (B118 to B120) or moving them to another day (B127), and hands each fresh
+	 * day and note to `onchange`.
 	 */
 	let {
 		day,
@@ -26,13 +32,51 @@
 		note = null,
 		onopen,
 		onaction,
-		onsettings
-	}: { day: DiaryDayView; mode?: 'compact' | 'full'; zone: string; title?: string; note?: string | null; onopen?: () => void; onaction?: (id: string) => void; onsettings?: () => void } = $props();
+		onsettings,
+		onchange
+	}: {
+		day: DiaryDayView;
+		mode?: 'compact' | 'full';
+		zone: string;
+		title?: string;
+		note?: string | null;
+		onopen?: () => void;
+		onaction?: (id: string) => void;
+		onsettings?: () => void;
+		onchange?: (next: { view: DiaryDayView; note: string | null }) => void;
+	} = $props();
 	const noKey = $derived(!!note?.startsWith('Add your Claude key'));
 
 	const s = $derived(day.structure);
 	const label = $derived(title ?? formatDate(day.day, { weekday: 'long', day: 'numeric', month: 'long' }));
 	const count = $derived(`${day.entries.length} ${day.entries.length === 1 ? 'entry' : 'entries'}`);
+	let editing = $state(false);
+	let confirming = $state(false);
+	let redoing = $state(false);
+	let failure = $state<string | null>(null);
+
+	/** Hands a successful result to `onchange`; returns the failure sentence or null. */
+	function apply(r: DayResult): string | null {
+		if (!r.ok) return r.message;
+		onchange?.({ view: r.view, note: r.note });
+		return null;
+	}
+
+	/** Redo summary (B118): asks first when the card holds the owner's edits, then restructures. */
+	async function redo(confirmed = false) {
+		if (!confirmed && redoNeedsConfirm(day)) return void (confirming = true);
+		confirming = false;
+		redoing = true;
+		failure = apply(await diaryRedo(day.day, day.done));
+		redoing = false;
+	}
+
+	/** Saves the edit form's draft; closes the form when it saved. */
+	async function save(draft: CardDraft): Promise<string | null> {
+		const error = apply(await diaryEditCard(day.day, draft, day.done));
+		if (!error) editing = false;
+		return error;
+	}
 </script>
 
 {#snippet scale(name: string, value: number)}
@@ -77,9 +121,14 @@
 				<h3 class="text-lg font-semibold">{label}</h3>
 				<p class="flex items-center gap-1 text-xs text-muted"><Lock class="size-3" aria-hidden="true" />End-to-end encrypted · {count}</p>
 			</div>
+			{#if s && onchange && !editing}
+				<Button variant="ghost" size="touch" onclick={() => ((editing = true), (confirming = false))}><Pencil />Edit</Button>
+			{/if}
 		</header>
 
-		{#if s}
+		{#if s && editing}
+			<DiaryCardEdit structure={s} onsave={save} oncancel={() => (editing = false)} />
+		{:else if s}
 			<p class="text-base">{s.summary}</p>
 			<div class="flex flex-col gap-1.5">{@render scale('Mood', s.mood)}{@render scale('Energy', s.energy)}</div>
 
@@ -87,10 +136,11 @@
 				<section class="flex flex-col gap-1" aria-label="Highlights">
 					<h4 class="text-sm font-semibold">Highlights</h4>
 					<ul class="flex list-disc flex-col gap-0.5 pl-5 text-sm">
-						{#each s.highlights as h (h)}<li>{h}</li>{/each}
+						{#each s.highlights as h, i (i)}<li>{h}</li>{/each}
 					</ul>
 				</section>
 			{/if}
+			{#if day.stale}<p class="text-sm text-muted">Your newest words are not in this edited card. Redo summary to include them.</p>{/if}
 		{/if}
 
 		{#if day.done.length}
@@ -111,7 +161,7 @@
 			</section>
 		{/if}
 
-		{#if s}
+		{#if s && !editing}
 			<ul class="flex flex-col divide-y divide-border border-y border-border">
 				{@render line(Utensils, 'Food', s.food)}
 				{@render line(Droplet, 'Water', s.water)}
@@ -126,7 +176,8 @@
 					</div>
 				</section>
 			{/if}
-		{:else}
+			{#if note}<p class="text-sm font-medium" role="status">{note}</p>{/if}
+		{:else if !s}
 			<section class="flex flex-col gap-2 rounded-sm border border-dashed border-border-strong p-3" aria-label="Not structured">
 				{#if noKey}
 					<p class="flex items-start gap-2 text-sm font-medium"><KeyRound class="mt-0.5 size-4 shrink-0" aria-hidden="true" />Add your Claude key in Settings to structure this day</p>
@@ -138,18 +189,38 @@
 			</section>
 		{/if}
 
-		<section class="flex flex-col gap-1" aria-label="Your words">
-			<h4 class="text-sm font-semibold">Your words</h4>
-			<ol class="flex flex-col divide-y divide-border">
-				{#each day.entries as e (e.id)}
-					<li class="flex gap-3 py-2">
-						<time datetime={e.at} class="flex w-12 shrink-0 items-start gap-1 text-sm text-muted tabular-nums">{formatTime(e.at, zone)}{#if e.source === 'voice'}<Mic class="mt-0.5 size-3" aria-label="Spoken" />{/if}</time>
-						<p class="min-w-0 flex-1 text-sm wrap-anywhere">{e.text}</p>
-					</li>
-				{/each}
-			</ol>
-		</section>
+		{#if onchange && !editing && !noKey && day.entries.length}
+			<div class="flex flex-col gap-2">
+				{#if confirming}
+					<div role="alertdialog" aria-label="Replace your edits" class="flex flex-col gap-2 rounded-sm border border-border bg-surface-2 p-3">
+						<p class="text-sm">You edited this card. Redo summary replaces your edits with a new summary from your words.</p>
+						<div class="flex justify-end gap-2">
+							<Button variant="outline" size="touch" onclick={() => (confirming = false)}>Keep my edits</Button>
+							<Button size="touch" onclick={() => void redo(true)}>Redo anyway</Button>
+						</div>
+					</div>
+				{:else}
+					<Button variant="outline" size="touch" class="self-start" disabled={redoing} onclick={() => void redo()}><RotateCcw />{s ? 'Redo summary' : 'Structure now'}</Button>
+				{/if}
+				{#if redoing}<p class="text-sm text-muted" role="status">Redoing the summary on the Aroh engine…</p>{/if}
+				{#if failure}<p class="text-sm text-status-missed" role="alert">{failure}</p>{/if}
+			</div>
+		{/if}
 
-		{#if s}<p class="text-xs text-muted">Structured at {formatTime(s.structuredAt, zone)} by the Aroh engine.</p>{/if}
+		<DiaryWords
+			entries={day.entries}
+			{zone}
+			day={day.day}
+			onedit={onchange ? async (id, text) => apply(await diaryEditEntry(day.day, id, text, day.done)) : undefined}
+			today={formatYmd(new Date().toISOString(), zone)}
+			onmove={onchange ? async (id, to) => apply(await diaryMoveEntry(day.day, id, to, day.done)) : undefined}
+			ondelete={onchange ? async (id) => apply(await diaryDeleteEntry(day.day, id, day.done)) : undefined}
+		/>
+
+		{#if s}
+			<p class="text-xs text-muted">
+				Structured at {formatTime(s.structuredAt, zone)} by the Aroh engine.{#if s.editedAt}{' '}Edited by you at {formatTime(s.editedAt, zone)}.{/if}
+			</p>
+		{/if}
 	</article>
 {/if}

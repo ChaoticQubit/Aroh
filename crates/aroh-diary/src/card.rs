@@ -24,7 +24,8 @@ pub enum Source {
 }
 
 /// One diary entry as sealed into a `diary_entries` row: the owner's words
-/// verbatim, when and how they were logged. Immutable once written.
+/// verbatim, when and how they were logged. Only the owner changes the words
+/// (B120); `at` and `source` stay as first logged.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
@@ -35,7 +36,9 @@ pub struct Entry {
 
 /// One day's structured card as sealed into a `diary_days` row. It is derived
 /// from the day's entries; `entry_ids` lists the entries it covers, so an
-/// entry missing from it means the card is stale and gets rebuilt.
+/// entry missing from it means the card is stale and gets rebuilt. `edited_at`
+/// is set once the owner edits the card and is left out of unedited cards, so
+/// readers built before B120 still open them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Card {
@@ -51,6 +54,24 @@ pub struct Card {
     pub workout: Option<String>,
     pub notes_for_tomorrow: Option<String>,
     pub structured_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited_at: Option<DateTime<Utc>>,
+}
+
+/// The fields of a card the owner edits on the phone (B120). Text is trimmed,
+/// an empty food, water, workout or note line clears it and blank highlights
+/// are dropped before the card's bounds are checked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CardEdit {
+    pub summary: String,
+    pub mood: u8,
+    pub energy: u8,
+    pub highlights: Vec<String>,
+    pub food: Option<String>,
+    pub water: Option<String>,
+    pub workout: Option<String>,
+    pub notes_for_tomorrow: Option<String>,
 }
 
 /// What an agent run may read about one day: never the verbatim entries.
@@ -176,6 +197,31 @@ impl Card {
         entry_ids.iter().any(|id| !self.entry_ids.contains(id))
     }
 
+    /// Returns this card with the owner's `edit` applied at `at`: the same day,
+    /// covered entries and structuring time, `edited_at` set. Returns `Invalid`
+    /// naming the field when the edited card breaks a bound.
+    pub fn with_edit(&self, edit: CardEdit, at: DateTime<Utc>) -> Result<Card> {
+        if edit.highlights.len() > HIGHLIGHTS_MAX * 2 {
+            return Err(invalid("highlights", "too many"));
+        }
+        let line = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let card = Card {
+            summary: edit.summary.trim().to_string(),
+            mood: edit.mood,
+            energy: edit.energy,
+            highlights: edit.highlights.into_iter().filter_map(|h| line(Some(h))).collect(),
+            food: line(edit.food),
+            water: line(edit.water),
+            workout: line(edit.workout),
+            notes_for_tomorrow: line(edit.notes_for_tomorrow),
+            edited_at: Some(at),
+            ..self.clone()
+        };
+        card.validate()?;
+        assert_eq!(card.entry_ids, self.entry_ids, "an edit keeps the covered entries");
+        Ok(card)
+    }
+
     /// Returns what an agent run may read about this day.
     pub fn for_agents(&self) -> AgentDay {
         AgentDay {
@@ -208,7 +254,62 @@ mod tests {
             workout: Some("Core, 30 min".into()),
             notes_for_tomorrow: Some("Stretch first.".into()),
             structured_at: "2026-11-26T21:21:00Z".parse().unwrap(),
+            edited_at: None,
         }
+    }
+
+    fn edit() -> CardEdit {
+        CardEdit {
+            summary: "  Better than it looked.  ".into(),
+            mood: 5,
+            energy: 3,
+            highlights: vec!["Piano clicked".into(), "  ".into(), "Called mum".into()],
+            food: Some("Rice bowl, salad".into()),
+            water: Some("   ".into()),
+            workout: None,
+            notes_for_tomorrow: Some("Sleep by 11.".into()),
+        }
+    }
+
+    #[test]
+    fn an_edit_keeps_the_covered_entries_and_marks_the_card() {
+        let at = "2026-11-26T22:00:00Z".parse().unwrap();
+        let edited = card().with_edit(edit(), at).unwrap();
+        assert_eq!(edited.entry_ids, card().entry_ids);
+        assert_eq!(edited.structured_at, card().structured_at);
+        assert_eq!(edited.edited_at, Some(at));
+        assert_eq!(edited.summary, "Better than it looked.");
+        assert_eq!((edited.mood, edited.energy), (5, 3));
+        assert_eq!(edited.highlights, vec!["Piano clicked".to_string(), "Called mum".to_string()]);
+        assert_eq!(edited.water, None);
+        assert_eq!(edited.workout, None);
+        assert!(!edited.is_stale(&[E1.into()]));
+        assert_eq!(Card::from_bytes(&edited.to_bytes()).unwrap(), edited);
+    }
+
+    #[test]
+    fn an_edit_keeps_the_card_bounds() {
+        let at = "2026-11-26T22:00:00Z".parse().unwrap();
+        assert!(card().with_edit(CardEdit { summary: "   ".into(), ..edit() }, at).is_err());
+        assert!(card().with_edit(CardEdit { mood: 0, ..edit() }, at).is_err());
+        assert!(card().with_edit(CardEdit { energy: 6, ..edit() }, at).is_err());
+        assert!(card().with_edit(CardEdit { highlights: vec!["h".into(); HIGHLIGHTS_MAX + 1], ..edit() }, at).is_err());
+        assert!(card().with_edit(CardEdit { highlights: vec!["h".repeat(LINE_CHARS_MAX + 1)], ..edit() }, at).is_err());
+        assert!(card().with_edit(CardEdit { food: Some("f".repeat(LINE_CHARS_MAX + 1)), ..edit() }, at).is_err());
+        assert!(card().with_edit(CardEdit { notes_for_tomorrow: Some("n".repeat(SUMMARY_CHARS_MAX + 1)), ..edit() }, at).is_err());
+        assert!(card().with_edit(CardEdit { summary: "bell\u{7}".into(), ..edit() }, at).is_err());
+        assert!(card().with_edit(CardEdit { highlights: vec![" ".into(); HIGHLIGHTS_MAX + 1], ..edit() }, at).unwrap().highlights.is_empty());
+        assert!(card().with_edit(CardEdit { highlights: vec![" ".into(); HIGHLIGHTS_MAX * 2 + 1], ..edit() }, at).is_err());
+    }
+
+    #[test]
+    fn cards_before_edits_still_open_and_unedited_cards_serialize_as_before() {
+        let old = br#"{"v":1,"day":"2026-11-26","entry_ids":["0193a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"],"summary":"A steady day.","mood":4,"energy":2,"highlights":["Piano clicked"],"food":"Rice bowl","water":null,"workout":"Core, 30 min","notes_for_tomorrow":"Stretch first.","structured_at":"2026-11-26T21:21:00Z"}"#;
+        assert_eq!(Card::from_bytes(old).unwrap(), card());
+        assert_eq!(serde_json::to_vec(&card()).unwrap(), old.to_vec());
+        let edited = card().with_edit(edit(), "2026-11-26T22:00:00Z".parse().unwrap()).unwrap();
+        let text = String::from_utf8(edited.to_bytes().to_vec()).unwrap();
+        assert!(text.contains(r#""edited_at":"2026-11-26T22:00:00Z""#));
     }
 
     #[test]

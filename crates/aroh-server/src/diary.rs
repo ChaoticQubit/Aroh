@@ -107,7 +107,7 @@ pub async fn structure(deps: &Deps, user: Uuid, req: &StructureRequest) -> Resul
     }
     let owner = user.to_string();
     let entries = req.open(&key, &owner).map_err(|_| ServerError::BadRequest("An entry of this day could not be opened with your diary key.".into()))?;
-    let prompt = aroh_diary::prompt(&req.day, &entries, &req.fields).map_err(|e| ServerError::BadRequest(e.to_string()))?;
+    let prompt = aroh_diary::prompt(&req.day, &entries, &req.fields, req.utc_offset_minutes).map_err(|e| ServerError::BadRequest(e.to_string()))?;
     drop(entries);
     let mut call = CompletionRequest::user(prompt.user.as_str(), STRUCTURE_MAX_TOKENS);
     call.system = Some(prompt.system.clone());

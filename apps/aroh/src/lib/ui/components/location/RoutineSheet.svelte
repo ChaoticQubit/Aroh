@@ -24,7 +24,7 @@
 	const { zone } = getClock();
 	let asking = $derived(confirming || routine === null);
 	const title = $derived(routine ? routine.title : 'Routines');
-	const PANEL = 'flex flex-col gap-3 rounded-t-[var(--radius-dialog)] border-t border-border bg-bg px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]';
+	const PANEL = 'flex flex-col gap-3 rounded-t-[var(--radius-dialog)] border-t border-border bg-bg pt-2 pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))]';
 </script>
 
 {#snippet body()}

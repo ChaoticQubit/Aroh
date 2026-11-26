@@ -41,7 +41,7 @@
 </script>
 
 <div class="flex h-full min-h-0 bg-bg text-fg">
-	<aside class="flex w-(--sidebar) shrink-0 flex-col gap-6 border-r border-border bg-bg p-2">
+	<aside class="flex w-[calc(var(--sidebar)+env(safe-area-inset-left))] shrink-0 flex-col gap-6 border-r border-border bg-bg p-2 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))]">
 		<p class="flex items-center gap-2 px-3 pt-2 text-sm font-semibold"><Logo size={20} label="" />Aroh</p>
 		<nav aria-label="Main" class="flex flex-col gap-0.5">
 			{#each tabs as t (t.id)}
@@ -71,8 +71,8 @@
 			</button>
 		</div>
 	</aside>
-	<div class="flex min-w-0 flex-1 flex-col">
-		<header class="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-border px-6">
+	<div class="flex min-w-0 flex-1 flex-col pb-[env(safe-area-inset-bottom)]">
+		<header class="box-content flex h-12 shrink-0 items-center justify-between gap-4 border-b border-border pt-[env(safe-area-inset-top)] pr-[max(1.5rem,env(safe-area-inset-right))] pl-6">
 			<div class="flex min-w-0 items-center gap-2">
 				{#if back}
 					<button type="button" class="-ml-3 flex h-8 items-center gap-0.5 rounded-sm pr-2 pl-1 text-sm text-muted outline-none hover:text-fg focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Back to {back.label}" onclick={() => onback?.()}><ChevronLeft class="size-4" aria-hidden="true" />{back.label}</button>
@@ -81,7 +81,7 @@
 			</div>
 			{#if actions}<div class="flex items-center gap-2">{@render actions()}</div>{/if}
 		</header>
-		<main class="@container min-h-0 flex-1 overflow-y-auto bg-surface">
+		<main class="@container min-h-0 flex-1 overflow-y-auto bg-surface pr-[env(safe-area-inset-right)]">
 			{@render children()}
 		</main>
 	</div>

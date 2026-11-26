@@ -1,3 +1,5 @@
+import { endFollower } from './follow';
+
 /** Lines a composer grows to before it scrolls inside. */
 export const GROW_LINES = 6;
 
@@ -14,9 +16,11 @@ export function grownHeight(content: number, line: number, pad: number): { heigh
 
 /**
  * Svelte action for a textarea: fits its height to the text on every input and whenever the
- * bound `value` changes (dictation writes it), up to `GROW_LINES`, then scrolls inside.
+ * bound `value` changes (dictation writes it), up to `GROW_LINES`, then scrolls inside. A value
+ * that did not come from typing then shows its end, caret and scroll (`endFollower`).
  */
 export function grow(el: HTMLTextAreaElement, _value?: string) {
+	const end = endFollower(el);
 	const fit = () => {
 		const style = getComputedStyle(el);
 		const line = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4;
@@ -26,10 +30,18 @@ export function grow(el: HTMLTextAreaElement, _value?: string) {
 		el.style.height = `${next.height}px`;
 		el.style.overflowY = next.scroll ? 'auto' : 'hidden';
 	};
-	el.addEventListener('input', fit);
+	const typed = () => {
+		end.typed();
+		fit();
+	};
+	el.addEventListener('input', typed);
 	queueMicrotask(fit);
 	return {
-		update: () => queueMicrotask(fit),
-		destroy: () => el.removeEventListener('input', fit)
+		update: () =>
+			queueMicrotask(() => {
+				fit();
+				end.sync();
+			}),
+		destroy: () => el.removeEventListener('input', typed)
 	};
 }

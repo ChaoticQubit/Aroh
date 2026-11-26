@@ -25,7 +25,7 @@
 
 <div class="p-4">
 	{#if view}
-		<DiaryCard day={view} zone={clock.zone} title={formatDate(view.day, { weekday: 'long', day: 'numeric', month: 'long' })} {note} onaction={(id) => void goto(`/actions/${id}`)} onsettings={() => void goto('/settings/key')} />
+		<DiaryCard day={view} zone={clock.zone} title={formatDate(view.day, { weekday: 'long', day: 'numeric', month: 'long' })} {note} onaction={(id) => void goto(`/actions/${id}`)} onsettings={() => void goto('/settings/key')} onchange={(r) => ((view = r.view.entries.length ? r.view : null), (note = r.note))} />
 	{:else if view === null}
 		<p class="text-sm text-muted">No diary for this day on this phone.</p>
 	{/if}

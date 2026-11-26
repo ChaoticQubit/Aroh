@@ -4,6 +4,7 @@
 	import { Button } from '$lib/ui/primitives/button';
 	import { Dictation, type Speech } from '$lib/app/speech.svelte';
 	import DictationNotice from './inputs/DictationNotice.svelte';
+	import { follow } from '$lib/ui/follow';
 
 	/**
 	 * Sticky quick-log bar: text field, send and, given `voice`, a mic that dictates into the field.
@@ -33,7 +34,7 @@
 	>
 		<div class="flex max-w-5xl items-center gap-1">
 			<label for={id} class="sr-only">Quick log</label>
-			<input {id} bind:value={draft} placeholder="Log a meal, weight or note" class="h-11 min-w-0 flex-1 rounded-sm border border-input bg-transparent px-3 text-lg outline-none placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" />
+			<input {id} bind:value={draft} use:follow={draft} placeholder="Log a meal, weight or note" class="h-11 min-w-0 flex-1 rounded-sm border border-input bg-transparent px-3 text-lg outline-none placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" />
 			{#if dictation}
 				<Button variant={dictation.listening ? 'default' : 'ghost'} size="icon-touch" type="button" aria-label={dictation.listening ? 'Stop speaking' : 'Speak a log entry'} aria-pressed={dictation.listening} onclick={() => void dictation.toggle()}><Mic /></Button>
 			{/if}
