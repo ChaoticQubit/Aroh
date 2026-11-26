@@ -21,8 +21,11 @@ export type GoalHeader = {
 /** One Inbox card with the id of the row a decision applies to. */
 export type InboxItem = { id: string; spec: ComponentSpec };
 
-/** One agent run in progress, as the Inbox lists it. */
-export type RunView = { persona: string; title: string; step: string; progress: number; tone: Tone; working: boolean; href?: string };
+/** Which kind of Inbox entry a delete applies to (B115). */
+export type DeleteGroup = 'triage' | 'approval' | 'suggestion' | 'insight' | 'place' | 'run';
+
+/** One agent run in progress, as the Inbox lists it. `id` is the run id; `confirm` is set when deleting it cancels the run (B115). */
+export type RunView = { id?: string; confirm?: boolean; persona: string; title: string; step: string; progress: number; tone: Tone; working: boolean; href?: string };
 
 /** One model provider of the Settings dropdown. */
 export type ProviderView = { id: string; name: string; protocol: string; models: string[]; keySet: boolean; last4: string | null; selfHosted: boolean };

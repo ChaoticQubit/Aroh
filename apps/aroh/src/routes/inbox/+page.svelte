@@ -6,9 +6,12 @@
 	import { follow } from '$lib/app/chat.svelte';
 	import { ACTIVE, engine, unreachable, type Insight, type RunSummary, type Waiting } from '$lib/app/engine';
 	import { refreshRuns } from '$lib/app/realtime';
-	import { decisionsFrom, deviceSuggestions, finishTriage, refreshSuggestions, triageCards } from '$lib/app/calendar';
+	import { decisionsFrom, deviceSuggestions, finishTriage, IGNORE, refreshSuggestions, triageCards } from '$lib/app/calendar';
+	import { clearAll, deleteEntry, dismissedList, type InboxDeps } from '$lib/app/inbox';
+	import type { DeleteGroup } from '$lib/ui/screens/types';
 	import { inboxView } from '$lib/app/views';
 	import { openProposals, withOpened, type OpenedProposal } from '$lib/app/diary';
+	import { decideProposal } from '$lib/app/proposals';
 	import * as location from '$lib/app/location';
 	import { getClock } from '$lib/ui/clock';
 
@@ -22,6 +25,19 @@
 	let places = $state<location.LocationView | null>(null);
 	let offline = $state(false);
 	let opened = $state<Record<string, OpenedProposal>>({});
+	let insightsRead = $state(false);
+	let hiddenTriage = $state<string[]>([]);
+
+	const inbox = $derived.by(() => {
+		if (!s) return null;
+		const view = inboxView({ ...s, proposals: withOpened(s.proposals, opened) }, runs, insights, clock.zone, clock.now, waits);
+		return {
+			...view,
+			approvals: [...(places ? location.patternItems(places) : []), ...view.approvals],
+			places: places ? location.placePrompts(places, s) : [],
+			triage: triageCards(triage?.waiting).filter((t) => !hiddenTriage.includes(t.id))
+		};
+	});
 
 	$effect(() => {
 		const list = s?.proposals ?? [];
@@ -34,6 +50,7 @@
 		offline = unreachable(r);
 		runs = r.ok ? r.value : [];
 		insights = i.ok ? i.value : [];
+		insightsRead = i.ok;
 		waits = await engine.waits(runs);
 		await loadTriage();
 	}
@@ -51,10 +68,16 @@
 		waits = w;
 	}
 
-	/** Reads the calendar-triage run waiting at `decide` for the group cards and keeps its day suggestions. */
+	/**
+	 * Reads the calendar-triage run waiting at `decide` for the group cards and keeps its day
+	 * suggestions. Answers and deleted cards held for that run stay until the run changes.
+	 */
 	async function loadTriage() {
+		const before = triage?.runId ?? null;
 		triage = data.snapshot ? await refreshSuggestions(data.snapshot, deviceSuggestions(runs)) : null;
+		if ((triage?.runId ?? null) === before) return;
 		answers = {};
+		hiddenTriage = [];
 	}
 
 	/** Holds one group's answer; once every group is answered, posts them together and finishes the run. */
@@ -86,25 +109,55 @@
 	}
 
 	/**
-	 * The replan run of `goalId` waiting at `approve` for proposal `id`, if any. Such a proposal is
-	 * decided through the run, so the engine applies it once and the run does not stay waiting.
+	 * The ids an insight card can have now (engine insights, device notes, Busy-day and fixed-clash
+	 * notes), or null while the engine insights are unread, so no dismissal is dropped as gone.
 	 */
-	async function waitingRun(goalId: string, id: string): Promise<string | null> {
-		const list = await engine.runs({ goalId, state: 'waiting_human' });
-		for (const r of list.ok ? list.value : []) {
-			const v = await engine.run(r.run_id);
-			const w = v.ok ? v.value.waiting.find((x) => x.node === 'approve') : undefined;
-			if ((w?.data.proposal_record as { proposal_id?: string } | undefined)?.proposal_id === id) return r.run_id;
-		}
-		return null;
+	function liveInsights(): Set<string> | null {
+		if (!insightsRead) return null;
+		const ids = [...insights, ...(s?.notes ?? [])].map((i) => i.id);
+		return new Set([...ids, ...(s?.busy ?? []).map((b) => b.id), ...(s?.actions ?? []).filter((a) => a.locked).map((a) => a.id)]);
 	}
 
-	/** The dismissed insight ids still shown (engine insights, device notes, Busy-day and fixed-clash notes), plus `id`. */
-	function dismissedWith(id: string): string {
-		const ids = [...insights, ...(s?.notes ?? [])].map((i) => i.id);
-		const shown = new Set([...ids, ...(s?.busy ?? []).map((b) => b.id), ...(s?.actions ?? []).filter((a) => a.locked).map((a) => a.id)]);
-		const kept = (s?.settings.dismissed_insights ?? '').split(',').filter((x) => shown.has(x) && x !== id);
-		return [...kept, id].slice(-30).join(',');
+	/** Stores insight `ids` as dismissed on this device. */
+	function dismissInsights(ids: string[]) {
+		return data.run(() => client.setSetting('dismissed_insights', dismissedList(s?.settings.dismissed_insights, ids, liveInsights())));
+	}
+
+	/** What the shared Inbox delete logic (`inbox.ts`) needs from this page (B115). */
+	const deps: InboxDeps = {
+		decide: (group, id, decision) => ondecide(group, id, decision),
+		ignoreGroup: async (name) => {
+			hiddenTriage = [...hiddenTriage, name];
+			await decideGroup(name, [IGNORE]);
+		},
+		ignorePlace: (id) => data.run(() => location.decidePrompt(id, { kind: 'ignore' })),
+		dismissInsights,
+		storeRuns: async (ids) => {
+			const live = offline ? null : new Set(runs.map((r) => r.run_id));
+			await data.run(() => client.setSetting('dismissed_runs', dismissedList(s?.settings.dismissed_runs, ids, live)));
+			await refresh();
+		},
+		cancelRun: (id) => engine.cancel(id),
+		runState: (id) => runs.find((r) => r.run_id === id)?.state
+	};
+
+	/** Shows the refusals of runs that would not stop. */
+	function refusedRuns(messages: string[]) {
+		if (messages.length) data.error = `The run was not stopped: ${messages.join('; ')}`;
+	}
+
+	/** Deletes one Inbox entry (B115). */
+	async function ondelete(group: DeleteGroup, id: string) {
+		refusedRuns(await deleteEntry(group, id, deps));
+	}
+
+	/** Clears the Inbox (B115), every unanswered calendar group of the waiting triage included. */
+	async function onclear() {
+		if (!inbox) return;
+		const v = inbox;
+		const groups = triageCards(triage?.waiting).map((t) => t.id).filter((name) => !(name in answers));
+		const shown = { places: v.places.map((p) => p.id), approvals: v.approvals.map((a) => a.id), suggestions: v.suggestions.map((f) => f.id), insights: v.insights.map((i) => i.id), groups, runs: v.runs.flatMap((r) => (r.id ? [r.id] : [])) };
+		refusedRuns(await clearAll(shown, deps));
 	}
 
 	/**
@@ -115,15 +168,14 @@
 		if (group === 'triage') return decideGroup(id, decision);
 		const yes = decision === 'apply';
 		if (group === 'suggestion') return data.run(() => client.decidePreference(id, yes));
-		if (group === 'insight') return data.run(() => client.setSetting('dismissed_insights', dismissedWith(id)));
+		if (group === 'insight') return dismissInsights([id]);
 		if (group !== 'approval') return;
 		if (id.startsWith(location.PATTERN_PREFIX)) return data.run(() => location.decidePattern(id.slice(location.PATTERN_PREFIX.length), yes));
-		const goalId = s?.proposals.find((p) => p.id === id)?.goal_id;
-		const runId = goalId ? await waitingRun(goalId, id) : null;
-		if (!runId) return data.run(() => client.decideProposal(id, yes));
-		const answered = await engine.answer(runId, 'approve', yes);
-		if (!answered.ok) return void (data.error = answered.message);
-		await follow(runId);
+		const decided = await decideProposal(id, s?.proposals.find((p) => p.id === id)?.goal_id ?? null, yes);
+		if (!decided.ok) return void (data.error = decided.message);
+		data.error = null;
+		if (!decided.value) return;
+		await follow(decided.value);
 		await loadRuns();
 	}
 </script>
@@ -134,14 +186,6 @@
 		<button type="button" class="min-h-11 rounded-sm border border-border bg-bg px-3 text-sm text-fg outline-none focus-visible:ring-3 focus-visible:ring-ring/50" onclick={() => void loadRuns()}>Retry</button>
 	</div>
 {/if}
-{#if s}
-	{@const inbox = inboxView({ ...s, proposals: withOpened(s.proposals, opened) }, runs, insights, clock.zone, clock.now, waits)}
-	<InboxScreen
-		{...inbox}
-		approvals={[...(places ? location.patternItems(places) : []), ...inbox.approvals]}
-		places={places ? location.placePrompts(places, s) : []}
-		triage={triageCards(triage?.waiting)}
-		{ondecide}
-		{onplace}
-	/>
+{#if inbox}
+	<InboxScreen {...inbox} {ondecide} {onplace} {ondelete} {onclear} />
 {/if}

@@ -1,5 +1,6 @@
 import type { Proposal } from './client';
 import { pauseMessage, progressLines, stopMessage, type EngineResult, type RunView } from './engine';
+import { when } from './diff';
 
 /** How long an edit may wait for the server's check, or a run for the engine, before the app says it has not started. */
 export const NOT_STARTED_MS = 60_000;
@@ -26,14 +27,6 @@ export type Phase = {
 	runId?: string;
 	undo?: boolean;
 };
-
-/** Short local weekday and time of `iso` in `zone`, "Tue 15:00". */
-function when(iso: string, zone: string): string {
-	const d = new Date(iso);
-	const day = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: zone }).format(d);
-	const time = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: zone }).format(d);
-	return `${day} ${time}`;
-}
 
 /** Minutes and seconds of `ms`, "1:15". */
 function clock(ms: number): string {
@@ -67,7 +60,7 @@ function unreachable(server: Extract<EngineResult<EditReplan>, { ok: false }>): 
 /** The phase of a run the server started for the edit, once its view is read. */
 function runPhase(o: Observed, run: RunView, runId: string): Phase {
 	const status = run.status.status;
-	if (status === 'waiting_human') return { kind: 'needs_you', text: 'Replanning needs your OK in Inbox.', tone: 'warn', runId };
+	if (status === 'waiting_human') return { kind: 'needs_you', text: 'Replanning needs your OK', tone: 'warn', runId };
 	if (status === 'failed' || status === 'waiting_budget') {
 		const reason = stopMessage(run.status) ?? pauseMessage(run.status) ?? 'The run stopped.';
 		return { kind: 'failed', text: `Could not replan. ${reason}`, tone: 'missed', runId };

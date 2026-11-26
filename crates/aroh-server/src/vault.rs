@@ -269,8 +269,9 @@ impl Vault {
         open(&dek, aad, nonce, ct)
     }
 
-    /// Stores `user`'s diary key sealed by their data key (agents read toggle
-    /// on), replacing an older copy. Returns the stored version.
+    /// Stores `user`'s diary key sealed by their data key, replacing an older
+    /// copy (Q94: the server always holds it). A new copy starts with agents
+    /// reading off; a replaced one keeps the toggle. Returns the stored version.
     pub async fn diary_set(&self, user: Uuid, key: &aroh_diary::DiaryKey) -> Result<i64, ServerError> {
         let (sealed, nonce) = self.seal_for(user, &diary_aad(user, key.version()), key.bytes()).await?;
         db::query(
@@ -287,20 +288,20 @@ impl Vault {
         Ok(key.version())
     }
 
-    /// Deletes `user`'s server copy of the diary key (toggle off).
-    /// Returns true when a copy was deleted.
-    pub async fn diary_delete(&self, user: Uuid) -> Result<bool, ServerError> {
-        let done = db::query("delete from public.diary_keys where user_id = $1").bind(user).execute(&self.pool).await?;
+    /// Sets whether planning agents may read `user`'s diary. Returns false
+    /// when the server holds no diary key for `user`, so nothing changed.
+    pub async fn diary_agents(&self, user: Uuid, on: bool) -> Result<bool, ServerError> {
+        let done = db::query("update public.diary_keys set agents_read = $2 where user_id = $1").bind(user).bind(on).execute(&self.pool).await?;
         Ok(done.rows_affected() == 1)
     }
 
-    /// The version of `user`'s server copy of the diary key, None when the
-    /// agents read toggle is off. Never decrypts.
-    pub async fn diary_version(&self, user: Uuid) -> Result<Option<i64>, ServerError> {
-        Ok(db::query_scalar("select key_version from public.diary_keys where user_id = $1").bind(user).fetch_optional(&self.pool).await?)
+    /// The version of `user`'s server copy of the diary key and whether
+    /// agents may read the diary; None when no copy is held. Never decrypts.
+    pub async fn diary_state(&self, user: Uuid) -> Result<Option<(i64, bool)>, ServerError> {
+        Ok(db::query_as("select key_version, agents_read from public.diary_keys where user_id = $1").bind(user).fetch_optional(&self.pool).await?)
     }
 
-    /// Opens `user`'s diary key for one run, None when the toggle is off.
+    /// Opens `user`'s diary key for one call, None when no copy is held.
     /// Returns `Crypto` when the row does not open under this user.
     pub async fn diary_get(&self, user: Uuid) -> Result<Option<aroh_diary::DiaryKey>, ServerError> {
         let row: Option<(i64, Vec<u8>, Vec<u8>)> =

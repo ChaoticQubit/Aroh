@@ -1,5 +1,7 @@
 import type { Clock } from '$lib/ui/clock';
-import type { ActionView, CategorySlot, ChangeView, ComponentSpec, Point, SpecOf, Unit, ViewSpec } from '$lib/ui/contract';
+import { changeViews } from './diff';
+import { dismissedSet, runDelete } from './inbox';
+import type { ActionView, CategorySlot, ComponentSpec, Point, SpecOf, Unit, ViewSpec } from '$lib/ui/contract';
 import { daysBetween, formatDate, formatDay, formatTime, formatYmd, minuteOfDay, mondayOf, shiftDay } from '$lib/ui/format';
 import type { AutonomyLabel, CategoryView, GoalHeader, GoalRow, InboxItem, ProfileView, RunView, SettingsView } from '$lib/ui/screens/types';
 import { catalog } from './catalog';
@@ -16,7 +18,6 @@ export const SLOT_HUES: Record<CategorySlot, string> = { 1: '#4a6fa5', 2: '#4f7a
 
 const HUE_SLOT: Record<string, CategorySlot> = Object.fromEntries(Object.entries(SLOT_HUES).map(([slot, hue]) => [hue, Number(slot) as CategorySlot]));
 const UNITS: readonly Unit[] = ['kg', 'lb', 'cm', 'kcal', 'g', 'ml', 'L', 'min', 'reps', 'steps', 'usd', 'count'];
-const OPS: readonly ChangeView['op'][] = ['move', 'resize', 'create', 'delete'];
 const NO_CATEGORY: CategoryView = { name: 'No category', slot: 6 };
 const RECENT = 20;
 
@@ -271,17 +272,6 @@ export function goalProgress(s: Snapshot, stats: GoalStats[] | null, clock: Cloc
 	return out;
 }
 
-function changes(p: Proposal): ChangeView[] {
-	const list = (p.diff as { changes?: unknown } | null)?.changes;
-	if (!Array.isArray(list)) return [];
-	return list.flatMap((c) => {
-		const op = c?.op;
-		if (!OPS.includes(op) || typeof c.title !== 'string') return [];
-		const text = (v: unknown) => (typeof v === 'string' ? v : null);
-		return [{ op, title: c.title, before: text(c.before), after: text(c.after) }];
-	});
-}
-
 const WORKFLOW: Record<string, { title: string; persona: string }> = {
 	'new-goal': { title: 'Planning a new goal', persona: 'Goal planner' },
 	'run-again': { title: 'Planning the goal again', persona: 'Goal planner' },
@@ -296,15 +286,18 @@ const WORKFLOW: Record<string, { title: string; persona: string }> = {
  * status from the shared `runChip` and `working` (spins) only while the run still moves on its own. Progress is
  * coarse by state: 0 queued, 50 working, 100 stopped at a wait, a pause or a failure. A run that
  * waits for the owner says what for (`waits`, by run id, such as "3 questions to answer") and
- * links to its goal's chat.
+ * links to its goal's chat. A run the owner deleted (`dismissed_runs`) is left out, and no older
+ * run of its goal and workflow takes its place (B115). `confirm` marks a run whose delete cancels it.
  */
 function openRuns(s: Snapshot, runs: RunSummary[], waits: Record<string, string>): RunView[] {
 	const seen = new Set<string>();
+	const dismissed = dismissedSet(s.settings.dismissed_runs);
 	const out: RunView[] = [];
 	for (const r of runs) {
 		const key = `${r.goal_id}:${r.workflow}`;
 		if (r.state === 'done' || seen.has(key)) continue;
 		seen.add(key);
+		if (dismissed.has(r.run_id)) continue;
 		const goal = s.goals.find((g) => g.id === r.goal_id);
 		const kind = WORKFLOW[r.workflow] ?? { title: r.workflow, persona: 'Aroh' };
 		const progress = r.state === 'queued' ? 0 : r.state === 'running' || r.state === 'checkpointed' ? 50 : 100;
@@ -315,7 +308,7 @@ function openRuns(s: Snapshot, runs: RunSummary[], waits: Record<string, string>
 		const working = ACTIVE.includes(r.state);
 		console.assert(!working || state.tone === 'planned', 'only a working run is drawn as working');
 		const href = r.state === 'waiting_human' && r.goal_id ? `/goals/${r.goal_id}/chat` : undefined;
-		out.push({ persona: kind.persona, title: goal ? `${kind.title}: ${goal.title}` : `${kind.title} (${r.run_id.slice(0, 8)})`, step, progress, tone: state.tone, working, ...(href ? { href } : {}) });
+		out.push({ id: r.run_id, confirm: runDelete(r.state) === 'cancel', persona: kind.persona, title: goal ? `${kind.title}: ${goal.title}` : `${kind.title} (${r.run_id.slice(0, 8)})`, step, progress, tone: state.tone, working, ...(href ? { href } : {}) });
 	}
 	return out;
 }
@@ -394,7 +387,7 @@ export function inboxView(
 	waits: Record<string, string> = {}
 ): { approvals: InboxItem[]; suggestions: InboxItem[]; insights: InboxItem[]; runs: RunView[] } {
 	return {
-		approvals: s.proposals.map((p) => ({ id: p.id, spec: { kind: 'proposal_card', persona: personaFor(s, p.goal_id), summary: p.summary, changes: changes(p) } })),
+		approvals: s.proposals.map((p) => ({ id: p.id, spec: { kind: 'proposal_card', persona: personaFor(s, p.goal_id), summary: p.summary, changes: changeViews(p.diff, zone) } })),
 		suggestions: s.preferences.map((f) => ({ id: f.id, spec: { kind: 'proposal_card', persona: f.source, summary: f.fact, changes: [] } })),
 		insights: [...insightItems(s, insights), ...busyDayInsights(s, zone, now)],
 		runs: openRuns(s, runs, waits)

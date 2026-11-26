@@ -24,6 +24,10 @@
 				})
 			: null
 	);
+	$effect(() => {
+		const mic = dictation;
+		return () => void mic?.release();
+	});
 </script>
 
 {#if dictation}<DictationNotice {dictation} />{/if}

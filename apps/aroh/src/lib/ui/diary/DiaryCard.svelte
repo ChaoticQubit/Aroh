@@ -130,7 +130,7 @@
 			<section class="flex flex-col gap-2 rounded-sm border border-dashed border-border-strong p-3" aria-label="Not structured">
 				{#if noKey}
 					<p class="flex items-start gap-2 text-sm font-medium"><KeyRound class="mt-0.5 size-4 shrink-0" aria-hidden="true" />Add your Claude key in Settings to structure this day</p>
-					<p class="text-sm text-muted">Your words are saved, encrypted on this phone. Once a key is set, Aroh writes the summary, mood and energy, food, water and workout from them, straight from this phone.</p>
+					<p class="text-sm text-muted">Your words are saved and encrypted. Once your key is set, the Aroh engine writes the summary, mood and energy, food, water and workout from them.</p>
 					<Button variant="outline" class="min-h-11 self-start" onclick={() => onsettings?.()}>Open Settings</Button>
 				{:else}
 					<p class="text-sm font-medium">{note ?? 'Not structured yet. Your words are saved.'}</p>
@@ -150,6 +150,6 @@
 			</ol>
 		</section>
 
-		{#if s}<p class="text-xs text-muted">Structured at {formatTime(s.structuredAt, zone)} by Claude, from this phone.</p>{/if}
+		{#if s}<p class="text-xs text-muted">Structured at {formatTime(s.structuredAt, zone)} by the Aroh engine.</p>{/if}
 	</article>
 {/if}

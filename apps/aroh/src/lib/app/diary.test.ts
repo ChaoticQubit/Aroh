@@ -56,7 +56,9 @@ describe('diary view model', () => {
 		expect(structureNote('ok')).toBeNull();
 		expect(structureNote('empty')).toBeNull();
 		expect(structureNote('no_key')).toBe('Add your Claude key in Settings to structure this day');
-		expect(structureNote('the model answered 401')).toBe('Not structured: the model answered 401. Your words are saved.');
+		expect(structureNote('The AI provider did not answer. Try again in a moment.')).toBe('The AI provider did not answer. Try again in a moment. Your words are saved.');
+		expect(structureNote('The engine could not be reached. Your words are saved.')).toBe('The engine could not be reached. Your words are saved.');
+		expect(structureNote('locked: the diary key has not reached this phone yet')).toBe('locked: the diary key has not reached this phone yet. Your words are saved.');
 	});
 
 	it('knows the Mac answer', () => {

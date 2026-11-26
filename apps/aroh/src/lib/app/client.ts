@@ -119,7 +119,7 @@ export type Snapshot = {
 	providers: ProviderSetting[];
 	search: SearchSetting[];
 	budgets: Budget[];
-	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions' | 'agent_defaults', string>>;
+	settings: Partial<Record<'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'dismissed_runs' | 'setup_done' | 'day_suggestions' | 'agent_defaults', string>>;
 	pending_logs: { text: string; at: string }[];
 	busy?: BusyBlock[];
 	notes?: Note[];
@@ -245,7 +245,7 @@ export const saveProvider = (vendor: string, model: string) => invoke<ProviderSe
 export const saveBudget = (usd: number | null) => invoke<null>('app_save_budget', { usd });
 
 /** Stores one device setting. */
-export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'setup_done' | 'day_suggestions' | 'agent_defaults', value: string) => (
+export const setSetting = (name: 'server_url' | 'goal_budget_usd' | 'calendars' | 'health' | 'supabase_url' | 'supabase_anon_key' | 'dismissed_insights' | 'dismissed_runs' | 'setup_done' | 'day_suggestions' | 'agent_defaults', value: string) => (
 	SERVER_SETTINGS.includes(name) && engineCache.owner(null), invoke<null>('app_set_setting', { name, value })
 );
 

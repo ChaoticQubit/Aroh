@@ -55,15 +55,17 @@ fn settings_are_whitelisted_and_validated() {
 }
 
 #[test]
-fn dismissed_insights_hold_at_most_30_uuids() {
+fn dismissed_lists_hold_at_most_300_uuids() {
     let (conn, _, _) = setup();
-    let ids: Vec<String> = (0..30).map(|i| format!("0190f2a0-0000-7000-8000-{i:012}")).collect();
-    local::set_setting(&conn, "dismissed_insights", &ids.join(",")).unwrap();
-    assert_eq!(local::setting(&conn, "dismissed_insights").unwrap(), Some(ids.join(",")));
-    let too_many = format!("{},0190f2a0-0000-7000-8000-999999999999", ids.join(","));
-    assert!(local::set_setting(&conn, "dismissed_insights", &too_many).is_err());
-    assert!(local::set_setting(&conn, "dismissed_insights", "not-a-uuid").is_err());
-    assert!(local::set_setting(&conn, "dismissed_insights", "true").is_err());
+    let ids: Vec<String> = (0..local::MAX_DISMISSED).map(|i| format!("0190f2a0-0000-7000-8000-{i:012}")).collect();
+    for name in ["dismissed_insights", "dismissed_runs"] {
+        local::set_setting(&conn, name, &ids.join(",")).unwrap();
+        assert_eq!(local::setting(&conn, name).unwrap(), Some(ids.join(",")));
+        let too_many = format!("{},0190f2a0-0000-7000-8000-999999999999", ids.join(","));
+        assert!(local::set_setting(&conn, name, &too_many).is_err());
+        assert!(local::set_setting(&conn, name, "not-a-uuid").is_err());
+        assert!(local::set_setting(&conn, name, "true").is_err());
+    }
 }
 
 #[test]

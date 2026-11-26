@@ -10,6 +10,9 @@ import WebKit
 /// `SFSpeechRecognizer` with `requiresOnDeviceRecognition`, emitting `partial` events `{text}`.
 /// `stop` ends the audio and resolves `{transcript}` with the final text. Every `text` and
 /// `transcript` is the whole session so far, kept across the recognizer's restarts after a pause.
+/// A `start` always wins: it ends any older session (resolving its waiting stops) instead of
+/// refusing. An audio interruption, a media services reset or the app going to the background ends
+/// the session as if the recognizer finished.
 class SpeechPlugin: Plugin {
   private let engine = AVAudioEngine()
   private let finalWait: TimeInterval = 2.0
@@ -17,9 +20,8 @@ class SpeechPlugin: Plugin {
   private var task: SFSpeechRecognitionTask?
   private var heard = Transcript()
   private var unclaimed: String?
-  private var pendingStop: Invoke?
-  private var starting = false
-  private var generation = 0
+  private var pendingStops: [Invoke] = []
+  private var gate = SessionGate()
 
   /// Lets the web layout fill the whole screen. Without this the web view's scroll view
   /// shrinks the page by the safe areas while CSS `env(safe-area-inset-*)` still reports
@@ -27,48 +29,69 @@ class SpeechPlugin: Plugin {
   override func load(webview: WKWebView) {
     super.load(webview: webview)
     webview.scrollView.contentInsetAdjustmentBehavior = .never
+    let center = NotificationCenter.default
+    center.addObserver(self, selector: #selector(audioInterrupted(_:)), name: AVAudioSession.interruptionNotification, object: nil)
+    center.addObserver(self, selector: #selector(audioLost), name: AVAudioSession.mediaServicesWereResetNotification, object: nil)
+    center.addObserver(self, selector: #selector(audioLost), name: UIApplication.didEnterBackgroundNotification, object: nil)
+  }
+
+  /// Ends the live session, keeping its words, when another app or a call takes the audio.
+  @objc private func audioInterrupted(_ note: Notification) {
+    guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+      AVAudioSession.InterruptionType(rawValue: raw) == .began
+    else { return }
+    audioLost()
+  }
+
+  /// Ends the live session, keeping its words, when its audio can no longer arrive.
+  @objc private func audioLost() {
+    DispatchQueue.main.async {
+      guard self.gate.live else { return }
+      self.finish(self.gate.token)
+    }
   }
 
   @objc public func start(_ invoke: Invoke) {
     DispatchQueue.main.async {
-      guard self.task == nil, !self.starting, self.pendingStop == nil else {
-        invoke.reject("Already listening.", code: "busy")
-        return
+      let (token, replaced) = self.gate.claim()
+      if replaced == .running || replaced == .stopping {
+        self.release()
       }
-      self.starting = true
       self.authorize { error in
+        guard self.gate.isCurrent(token), self.gate.phase == .starting else {
+          invoke.reject("A newer voice input took over.", code: "superseded")
+          return
+        }
         if let (code, message) = error {
-          self.starting = false
+          _ = self.gate.end(token)
           invoke.reject(message, code: code)
           return
         }
-        self.begin(invoke)
+        self.begin(invoke, token)
       }
     }
   }
 
   @objc public func stop(_ invoke: Invoke) {
     DispatchQueue.main.async {
-      guard self.pendingStop == nil else {
-        invoke.reject("Already stopping.", code: "busy")
-        return
-      }
-      guard self.task != nil else {
+      switch self.gate.stop() {
+      case .wait(let token, let first):
+        self.pendingStops.append(invoke)
+        guard first else { return }
+        self.stopAudio()
+        self.request?.endAudio()
+        DispatchQueue.main.asyncAfter(deadline: .now() + self.finalWait) { [weak self] in
+          self?.finish(token)
+        }
+      case .cancelled:
+        invoke.resolve(["transcript": ""])
+      case .idle:
         if let text = self.unclaimed {
           self.unclaimed = nil
           invoke.resolve(["transcript": text])
         } else {
           invoke.reject("Voice input is not running.", code: "not_started")
         }
-        return
-      }
-      self.pendingStop = invoke
-      self.stopAudio()
-      self.request?.endAudio()
-      let generation = self.generation
-      DispatchQueue.main.asyncAfter(deadline: .now() + self.finalWait) { [weak self] in
-        guard let self = self, self.generation == generation else { return }
-        self.finish()
       }
     }
   }
@@ -115,13 +138,15 @@ class SpeechPlugin: Plugin {
     }
   }
 
-  private func begin(_ invoke: Invoke) {
-    defer { starting = false }
+  /// Opens the audio and recognizer for claimed session `token`; on any failure the gate is idle again.
+  private func begin(_ invoke: Invoke, _ token: Int) {
     guard let recognizer = onDeviceRecognizer() else {
+      _ = gate.end(token)
       invoke.reject("On-device speech recognition is not available for this language on this device.", code: "on_device_unavailable")
       return
     }
     guard recognizer.isAvailable else {
+      _ = gate.end(token)
       invoke.reject("Speech recognition is not available right now.", code: "recognizer_unavailable")
       return
     }
@@ -138,34 +163,37 @@ class SpeechPlugin: Plugin {
       input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
         request.append(buffer)
       }
-      generation += 1
       heard = Transcript()
       unclaimed = nil
       self.request = request
       task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-        DispatchQueue.main.async { self?.handle(result, error) }
+        DispatchQueue.main.async { self?.handle(result, error, token) }
       }
       engine.prepare()
       try engine.start()
+      let ran = gate.run(token)
+      assert(ran, "a claimed start runs on the main queue without being superseded")
       invoke.resolve()
     } catch {
+      _ = gate.end(token)
       teardown()
-      invoke.reject("Could not start the microphone: \(error.localizedDescription)", code: "audio_failed")
+      invoke.reject("Could not start the microphone.", code: "audio_failed")
     }
   }
 
-  private func handle(_ result: SFSpeechRecognitionResult?, _ error: Error?) {
-    guard task != nil else { return }
+  /// Takes one recognizer callback for session `token`; callbacks of a replaced session are dropped.
+  private func handle(_ result: SFSpeechRecognitionResult?, _ error: Error?, _ token: Int) {
+    guard gate.isCurrent(token), gate.live else { return }
     if let result = result {
       heard.add(result.bestTranscription.formattedString, utteranceEnded: !result.isFinal && utteranceEnded(result))
       trigger("partial", data: ["text": heard.text])
       if result.isFinal {
-        finish()
+        finish(token)
         return
       }
     }
     if error != nil {
-      finish()
+      finish(token)
     }
   }
 
@@ -178,17 +206,27 @@ class SpeechPlugin: Plugin {
     return false
   }
 
-  private func finish() {
-    guard task != nil else { return }
+  /// Ends session `token` with its words: waiting stops get them, else they are kept for the next
+  /// stop and sent as `ended`. A stale or already ended token does nothing.
+  private func finish(_ token: Int) {
+    guard gate.end(token) else { return }
     let text = heard.text
+    let waiting = pendingStops
     teardown()
-    if let invoke = pendingStop {
-      pendingStop = nil
-      invoke.resolve(["transcript": text])
-    } else {
+    if waiting.isEmpty {
       unclaimed = text
       trigger("ended", data: ["text": text])
+    } else {
+      waiting.forEach { $0.resolve(["transcript": text]) }
     }
+  }
+
+  /// Ends a live session a newer start replaced: its waiting stops get its words, nothing else does.
+  private func release() {
+    let text = heard.text
+    let waiting = pendingStops
+    teardown()
+    waiting.forEach { $0.resolve(["transcript": text]) }
   }
 
   private func stopAudio() {
@@ -198,11 +236,13 @@ class SpeechPlugin: Plugin {
     engine.inputNode.removeTap(onBus: 0)
   }
 
+  /// Frees the audio, the recognizer task and the waiting stops, so nothing outlives a session.
   private func teardown() {
     stopAudio()
     task?.cancel()
     task = nil
     request = nil
+    pendingStops = []
     try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
   }
 }

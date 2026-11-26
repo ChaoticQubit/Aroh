@@ -71,17 +71,32 @@ fn append_keeps_sealed_entries_and_never_queues_a_log() {
     assert!(diary::read_day(&conn, &ring(&[2]), DAY).unwrap().locked == 2, "a foreign key opens nothing");
 }
 
+/// Does what the engine does with `request` (Q94): opens it with the server copy of `key`,
+/// takes `reply` as the model's answer and seals the card. Output: the engine's answer.
+fn engine(key: &DiaryKey, request: &aroh_diary::StructureRequest, reply: &str, at: DateTime<Utc>) -> aroh_diary::StructuredDay {
+    let server_copy = DiaryKey::from_bytes(key.version(), key.bytes()).unwrap();
+    let entries = request.open(&server_copy, ACCOUNT).unwrap();
+    assert!(aroh_diary::prompt(&request.day, &entries, &request.fields).unwrap().user.contains("DIARY-SENTINEL"), "the engine reads the words in memory");
+    request.answer(&server_copy, ACCOUNT, reply, at).unwrap()
+}
+
+fn structure(conn: &Connection, clock: &mut Hlc, keys: &Keyring, at: DateTime<Utc>) -> aroh_diary::Card {
+    let view = diary::read_day(conn, keys, DAY).unwrap();
+    let request = diary::structure_request(conn, &view).unwrap().unwrap();
+    let answer = engine(keys.newest(), &request, &reply(conn), at);
+    diary::save_card(conn, clock, keys, &view, answer, at).unwrap()
+}
+
 #[test]
-fn structuring_seals_a_card_and_writes_numbers_only() {
+fn structuring_sends_ciphertext_and_saves_the_engine_card_with_numbers_only() {
     let (conn, mut clock) = store(true);
     let keys = ring(&[1]);
     diary::append(&conn, &mut clock, &keys, DAY, SECRET_WORDS, Source::Text, now()).unwrap();
     let view = diary::read_day(&conn, &keys, DAY).unwrap();
-    let (prompt, fields) = diary::prompt_for(&conn, &view).unwrap().unwrap();
-    assert!(prompt.user.contains("DIARY-SENTINEL"));
-    let body = diary::structure_request(&prompt);
-    assert_eq!(body["model"], diary::STRUCTURE_MODEL);
-    let card = diary::save_structure(&conn, &mut clock, &keys, &view, &fields, &reply(&conn), now()).unwrap();
+    let request = diary::structure_request(&conn, &view).unwrap().unwrap();
+    assert!(!serde_json::to_string(&request).unwrap().contains("DIARY-SENTINEL"), "the phone sends the engine ciphertext only");
+    assert_eq!(request.fields.len(), diary::numeric_fields(&conn).unwrap().len());
+    let card = structure(&conn, &mut clock, &keys, now());
     assert_eq!(card.mood, 2);
     let again = diary::read_day(&conn, &keys, DAY).unwrap();
     assert!(!again.stale);
@@ -91,11 +106,33 @@ fn structuring_seals_a_card_and_writes_numbers_only() {
     assert_eq!(from_diary.len(), 1);
     assert_eq!(from_diary[0].raw_text, None, "a tracker entry from the diary carries numbers only");
     let later = now() + Duration::minutes(30);
-    diary::save_structure(&conn, &mut clock, &keys, &view, &fields, &reply(&conn), later).unwrap();
+    structure(&conn, &mut clock, &keys, later);
     let count = repo::list::<TrackerEntry>(&conn, &[]).unwrap().iter().filter(|e| e.logged_at == now() || e.logged_at == later).count();
     assert_eq!(count, 1, "restructuring replaces the day's number");
-    assert!(diary::save_structure(&conn, &mut clock, &keys, &view, &fields, "Sure! here it is", now()).is_err());
     assert!(local::pending_logs(&conn).unwrap().is_empty());
+    assert!(diary::structure_request(&conn, &diary::read_day(&conn, &keys, "2026-11-20").unwrap()).unwrap().is_none(), "an empty day is not sent");
+}
+
+#[test]
+fn an_engine_card_is_saved_only_when_it_opens_and_covers_the_day() {
+    let (conn, mut clock) = store(true);
+    let keys = ring(&[1]);
+    diary::append(&conn, &mut clock, &keys, DAY, SECRET_WORDS, Source::Text, now()).unwrap();
+    let view = diary::read_day(&conn, &keys, DAY).unwrap();
+    let request = diary::structure_request(&conn, &view).unwrap().unwrap();
+    let good = engine(keys.newest(), &request, &reply(&conn), now());
+    let foreign = DiaryKey::generate(1).unwrap();
+    let wrong_key = aroh_diary::StructuredDay { card: request.answer(&foreign, ACCOUNT, &reply(&conn), now()).unwrap().card, ..good.clone() };
+    assert!(diary::save_card(&conn, &mut clock, &keys, &view, wrong_key, now()).is_err(), "a card this phone cannot open");
+    let first_only = request.clone();
+    diary::append(&conn, &mut clock, &keys, DAY, "Second entry.", Source::Text, now() + Duration::minutes(1)).unwrap();
+    let two = diary::read_day(&conn, &keys, DAY).unwrap();
+    let stale = engine(keys.newest(), &first_only, &reply(&conn), now());
+    assert!(diary::save_card(&conn, &mut clock, &keys, &two, stale, now()).is_err(), "a card missing an entry");
+    let mut unknown = good.clone();
+    unknown.tracker_values[0].tracker_id = "0190f2a0-0000-7000-8000-0000000000ff".into();
+    assert!(diary::save_card(&conn, &mut clock, &keys, &view, unknown, now()).is_err(), "a number for a field the phone does not have");
+    assert!(repo::list::<DiaryDay>(&conn, &[]).unwrap().is_empty(), "nothing refused was saved");
 }
 
 #[test]
@@ -103,9 +140,7 @@ fn rotation_moves_every_row_to_the_new_key() {
     let (conn, mut clock) = store(true);
     let old = ring(&[1]);
     diary::append(&conn, &mut clock, &old, DAY, SECRET_WORDS, Source::Text, now()).unwrap();
-    let view = diary::read_day(&conn, &old, DAY).unwrap();
-    let (_, fields) = diary::prompt_for(&conn, &view).unwrap().unwrap();
-    diary::save_structure(&conn, &mut clock, &old, &view, &fields, &reply(&conn), now()).unwrap();
+    structure(&conn, &mut clock, &old, now());
     let mut proposal = repo::list::<Proposal>(&conn, &[]).unwrap().remove(0);
     let sealed = aroh_diary::seal(old.newest(), ACCOUNT, aroh_diary::Table::Proposals, &proposal.id, b"Because you wrote you were tired.").unwrap();
     proposal.sealed_summary = Some(json!(sealed));
@@ -123,15 +158,6 @@ fn rotation_moves_every_row_to_the_new_key() {
     let row = repo::get::<Proposal>(&conn, &proposal.id).unwrap();
     assert_eq!(diary::proposal_summary(&both, &row).as_deref(), Some("Because you wrote you were tired."));
     assert!(repo::list::<DiaryDay>(&conn, &[]).unwrap().iter().all(|d| d.key_version == 2));
-}
-
-#[test]
-fn reply_text_needs_a_finished_text_reply() {
-    let ok = json!({"stop_reason": "end_turn", "content": [{"type": "thinking", "thinking": ""}, {"type": "text", "text": "{}"}]});
-    assert_eq!(diary::reply_text(&ok).unwrap(), "{}");
-    for bad in [json!({"stop_reason": "refusal", "content": []}), json!({"stop_reason": "max_tokens", "content": [{"type": "text", "text": "{"}]}), json!({"stop_reason": "end_turn", "content": []})] {
-        assert!(diary::reply_text(&bad).is_err());
-    }
 }
 
 #[test]

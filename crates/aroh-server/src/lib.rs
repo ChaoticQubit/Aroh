@@ -7,6 +7,7 @@ pub mod checkpoints;
 pub mod config;
 pub mod conflicts;
 pub mod cutoff;
+pub mod days;
 pub mod db;
 pub mod diary;
 pub mod engine;

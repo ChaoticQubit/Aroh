@@ -1,20 +1,30 @@
-//! The engine side of the encrypted diary (Q85): the server copy of the
-//! diary key while the agents read toggle is on, the last seven days of
-//! summaries a run may read, and how diary runs store proposal summaries.
+//! The engine side of the encrypted diary (Q85, Q94): the server copy of the
+//! diary key, structuring a day in memory, the agents read toggle, the last
+//! seven days of summaries a run may read, and how diary runs store proposal
+//! summaries.
 
 use crate::db;
 use crate::error::ServerError;
 use crate::io::Deps;
 use crate::rows::parse_row;
 use crate::tools::ToolEnv;
-use aroh_diary::{AgentDay, Card, DiaryKey, Sealed, Table};
+use aroh_diary::{AgentDay, Card, DiaryKey, Sealed, StructureRequest, StructuredDay, Table};
 use aroh_domain::rows::DiaryDay;
 use chrono::{Duration, NaiveDate};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use troupekit_core::message::{ContentPart, Message};
+use troupekit_providers::CompletionRequest;
 use troupekit_tools::ToolError;
 use utoipa::ToSchema;
 use uuid::Uuid;
+
+/// Most output tokens of one structuring turn.
+const STRUCTURE_MAX_TOKENS: u32 = 16_000;
+
+/// Largest body of `POST /v1/diary/structure`, in bytes: 200 sealed entries
+/// fit, and it stays under the hosting platform's request cap.
+pub const STRUCTURE_BODY_MAX: usize = 4 * 1024 * 1024;
 
 /// Days of diary a run reads, today included.
 pub const DIARY_DAYS: i64 = 7;
@@ -24,12 +34,16 @@ pub const DIARY_DAYS: i64 = 7;
 pub const NEUTRAL_SUMMARY: &str = "A plan change that used your diary. Open it on your iPhone to read why.";
 
 /// Body of `PUT /v1/diary/key`: the diary key version and its 32 bytes as
-/// standard base64. No Debug, so the key never reaches a log line.
+/// standard base64, and `agents` to set whether planning agents may read the
+/// diary (omitted keeps the current choice, off for a first key). No Debug,
+/// so the key never reaches a log line.
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetDiaryKey {
     pub version: i64,
     pub key: String,
+    #[serde(default)]
+    pub agents: Option<bool>,
 }
 
 /// Whether agents may read the diary, and the server copy's key version.
@@ -51,10 +65,11 @@ pub async fn rows_version(deps: &Deps, user: Uuid) -> Result<Option<i64>, Server
     .await?)
 }
 
-/// Stores `user`'s diary key from `req` in the vault (toggle on).
-/// Returns the status, `BadRequest` for a key that is not 32 bytes of base64
-/// or a version outside 1 to 1000000 (never echoing the key), or `Conflict`
-/// when diary rows already use another version than the device sent.
+/// Stores `user`'s diary key from `req` in the vault and, when `req.agents`
+/// is given, sets the agents read toggle. Returns the status, `BadRequest`
+/// for a key that is not 32 bytes of base64 or a version outside 1 to 1000000
+/// (never echoing the key), or `Conflict` when diary rows already use another
+/// version than the device sent.
 pub async fn set_key(deps: &Deps, user: Uuid, req: SetDiaryKey) -> Result<DiaryKeyStatus, ServerError> {
     let key = DiaryKey::from_base64(req.version, &req.key).map_err(|e| ServerError::BadRequest(e.to_string()))?;
     if let Some(rows) = rows_version(deps, user).await? {
@@ -62,28 +77,72 @@ pub async fn set_key(deps: &Deps, user: Uuid, req: SetDiaryKey) -> Result<DiaryK
             return Err(ServerError::Conflict(format!("diary rows use key version {rows}, not {}", key.version())));
         }
     }
-    let version = deps.vault.diary_set(user, &key).await?;
-    Ok(DiaryKeyStatus { on: true, version: Some(version) })
+    deps.vault.diary_set(user, &key).await?;
+    if let Some(on) = req.agents {
+        assert!(deps.vault.diary_agents(user, on).await?, "the key row was just written");
+    }
+    status(deps, user).await
 }
 
-/// Deletes `user`'s server copy of the diary key (toggle off).
-/// Returns true when there was one.
-pub async fn delete_key(deps: &Deps, user: Uuid) -> Result<bool, ServerError> {
-    deps.vault.diary_delete(user).await
-}
-
-/// Reads whether `user`'s agents read toggle is on, without decrypting.
+/// Reads whether `user`'s agents read toggle is on and which key version the
+/// server holds, without decrypting.
 pub async fn status(deps: &Deps, user: Uuid) -> Result<DiaryKeyStatus, ServerError> {
-    let version = deps.vault.diary_version(user).await?;
-    Ok(DiaryKeyStatus { on: version.is_some(), version })
+    let state = deps.vault.diary_state(user).await?;
+    Ok(DiaryKeyStatus { on: state.is_some_and(|s| s.1), version: state.map(|s| s.0) })
+}
+
+/// Structures one day of `user` from `req` (Q94): opens the sealed entries
+/// in memory with the server copy of the diary key, calls the model once with
+/// the diary structure prompt, and seals the card for the day's row. Returns
+/// ciphertext and tracker numbers only; nothing is stored or logged but the
+/// call's usage. Errors: `BadRequest` for a malformed request, `diary_key_missing`
+/// (409) when the server holds no key or another version than the entries, a
+/// refusal when an entry does not open, and the errors of `io::one_turn`.
+pub async fn structure(deps: &Deps, user: Uuid, req: &StructureRequest) -> Result<StructuredDay, ServerError> {
+    req.check().map_err(|e| ServerError::BadRequest(e.to_string()))?;
+    let missing = || ServerError::Refused { code: "diary_key_missing", message: "The engine needs your current diary key. Open the diary on your iPhone and try again.".into() };
+    let key = deps.vault.diary_get(user).await?.ok_or_else(missing)?;
+    if req.entries.iter().any(|e| e.sealed.key_version != key.version()) {
+        return Err(missing());
+    }
+    let owner = user.to_string();
+    let entries = req.open(&key, &owner).map_err(|_| ServerError::BadRequest("An entry of this day could not be opened with your diary key.".into()))?;
+    let prompt = aroh_diary::prompt(&req.day, &entries, &req.fields).map_err(|e| ServerError::BadRequest(e.to_string()))?;
+    drop(entries);
+    let mut call = CompletionRequest::user(prompt.user.as_str(), STRUCTURE_MAX_TOKENS);
+    call.system = Some(prompt.system.clone());
+    drop(prompt);
+    let reply = crate::io::one_turn(deps, user, &call).await;
+    zero_messages(&mut call.messages);
+    let reply = zeroize::Zeroizing::new(reply?);
+    let now = crate::rows::utc(deps.clock.now_ms());
+    req.answer(&key, &owner, &reply, now)
+        .map_err(|_| ServerError::Refused { code: "model_failed", message: "The AI provider's answer could not be read as a diary card. Try again.".into() })
+}
+
+/// Overwrites the text of `messages` in place before they are dropped, so the
+/// diary words of a structuring call do not linger in freed memory.
+fn zero_messages(messages: &mut [Message]) {
+    use zeroize::Zeroize;
+    for m in messages.iter_mut() {
+        for part in m.parts.iter_mut() {
+            if let ContentPart::Text { text } = part {
+                text.zeroize();
+            }
+        }
+    }
 }
 
 /// The diary a run of `user` may read: summary, mood, energy and notes for
 /// tomorrow of each structured day from `today` back six days, opened in
-/// memory with the server copy of the key. None when the toggle is off, when
-/// the server key is not the version the diary rows use, or no day opens; rows
-/// that are not the day's own card id are skipped, so at most seven days are read.
+/// memory with the server copy of the key. None when the agents read toggle
+/// is off, when the server key is not the version the diary rows use, or no
+/// day opens; rows that are not the day's own card id are skipped, so at most
+/// seven days are read.
 pub async fn agent_days(deps: &Deps, user: Uuid, today: NaiveDate) -> Result<Option<Vec<AgentDay>>, ServerError> {
+    if !deps.vault.diary_state(user).await?.is_some_and(|s| s.1) {
+        return Ok(None);
+    }
     let Some(key) = deps.vault.diary_get(user).await? else {
         return Ok(None);
     };

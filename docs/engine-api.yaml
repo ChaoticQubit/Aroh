@@ -290,7 +290,7 @@ paths:
         required: true
       responses:
         '200':
-          description: Agents may read the last 7 days of diary summaries
+          description: The server holds this sealed key; `on` says whether agents read the last 7 days of summaries
           content:
             application/json:
               schema:
@@ -309,15 +309,95 @@ paths:
                 $ref: '#/components/schemas/ErrorBody'
       security:
       - bearer: []
-    delete:
+  /v1/diary/structure:
+    post:
       tags:
       - diary
-      operationId: delete_diary_key
+      operationId: structure_day
+      requestBody:
+        description: 'StructureRequest: the day, its sealed entries and the numeric tracker fields; ciphertext only'
+        content:
+          application/json:
+            schema:
+              type: object
+        required: true
       responses:
-        '204':
-          description: The server copy of the diary key is deleted
-        '404':
+        '200':
+          description: 'StructuredDay: the card sealed with the diary key for the day''s row, and tracker numbers'
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
           description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '403':
+          description: no AI consent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '409':
+          description: 'diary_key_missing: send the current diary key first'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: no usable provider key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '502':
+          description: model_failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+      security:
+      - bearer: []
+  /v1/files/transcribe:
+    post:
+      tags:
+      - files
+      operationId: transcribe_image
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Transcribe'
+        required: true
+      responses:
+        '200':
+          description: The image's text; never stored or logged by the engine
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transcription'
+        '400':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '403':
+          description: no AI consent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '422':
+          description: no usable provider key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorBody'
+        '502':
+          description: model_failed
           content:
             application/json:
               schema:
@@ -1414,7 +1494,7 @@ components:
         Code and message of an error response. Codes: bad_request, unauthorized,
         forbidden, not_found, conflict, setup, internal, and the refusals
         consent_required, daily_run_limit, goal_limit, file_too_large, storage_full,
-        files_remain, account_disabled.
+        files_remain, account_disabled, model_failed, diary_key_missing.
       required:
       - code
       - message
@@ -1904,11 +1984,17 @@ components:
       type: object
       description: |-
         Body of `PUT /v1/diary/key`: the diary key version and its 32 bytes as
-        standard base64. No Debug, so the key never reaches a log line.
+        standard base64, and `agents` to set whether planning agents may read the
+        diary (omitted keeps the current choice, off for a first key). No Debug,
+        so the key never reaches a log line.
       required:
       - version
       - key
       properties:
+        agents:
+          type:
+          - boolean
+          - 'null'
         key:
           type: string
         version:
@@ -2127,6 +2213,31 @@ components:
         reviews:
           type: integer
           minimum: 0
+    Transcribe:
+      type: object
+      description: |-
+        Body of `POST /v1/files/transcribe` (Q91, Q94): an attached image the
+        device's OCR was unsure about, as its media type and standard base64.
+        No Debug, so the image never reaches a log line.
+      required:
+      - media_type
+      - data
+      properties:
+        data:
+          type: string
+        media_type:
+          type: string
+      additionalProperties: false
+    Transcription:
+      type: object
+      description: |-
+        The image's text as the model read it, capped at `FILE_TEXT_LIMIT`
+        characters; none when the image has no readable text.
+      properties:
+        text:
+          type:
+          - string
+          - 'null'
     TriageEvent:
       type: object
       description: |-

@@ -1,10 +1,10 @@
-//! The device side of the encrypted diary (Q85): appending sealed entries,
-//! reading a day back, saving the structured card and its tracker numbers,
-//! key rotation, and the Messages request and reply that structure a day.
-//! Keys are passed in and nothing here stores them or calls the network.
+//! The device side of the encrypted diary (Q85, Q94): appending sealed entries,
+//! reading a day back, the sealed body of the engine's structure call and saving
+//! the card it returns with its tracker numbers, and key rotation. Keys are
+//! passed in and nothing here stores them or calls the network.
 
 use crate::{invalid, local, Result};
-use aroh_diary::{day_id, Card, DiaryKey, Entry, NumericField, Prompt, Sealed, Source, Structure, Table};
+use aroh_diary::{day_id, Card, DiaryKey, Entry, NumericField, Sealed, SealedEntry, Source, StructureRequest, StructuredDay, Table};
 use aroh_domain::hlc::Hlc;
 use aroh_domain::rows::{DiaryDay, DiaryEntry, EntrySource, FieldKind, Proposal, Tracker, TrackerEntry};
 use aroh_store::repo;
@@ -136,29 +136,44 @@ pub fn numeric_fields(conn: &Connection) -> Result<Vec<NumericField>> {
         .collect())
 }
 
-/// The structuring prompt for `view`, or None when it has no entries.
-pub fn prompt_for(conn: &Connection, view: &DayView) -> Result<Option<(Prompt, Vec<NumericField>)>> {
+/// The body of the engine's structure call for `view` (Q94): the day, the sealed rows of
+/// the entries this device opened, in reading order, and the numeric tracker fields. Holds
+/// ciphertext only. None when the day has no entries.
+pub fn structure_request(conn: &Connection, view: &DayView) -> Result<Option<StructureRequest>> {
     if view.entries.is_empty() {
         return Ok(None);
     }
-    let fields = numeric_fields(conn)?;
-    let entries: Vec<Entry> = view.entries.iter().map(|e| Entry { at: e.at, text: e.text.clone(), source: e.source }).collect();
-    let prompt = aroh_diary::prompt(&view.day, &entries, &fields).map_err(|e| invalid(e.to_string()))?;
-    Ok(Some((prompt, fields)))
+    let mut entries = Vec::with_capacity(view.entries.len());
+    for e in &view.entries {
+        let row: DiaryEntry = repo::get(conn, &e.id)?;
+        entries.push(SealedEntry { id: row.id, sealed: sealed_of(row.key_version, &row.nonce, &row.ciphertext) });
+    }
+    let request = StructureRequest { day: view.day.clone(), entries, fields: numeric_fields(conn)? };
+    request.check().map_err(|e| invalid(e.to_string()))?;
+    Ok(Some(request))
 }
 
-/// Saves the model's `reply` for `view` as the day's sealed card covering its
-/// entries, and its tracker numbers as `log` entries with numbers only and no
-/// raw text, one row per day and field so a restructure replaces it.
-/// Returns the card, or `Invalid` when the reply does not parse.
-pub fn save_structure(conn: &Connection, clock: &mut Hlc, ring: &Keyring, view: &DayView, fields: &[NumericField], reply: &str, now: DateTime<Utc>) -> Result<Card> {
+/// Saves the engine's `answer` for `view` as the day's card, sealed by the engine with the
+/// diary key, once it opens with `ring` and covers exactly the day's entries; and its tracker
+/// numbers as `log` entries with numbers only and no raw text, one row per day and field so a
+/// restructure replaces it. Returns the card, or `Invalid` when the card does not open, covers
+/// other entries, or a number is for a field that is not a live numeric tracker field.
+pub fn save_card(conn: &Connection, clock: &mut Hlc, ring: &Keyring, view: &DayView, answer: StructuredDay, now: DateTime<Utc>) -> Result<Card> {
     let user = account(conn)?;
-    let structure: Structure = aroh_diary::parse(reply, fields).map_err(|e| invalid(e.to_string()))?;
-    let values = structure.tracker_values.clone();
-    let ids = view.entries.iter().map(|e| e.id.clone()).collect();
-    let card = structure.into_card(&view.day, ids, now).map_err(|e| invalid(e.to_string()))?;
     let id = day_id(&user, &view.day);
-    let sealed = aroh_diary::seal(ring.newest(), &user, Table::Days, &id, &card.to_bytes()).map_err(|e| invalid(e.to_string()))?;
+    let key = ring.get(answer.card.key_version).ok_or_else(|| invalid("the card was sealed with a diary key this phone lacks"))?;
+    let plain = aroh_diary::open(key, &user, Table::Days, &id, &answer.card).map_err(|_| invalid("the card from the engine did not open"))?;
+    let card = Card::from_bytes(&plain).map_err(|e| invalid(e.to_string()))?;
+    let ids: Vec<String> = view.entries.iter().map(|e| e.id.clone()).collect();
+    if card.day != view.day || card.is_stale(&ids) || card.entry_ids.len() != ids.len() {
+        return Err(invalid("the card from the engine does not cover this day's entries"));
+    }
+    let fields = numeric_fields(conn)?;
+    let values = answer.tracker_values;
+    if values.iter().any(|v| !fields.iter().any(|f| f.tracker_id == v.tracker_id && f.key == v.field) || !v.value.is_finite()) {
+        return Err(invalid("the engine returned a number for an unknown tracker field"));
+    }
+    let sealed = answer.card;
     let mut row = DiaryDay { id, user_id: user.clone(), day: view.day.clone(), key_version: sealed.key_version, nonce: sealed.nonce, ciphertext: sealed.ciphertext, updated_at: String::new(), deleted: false };
     repo::put(conn, clock, &mut row)?;
     for v in values {
@@ -303,41 +318,4 @@ pub fn proposal_summary(ring: &Keyring, row: &Proposal) -> Option<String> {
     let key = ring.get(s.key_version)?;
     let plain = aroh_diary::open(key, &row.user_id, Table::Proposals, &row.id, &s).ok()?;
     String::from_utf8(plain.to_vec()).ok()
-}
-
-/// The Anthropic Messages endpoint the device structures a day with.
-pub const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
-/// The Messages API version the request is written for.
-pub const ANTHROPIC_VERSION: &str = "2026-10-21";
-/// The model the device structures a day with.
-pub const STRUCTURE_MODEL: &str = "claude-opus-5-5";
-
-/// The Messages API body for `prompt`: one user turn at low effort, sent
-/// from the device with the owner's own key. Holds diary text, so the caller
-/// sends it and drops it without logging.
-pub fn structure_request(prompt: &Prompt) -> Value {
-    json!({
-        "model": STRUCTURE_MODEL,
-        "max_tokens": 16000,
-        "output_config": {"effort": "low"},
-        "system": prompt.system,
-        "messages": [{"role": "user", "content": prompt.user.as_str()}],
-    })
-}
-
-/// The text of a Messages API `reply`, its text blocks joined. Returns
-/// `Invalid` for a refusal, a cut-off reply or one with no text; the message
-/// names only the reason, never the reply.
-pub fn reply_text(reply: &Value) -> Result<String> {
-    match reply["stop_reason"].as_str() {
-        Some("end_turn") => {}
-        Some("refusal") => return Err(invalid("the model declined to structure this day")),
-        Some("max_tokens") => return Err(invalid("the model reply was cut off")),
-        _ => return Err(invalid("the model reply did not finish")),
-    }
-    let text: String = reply["content"].as_array().into_iter().flatten().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect();
-    if text.trim().is_empty() {
-        return Err(invalid("the model reply had no text"));
-    }
-    Ok(text)
 }

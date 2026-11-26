@@ -11,9 +11,10 @@ use crate::push::{ApnsEnv, DeviceInfo, Platform, PushSummary, RegisterDevice};
 use crate::triage::{StartTriage, TriageEvent};
 use crate::triggers::{EditReplan, MissReplan, ReviewSchedule, SetReview, SetTimezone, TimezoneSet};
 use crate::diary::{DiaryKeyStatus, SetDiaryKey};
+use crate::files::{Transcribe, Transcription};
 use crate::vault::KeyInfo;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRef, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, FromRef, Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
@@ -134,21 +135,36 @@ async fn diary_status(State(s): State<AppState>, UserId(user): UserId) -> Result
 
 #[utoipa::path(put, path = "/v1/diary/key", tag = "diary", security(("bearer" = [])),
     request_body = SetDiaryKey,
-    responses((status = 200, description = "Agents may read the last 7 days of diary summaries", body = DiaryKeyStatus), (status = 400, body = ErrorBody),
+    responses((status = 200, description = "The server holds this sealed key; `on` says whether agents read the last 7 days of summaries", body = DiaryKeyStatus), (status = 400, body = ErrorBody),
         (status = 409, description = "Diary rows use another key version than the one sent", body = ErrorBody)))]
 async fn set_diary_key(State(s): State<AppState>, UserId(user): UserId, json: Result<Json<SetDiaryKey>, JsonRejection>) -> Result<Json<DiaryKeyStatus>, ServerError> {
     let req = body(json, false)?;
     Ok(Json(crate::diary::set_key(s.engine.deps(), user, req).await?))
 }
 
-#[utoipa::path(delete, path = "/v1/diary/key", tag = "diary", security(("bearer" = [])),
-    responses((status = 204, description = "The server copy of the diary key is deleted"), (status = 404, body = ErrorBody)))]
-async fn delete_diary_key(State(s): State<AppState>, UserId(user): UserId) -> Result<StatusCode, ServerError> {
-    if crate::diary::delete_key(s.engine.deps(), user).await? {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(ServerError::NotFound("diary key".into()))
-    }
+#[utoipa::path(post, path = "/v1/diary/structure", tag = "diary", security(("bearer" = [])),
+    request_body(content = Object, description = "StructureRequest: the day, its sealed entries and the numeric tracker fields; ciphertext only"),
+    responses((status = 200, description = "StructuredDay: the card sealed with the diary key for the day's row, and tracker numbers", body = Object),
+        (status = 400, body = ErrorBody), (status = 403, description = "no AI consent", body = ErrorBody),
+        (status = 409, description = "diary_key_missing: send the current diary key first", body = ErrorBody),
+        (status = 422, description = "no usable provider key", body = ErrorBody), (status = 502, description = "model_failed", body = ErrorBody)))]
+async fn structure_day(
+    State(s): State<AppState>,
+    UserId(user): UserId,
+    json: Result<Json<aroh_diary::StructureRequest>, JsonRejection>,
+) -> Result<Json<aroh_diary::StructuredDay>, ServerError> {
+    let req = body(json, false)?;
+    Ok(Json(crate::diary::structure(s.engine.deps(), user, &req).await?))
+}
+
+#[utoipa::path(post, path = "/v1/files/transcribe", tag = "files", security(("bearer" = [])),
+    request_body = Transcribe,
+    responses((status = 200, description = "The image's text; never stored or logged by the engine", body = Transcription),
+        (status = 400, body = ErrorBody), (status = 403, description = "no AI consent", body = ErrorBody),
+        (status = 422, description = "no usable provider key", body = ErrorBody), (status = 502, description = "model_failed", body = ErrorBody)))]
+async fn transcribe_image(State(s): State<AppState>, UserId(user): UserId, json: Result<Json<Transcribe>, JsonRejection>) -> Result<Json<Transcription>, ServerError> {
+    let req = body(json, false)?;
+    Ok(Json(crate::files::transcribe(s.engine.deps(), user, req).await?))
 }
 
 #[utoipa::path(post, path = "/v1/keys/{setting_id}/test", tag = "keys", security(("bearer" = [])),
@@ -503,10 +519,10 @@ impl Modify for Bearer {
 #[derive(OpenApi)]
 #[openapi(
     info(title = "Aroh engine API", version = "1.0.0", description = "Server engine of Aroh: provider keys, goal runs, replans, logs and the run queue."),
-    paths(health, list_keys, set_key, delete_key, test_key, diary_status, set_diary_key, delete_diary_key, start_goal, start_replan, run_again, card_chat, submit_log, start_triage, list_runs, get_run, answer, cancel_run, retry_run, get_run_limit, set_run_limit, tick, enqueue_hook, register_device, unregister_device, push_tick,
+    paths(health, list_keys, set_key, delete_key, test_key, diary_status, set_diary_key, structure_day, transcribe_image, start_goal, start_replan, run_again, card_chat, submit_log, start_triage, list_runs, get_run, answer, cancel_run, retry_run, get_run_limit, set_run_limit, tick, enqueue_hook, register_device, unregister_device, push_tick,
         list_plugins, save_plugin, get_plugin, enable_plugin, list_insights, get_review, set_review, set_timezone, get_edit_replan, get_miss_replan,
         list_personas, copy_persona, edit_persona, get_account, set_consent, delete_account),
-    components(schemas(KeyInfo, SetKey, KeyTest, SetDiaryKey, DiaryKeyStatus, StartGoal, StartReplan, RunAgain, GivenAnswer, CardChat, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, RunLimit, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
+    components(schemas(KeyInfo, SetKey, KeyTest, SetDiaryKey, DiaryKeyStatus, Transcribe, Transcription, StartGoal, StartReplan, RunAgain, GivenAnswer, CardChat, SubmitLog, StartTriage, TriageEvent, Started, RunSummary, RunView, Waiting, Answer, Accepted, RunLimit, TickSummary, Health, ErrorBody, ErrorDetail, RegisterDevice, DeviceInfo, PushSummary, Platform, ApnsEnv,
         SavePlugin, PluginView, Insight, ReviewSchedule, SetReview, SetTimezone, TimezoneSet, EditReplan, MissReplan,
         EditPersona, PersonaView, Origin, Kind, AccountView, SetConsent, DeletionScheduled)),
     modifiers(&Bearer)
@@ -534,7 +550,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/actions/{action_id}/chat", post(card_chat))
         .route("/v1/goals/{goal_id}/run-again", post(run_again))
         .route("/v1/logs", post(submit_log))
-        .route("/v1/diary/key", get(diary_status).put(set_diary_key).delete(delete_diary_key))
+        .route("/v1/diary/key", get(diary_status).put(set_diary_key))
+        .route("/v1/diary/structure", post(structure_day).layer(DefaultBodyLimit::max(crate::diary::STRUCTURE_BODY_MAX)))
+        .route("/v1/files/transcribe", post(transcribe_image).layer(DefaultBodyLimit::max(crate::files::TRANSCRIBE_BODY_MAX)))
         .route("/v1/calendar/triage", post(start_triage))
         .route("/v1/runs", get(list_runs))
         .route("/v1/runs/{run_id}", get(get_run))

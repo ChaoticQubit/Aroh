@@ -205,7 +205,7 @@ async fn signed_in(app: &AppHandle, state: &State<'_, AppState>, config: Config,
 }
 
 /// Signs out: revokes the session when the server is reachable, removes it from the
-/// keychain with the device copy of the Claude key, and clears the scheduled and delivered reminders. Local rows stay, owned by the
+/// keychain with any Claude key copy an older build kept, and clears the scheduled and delivered reminders. Local rows stay, owned by the
 /// account; no reminders are planned for them until the account signs in again.
 #[tauri::command]
 pub async fn app_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<Account, String> {
@@ -214,14 +214,14 @@ pub async fn app_sign_out(app: AppHandle, state: State<'_, AppState>) -> Result<
     }
     let config = supabase(&state).ok();
     auth::sign_out(config.as_ref()).await.map_err(text)?;
-    super::diary::forget_claude_key();
+    super::diary::forget_old_claude_key();
     notify::clear(&app).await;
     crate::realtime::restart(&app);
     Ok(account_of(None))
 }
 
 fn wipe_device(state: &State<'_, AppState>) -> Result<(), String> {
-    super::diary::forget_claude_key();
+    super::diary::forget_old_claude_key();
     with_core(state, |c| {
         local::wipe(&mut c.conn)?;
         c.user_id = local::user_id(&c.conn)?;
@@ -287,14 +287,36 @@ pub async fn app_sync(app: AppHandle, state: State<'_, AppState>) -> Result<Sync
     run_sync(&app, config).await
 }
 
-pub(crate) async fn engine_call(state: &State<'_, AppState>, method: &str, path: &str, body: Option<&Value>) -> Result<Answer, String> {
+async fn engine_target(state: &State<'_, AppState>) -> Result<(String, String), String> {
     let base = with_core(state, |c| local::setting(&c.conn, "server_url"))?.ok_or("needs_engine: set the server URL in Settings")?;
     let config = supabase(state).map_err(|e| format!("needs_engine: {e}"))?;
     let session = auth::valid_session(&config).await.map_err(|e| match e {
         aroh_sync::Error::NotSignedIn => "needs_engine: sign in first".to_string(),
         other => other.to_string(),
     })?;
-    aroh_sync::engine::call(&base, &session.access_token, method, path, body).await.map_err(text)
+    Ok((base, session.access_token))
+}
+
+pub(crate) async fn engine_call(state: &State<'_, AppState>, method: &str, path: &str, body: Option<&Value>) -> Result<Answer, String> {
+    let (base, token) = engine_target(state).await?;
+    aroh_sync::engine::call(&base, &token, method, path, body).await.map_err(text)
+}
+
+/// One engine call that makes a model turn on the engine (Q94: the phone never calls a
+/// model provider), with the longer model wait. Returns the status and JSON body.
+pub(crate) async fn engine_call_model(state: &State<'_, AppState>, path: &str, body: &Value) -> Result<Answer, String> {
+    let (base, token) = engine_target(state).await?;
+    aroh_sync::engine::call_model(&base, &token, "POST", path, Some(body)).await.map_err(text)
+}
+
+/// The owner-facing sentence of a failed engine `answer`: the engine's message for a refusal
+/// code (consent, limits, `model_failed`, `diary_key_missing`), which is a plain sentence; else
+/// `fallback`, since generic codes carry a technical prefix. Never a status.
+pub(crate) fn engine_error(answer: &Answer, fallback: &str) -> String {
+    const GENERIC: [&str; 7] = ["bad_request", "unauthorized", "forbidden", "not_found", "conflict", "setup", "internal"];
+    let code = answer.body["error"]["code"].as_str().unwrap_or("internal");
+    let message = answer.body["error"]["message"].as_str().filter(|m| !m.trim().is_empty() && !GENERIC.contains(&code)).unwrap_or(fallback);
+    message.chars().take(300).collect()
 }
 
 /// One checked call to the server engine (`/v1/...` only) with the account's token.
@@ -306,8 +328,8 @@ pub async fn app_engine(state: State<'_, AppState>, method: String, path: String
 }
 
 /// Hands a provider key to the engine for the vendor's provider row (`PUT /v1/keys/{row id}`
-/// with vendor, model and label). An accepted Anthropic key also keeps a device copy for
-/// the diary (Q85); it is never logged or echoed. Returns the engine's answer (`last4` only).
+/// with vendor, model and label). The phone keeps no copy (Q94); the key is never logged or
+/// echoed. Returns the engine's answer (`last4` only).
 #[tauri::command]
 pub async fn app_save_key(state: State<'_, AppState>, vendor: String, key: String) -> Result<Answer, String> {
     if key.trim().len() < 8 || key.len() > 512 {
@@ -318,11 +340,7 @@ pub async fn app_save_key(state: State<'_, AppState>, vendor: String, key: Strin
         rows.into_iter().next().ok_or_else(|| aroh_app::Error::Invalid("pick this provider first".into()))
     })?;
     let body = json!({"vendor": row.vendor, "key": key.trim(), "model": row.model, "label": row.label, "is_default": row.is_default});
-    let answer = engine_call(&state, "PUT", &format!("/v1/keys/{}", row.id), Some(&body)).await?;
-    if answer.status == 200 && row.vendor == "anthropic" {
-        super::diary::keep_claude_key(&key);
-    }
-    Ok(answer)
+    engine_call(&state, "PUT", &format!("/v1/keys/{}", row.id), Some(&body)).await
 }
 
 /// Removes the free-text logs the engine accepted from the local queue; logs queued
@@ -334,4 +352,19 @@ pub fn app_logs_sent(app: AppHandle, state: State<'_, AppState>, sent: Vec<Pendi
         eprintln!("aroh: reminders not scheduled: {e}");
     }
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_refusal_sentences_reach_the_owner() {
+        let answer = |code: &str, message: &str| Answer { status: 400, body: json!({"error": {"code": code, "message": message}}) };
+        assert_eq!(engine_error(&answer("model_failed", "The AI provider did not answer."), "Fallback."), "The AI provider did not answer.");
+        assert_eq!(engine_error(&answer("consent_required", "Allow it in Settings."), "Fallback."), "Allow it in Settings.");
+        assert_eq!(engine_error(&answer("bad_request", "bad request: invalid JSON body"), "Fallback."), "Fallback.");
+        assert_eq!(engine_error(&answer("internal", "internal error"), "Fallback."), "Fallback.");
+        assert_eq!(engine_error(&Answer { status: 502, body: Value::Null }, "Fallback."), "Fallback.");
+    }
 }

@@ -57,10 +57,12 @@ check("halving with the same first word is a revision", [say("I read two chapter
 check("a result holding the whole session replaces it", [pause("I ate eggs and toast"), say("Then slept"), say("I ate eggs and toast then slept")], "I ate eggs and toast then slept")
 check("an unmarked whole-session result replaces it", [say("I ate eggs and toast"), say("Then slept"), say("I ate eggs and toast. Then slept.")], "I ate eggs and toast. Then slept.")
 
+sessionChecks()
+
 if failed.isEmpty {
-  print("transcript checks passed: \(passed)")
+  print("transcript and session checks passed: \(passed)")
 } else {
-  print("transcript checks passed: \(passed), failed: \(failed.count)")
+  print("transcript and session checks passed: \(passed), failed: \(failed.count)")
   failed.forEach { print("failed: \($0)") }
   exit(1)
 }

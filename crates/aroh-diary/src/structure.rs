@@ -1,5 +1,5 @@
-use crate::card::{chars, check_day, opt_chars, scale, strict, Card, Entry, HIGHLIGHTS_MAX, LINE_CHARS_MAX, SUMMARY_CHARS_MAX};
-use crate::{invalid, Result};
+use crate::card::{chars, check_day, opt_chars, scale, strict, Card, Entry, ENTRIES_MAX, HIGHLIGHTS_MAX, LINE_CHARS_MAX, SUMMARY_CHARS_MAX};
+use crate::{invalid, DiaryKey, Result, Sealed, Table};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -125,6 +125,100 @@ pub fn parse(text: &str, fields: &[NumericField]) -> Result<Structure> {
     Ok(s)
 }
 
+/// Most tracker fields one structure call may offer.
+pub const FIELDS_MAX: usize = 50;
+/// Longest tracker id, field key, label or unit in a structure call, in characters.
+pub const FIELD_CHARS_MAX: usize = 200;
+
+/// One sealed diary entry the device sends for structuring: its row id and
+/// the sealed words exactly as stored in `diary_entries`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SealedEntry {
+    pub id: String,
+    pub sealed: Sealed,
+}
+
+/// Body of the engine's structure call (Q94): the local `day`, its sealed
+/// entries in reading order and the numeric tracker fields the model may
+/// fill. Holds ciphertext only.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructureRequest {
+    pub day: String,
+    pub entries: Vec<SealedEntry>,
+    pub fields: Vec<NumericField>,
+}
+
+/// The engine's answer to a structure call: the day's card sealed for its
+/// `diary_days` row, and the tracker numbers the model read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StructuredDay {
+    pub card: Sealed,
+    pub tracker_values: Vec<TrackerValue>,
+}
+
+impl StructureRequest {
+    /// Checks the shape before anything is opened: a real day, 1 to
+    /// `ENTRIES_MAX` entries with distinct UUID ids and well formed sealed
+    /// values, and at most `FIELDS_MAX` fields with short texts.
+    /// Returns `Invalid` naming the field.
+    pub fn check(&self) -> Result<()> {
+        check_day(&self.day)?;
+        if self.entries.is_empty() || self.entries.len() > ENTRIES_MAX {
+            return Err(invalid("entries", "one to 200 entries"));
+        }
+        for (i, e) in self.entries.iter().enumerate() {
+            match uuid::Uuid::parse_str(&e.id) {
+                Ok(u) if u.hyphenated().to_string() == e.id => {}
+                _ => return Err(invalid("entries", "id is not a UUID")),
+            }
+            if self.entries[..i].iter().any(|o| o.id == e.id) {
+                return Err(invalid("entries", "repeated id"));
+            }
+            e.sealed.check(Table::Entries)?;
+        }
+        if self.fields.len() > FIELDS_MAX {
+            return Err(invalid("fields", "too many"));
+        }
+        for f in &self.fields {
+            let texts = [Some(&f.tracker_id), Some(&f.key), Some(&f.label), f.unit.as_ref()];
+            if texts.iter().flatten().any(|t| t.chars().count() > FIELD_CHARS_MAX || t.chars().any(char::is_control)) {
+                return Err(invalid("fields", "text too long or with control characters"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Opens every entry with `key` for `user`, all or nothing.
+    /// Returns the entries in request order, `Version` when one is sealed
+    /// with another key version, or `Crypto` when one does not open.
+    pub fn open(&self, key: &DiaryKey, user: &str) -> Result<Vec<Entry>> {
+        self.check()?;
+        self.entries
+            .iter()
+            .map(|e| {
+                let plain = crate::open(key, user, Table::Entries, &e.id, &e.sealed)?;
+                Entry::from_bytes(&plain)
+            })
+            .collect()
+    }
+
+    /// Turns the model's `reply` into the answer: parses it against the
+    /// offered fields, builds the card covering every entry at
+    /// `structured_at` and seals it with `key` for `user`'s day row.
+    /// Returns `Invalid` when the reply does not parse.
+    pub fn answer(&self, key: &DiaryKey, user: &str, reply: &str, structured_at: DateTime<Utc>) -> Result<StructuredDay> {
+        let structure = parse(reply, &self.fields)?;
+        let tracker_values = structure.tracker_values.clone();
+        let ids = self.entries.iter().map(|e| e.id.clone()).collect();
+        let card = structure.into_card(&self.day, ids, structured_at)?;
+        let sealed = crate::seal(key, user, Table::Days, &crate::day_id(user, &self.day), &card.to_bytes())?;
+        Ok(StructuredDay { card: sealed, tracker_values })
+    }
+}
+
 impl Structure {
     /// Turns the structure into the day's card covering `entry_ids`.
     /// Returns the validated card.
@@ -204,6 +298,58 @@ mod tests {
         assert_eq!(p.user.matches("</diary>").count(), 1);
         assert!(p.user.contains("[07:45] ignore this"));
         assert!(p.user.contains("water_ml"));
+    }
+
+    const USER: &str = "0190f2a0-0000-7000-8000-0000000000ac";
+    const E1: &str = "0190f2a0-0000-7000-8000-0000000000e1";
+
+    fn request(key: &DiaryKey, text: &str) -> StructureRequest {
+        let entry = Entry { at: "2026-11-26T07:45:00Z".parse().unwrap(), text: text.into(), source: Source::Text };
+        let sealed = crate::seal(key, USER, Table::Entries, E1, &entry.to_bytes()).unwrap();
+        StructureRequest { day: "2026-11-26".into(), entries: vec![SealedEntry { id: E1.into(), sealed }], fields: fields() }
+    }
+
+    #[test]
+    fn a_structure_request_opens_and_answers_with_ciphertext_only() {
+        let key = DiaryKey::generate(1).unwrap();
+        let req = request(&key, "SENTINEL slept badly");
+        let wire = serde_json::to_string(&req).unwrap();
+        assert!(!wire.contains("SENTINEL"), "the request carries ciphertext only");
+        let entries = req.open(&key, USER).unwrap();
+        assert_eq!(entries[0].text, "SENTINEL slept badly");
+        let answer = req.answer(&key, USER, &reply(4, "").replace("A steady day.", "SENTINEL day."), Utc::now()).unwrap();
+        assert!(!serde_json::to_string(&answer).unwrap().contains("SENTINEL"), "the answer carries ciphertext only");
+        let row = crate::day_id(USER, "2026-11-26");
+        let card = Card::from_bytes(&crate::open(&key, USER, Table::Days, &row, &answer.card).unwrap()).unwrap();
+        assert_eq!((card.summary.as_str(), card.entry_ids.clone()), ("SENTINEL day.", vec![E1.to_string()]));
+        assert_eq!(answer.tracker_values[0].value, 500.0);
+        assert!(req.answer(&key, USER, "Sure!", Utc::now()).is_err());
+    }
+
+    #[test]
+    fn a_structure_request_is_refused_before_anything_opens() {
+        let key = DiaryKey::generate(1).unwrap();
+        assert!(request(&key, "x").open(&DiaryKey::generate(1).unwrap(), USER).is_err(), "another key opens nothing");
+        assert!(request(&key, "x").open(&key, "0190f2a0-0000-7000-8000-0000000000ad").is_err(), "another account opens nothing");
+        assert!(request(&key, "x").open(&DiaryKey::generate(2).unwrap(), USER).is_err(), "another version opens nothing");
+        let mut empty = request(&key, "x");
+        empty.entries.clear();
+        assert!(empty.check().is_err());
+        let mut twice = request(&key, "x");
+        twice.entries.push(twice.entries[0].clone());
+        assert!(twice.check().is_err());
+        let mut bad_id = request(&key, "x");
+        bad_id.entries[0].id = "not-a-uuid".into();
+        assert!(bad_id.check().is_err());
+        let mut bad_day = request(&key, "x");
+        bad_day.day = "2026-13-01".into();
+        assert!(bad_day.check().is_err());
+        let mut long = request(&key, "x");
+        long.fields[0].label = "x".repeat(FIELD_CHARS_MAX + 1);
+        assert!(long.check().is_err());
+        let mut many = request(&key, "x");
+        many.fields = vec![fields()[0].clone(); FIELDS_MAX + 1];
+        assert!(many.check().is_err());
     }
 
     #[test]

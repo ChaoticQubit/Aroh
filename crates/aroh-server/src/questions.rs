@@ -12,7 +12,7 @@ pub const DAYS_PER_WEEK: f64 = 7.0;
 /// Whether intake question `q` counts days in a week: a number question whose
 /// unit is days and whose unit, id or text names a week. A span of days, such
 /// as days until an exam, and minutes per day never count.
-fn per_week_days(q: &Value) -> bool {
+pub(crate) fn per_week_days(q: &Value) -> bool {
     let field = |k: &str| q.get(k).and_then(Value::as_str).unwrap_or_default().trim().to_lowercase();
     let unit = field("unit");
     q.get("kind").and_then(Value::as_str) == Some("number") && unit.starts_with("day") && [unit.as_str(), &field("id"), &field("text")].iter().any(|s| s.contains("week"))
@@ -53,6 +53,25 @@ pub fn current_shape(intake: &mut Value) {
         i.entry("ordered").or_insert(Value::Null);
         i.entry("ordered_why").or_insert(Value::Null);
     }
+}
+
+/// The owner's answers a replan reads (Q95): one entry per question of `intake` that has a
+/// non-null answer in `answers`, with its id, question text, unit and answer, in intake order.
+/// Returns an empty list when nothing was answered.
+pub fn answered(intake: &Value, answers: &Value) -> Value {
+    let answer_of = |id: &str| answers.as_array()?.iter().find(|a| a.get("id").and_then(Value::as_str) == Some(id))?.get("answer")?.as_str().map(str::to_string);
+    let out: Vec<Value> = intake
+        .get("questions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|q| {
+            let id = q.get("id")?.as_str()?;
+            let answer = answer_of(id)?;
+            Some(json!({"id": id, "question": q.get("text").and_then(Value::as_str).unwrap_or(id), "unit": q.get("unit").cloned().unwrap_or(Value::Null), "answer": answer}))
+        })
+        .collect();
+    Value::Array(out)
 }
 
 /// `n` as JSON, a whole number written without a fraction as a model writes it.
@@ -163,9 +182,31 @@ mod tests {
     }
 
     #[test]
+    fn b113_a_replan_reads_each_answered_question_with_its_text() {
+        let intake = json!({"questions": [
+            number("reading_days", "How many days a week can you read?", "days per week", 1, 7),
+            {"id": "when", "text": "When do you read?", "kind": "choice", "choices": ["Morning"]},
+            {"id": "skipped", "text": "Anything else?", "kind": "text", "choices": []},
+        ]});
+        let answers = json!([{"id": "reading_days", "answer": "7"}, {"id": "when", "answer": "Morning"}, {"id": "skipped", "answer": null}, {"id": "gone", "answer": "x"}]);
+        assert_eq!(
+            answered(&intake, &answers),
+            json!([
+                {"id": "reading_days", "question": "How many days a week can you read?", "unit": "days per week", "answer": "7"},
+                {"id": "when", "question": "When do you read?", "unit": null, "answer": "Morning"},
+            ])
+        );
+        assert_eq!(answered(&json!({}), &json!(null)), json!([]));
+        let wf = crate::workflows::workflow(crate::workflows::REPLAN).unwrap();
+        assert!(wf.check_value("answers", &answered(&intake, &answers)).is_empty());
+        let adapt = wf.nodes.iter().find(|n| n.id == "adapt").unwrap();
+        assert!(adapt.reads.iter().any(|r| r == "answers"), "the replan planner sees the owner's answers");
+    }
+
+    #[test]
     fn b105_b107_b109_the_interviewer_is_told_each_rule() {
         let text = crate::workflows::shipped("intake-interviewer").unwrap();
-        for rule in ["goal.context is the description", "source goal description", "max 7, never more", "Never list Other", "Set multi true", "Set ordered from the research", "multi: bool?", "ordered = \"bool?\""] {
+        for rule in ["goal.context is the description", "source goal description", "max 7, never more", "Never list Other", "Set multi true", "Set ordered from the research", "id preferred_days", "multi: bool?", "ordered = \"bool?\""] {
             assert!(text.contains(rule), "{rule}");
         }
     }

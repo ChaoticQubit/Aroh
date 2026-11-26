@@ -10,6 +10,7 @@
 	import Render from '../Render.svelte';
 	import Persona from './Persona.svelte';
 	import QuestionCard from './QuestionCard.svelte';
+	import ProposalCard from './ProposalCard.svelte';
 	import QuestionGroup from './QuestionGroup.svelte';
 	import PlanCard, { type PlanContext } from '../plan/PlanCard.svelte';
 	import CantFitCard from '../plan/CantFitCard.svelte';
@@ -29,7 +30,8 @@
 	 * Owner and persona thread with inline cards, a question group, research progress and a plan
 	 * awaiting approval, above a composer with text and, given `voice`, a mic that dictates into the draft.
 	 * Emits `{ type: 'send', text }` (typed or a card's answer), the group's `answer`, `skip` and `submit`,
-	 * `{ type: 'approve', fixed }` (indexes of plan items set to Fixed time), `{ type: 'change' }`, or a
+	 * `{ type: 'approve', fixed }` (indexes of plan items set to Fixed time), `{ type: 'change' }`,
+	 * `{ type: 'proposal', decision }` ("apply" or "reject" on a proposal card, B114), or a
 	 * run's `stop` and `retry`. With `echo` false the caller adds sent messages itself. With
 	 * `inline` the thread flows in the page, which is the only scroller, and the composer sticks
 	 * to the bottom of the screen (the goal card); only a new question group scrolls into view.
@@ -60,6 +62,10 @@
 	});
 	let approved = $state(false);
 	const dictation = $derived(voice ? new Dictation(voice, () => draft, (text) => (draft = text)) : null);
+	$effect(() => {
+		const mic = dictation;
+		return () => void mic?.release();
+	});
 	let fixed = $state<number[]>([]);
 	const split = $derived(splitTail(messages));
 	const thread = $derived([...split.body, ...sent]);
@@ -132,6 +138,8 @@
 					{:else}
 						<Render spec={m.spec} onchange={(v) => answer(v)} />
 					{/if}
+				{:else if m.type === 'proposal'}
+					<ProposalCard spec={m.spec} decided={m.decided ?? null} onchange={(decision) => onchange?.({ type: 'proposal', decision })} />
 				{:else if m.type === 'questions' && m.node === 'limit_choice'}
 					<CantFitCard group={m} {onchange} />
 				{:else if m.type === 'questions'}

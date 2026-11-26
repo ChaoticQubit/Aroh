@@ -20,7 +20,7 @@ use troupekit_agent::{AgentError, AgentIo, EvalRegistry, EventSink, ModelHandle,
 use troupekit_core::clock::Clock;
 use troupekit_core::ids::RunId;
 use troupekit_graph::{Conditions, GraphIo};
-use troupekit_providers::{Catalog, HttpModel, MeteredModel, Model};
+use troupekit_providers::{Catalog, CompletionRequest, HttpModel, MeteredModel, Model, StopReason};
 use troupekit_core::tool::WEB_SEARCH;
 use troupekit_tools::{
     hosted, typed_tool, web_fetch, BraveSearch, EnvSecrets, HostedTool, HttpLimits, SearchProvider, SearchToolkit,
@@ -118,6 +118,46 @@ pub async fn connect(
     let metered: Box<dyn Model> = Box::new(UsageModel::new(inner, vendor, model, writer));
     let model: Arc<dyn Model> = Arc::new(ContinueModel::new(metered, price, budget));
     Ok(ModelHandle { model, price })
+}
+
+/// Workflow name a single model turn is checked under: the account must be
+/// live and have AI consent, but it does not count as an agent run.
+const ONE_TURN: &str = "one_turn";
+
+/// What the owner reads when no provider key can make the call.
+pub const NO_PROVIDER: &str = "Add your AI provider key in Settings so the engine can do this.";
+
+fn model_failed(message: &str) -> ServerError {
+    ServerError::Refused { code: "model_failed", message: message.into() }
+}
+
+/// Sends `req` as one model turn on `user`'s default provider setting, with
+/// usage written like any call (Q94: every model call goes through the
+/// engine). Returns the reply text. Refuses like a run start without AI
+/// consent or on a disabled account; `Setup` with `NO_PROVIDER` when no key
+/// works; `model_failed` with a fixed sentence when the provider fails, refuses
+/// or stops early. Neither the request nor the reply is ever logged.
+pub async fn one_turn(deps: &Deps, user: Uuid, req: &CompletionRequest) -> Result<String, ServerError> {
+    crate::account::check_run(&deps.pool, user, ONE_TURN).await?;
+    let settings = list_rows::<ProviderSetting>(&deps.pool, user, &[], false).await?;
+    let (setting, selector) = resolve(&settings, "default").map_err(|_| ServerError::Setup(NO_PROVIDER.into()))?;
+    let writer = Arc::new(UsageWriter { pool: deps.pool.clone(), hlc: deps.hlc.clone(), clock: deps.clock.clone(), user, goal: None, run: None });
+    let handle = connect(deps, writer, setting, &selector).await.map_err(|e| match e {
+        ServerError::Setup(_) => ServerError::Setup(NO_PROVIDER.into()),
+        other => other,
+    })?;
+    let reply = handle.model.complete(req).await.map_err(|_| model_failed("The AI provider did not answer. Try again in a moment."))?;
+    match reply.stop {
+        StopReason::EndTurn => {}
+        StopReason::Refusal => return Err(model_failed("The AI provider declined this request.")),
+        StopReason::MaxTokens => return Err(model_failed("The AI provider's answer was cut off. Try again.")),
+        _ => return Err(model_failed("The AI provider did not finish its answer. Try again.")),
+    }
+    let text = reply.message.final_text();
+    if text.trim().is_empty() {
+        return Err(model_failed("The AI provider answered without text. Try again."));
+    }
+    Ok(text)
 }
 
 async fn search_kit(deps: &Deps, user: Uuid) -> Result<Option<Toolkit>, ServerError> {
@@ -345,6 +385,8 @@ impl RunIo {
         tools.register(crate::limits::tool()).map_err(|e| ServerError::Setup(e.to_string()))?;
         conditions.register("overlap_gate", Arc::new(crate::overlaps::overlap_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
         tools.register(crate::overlaps::tool(busy.clone(), days)).map_err(|e| ServerError::Setup(e.to_string()))?;
+        conditions.register("day_gate", Arc::new(crate::days::day_gate)).map_err(|e| ServerError::Setup(e.to_string()))?;
+        tools.register(crate::days::tool(busy.clone(), days)).map_err(|e| ServerError::Setup(e.to_string()))?;
         for t in crate::cards::card_tools(env_cards) {
             tools.register(t).map_err(|e| ServerError::Setup(e.to_string()))?;
         }
