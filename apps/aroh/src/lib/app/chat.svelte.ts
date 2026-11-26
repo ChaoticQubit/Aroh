@@ -9,11 +9,12 @@ import { deviceZone } from '$lib/ui/clock';
 import { originRun, pickRun } from './goalcard';
 import { deviceKeep, readSent, rememberSent, type Keep } from './chatkeep';
 import { bubbleOf, runWorking, type FailedSend } from './working';
+import { decideProposal } from './proposals';
 
 const POLL_MAX = 400;
 
 /** The run and node a waiting card belongs to, or null for a message that is not one. */
-const keyOf = (m: ChatMessage): string | null => (m.type === 'plan' ? (m.key ?? null) : null);
+const keyOf = (m: ChatMessage): string | null => (m.type === 'plan' ? (m.key ?? null) : m.type === 'proposal' ? m.key : null);
 const DAY_MS = 86_400_000;
 const SNAPSHOT_DAYS = 119;
 
@@ -64,6 +65,7 @@ export class GoalChat {
 	private read = $state(false);
 	failed = $state<FailedSend | null>(null);
 	private approvedKeys = $state<string[]>([]);
+	private decidedKeys = $state<Record<string, 'apply' | 'reject'>>({});
 	private originId: string | null = null;
 	goalId: string | null;
 	private runId: string | null = null;
@@ -99,13 +101,16 @@ export class GoalChat {
 
 	/**
 	 * Every message of the thread, in order, with the open question group last. A card of a waiting
-	 * node renders once: the newest one of its run and node. A plan card the owner approved shows approved.
+	 * node renders once: the newest one of its run and node. A plan card the owner approved shows
+	 * approved; a proposal the owner applied or dismissed shows that decision.
 	 */
 	get messages(): ChatMessage[] {
 		const later = new Set(this.live.map(keyOf).filter((k) => k !== null));
-		const shown = [...this.log.filter((m) => !later.has(keyOf(m) ?? '')), ...this.live].map((m) =>
-			m.type === 'plan' && m.key && this.approvedKeys.includes(m.key) ? { ...m, approved: true } : m
-		);
+		const shown = [...this.log.filter((m) => !later.has(keyOf(m) ?? '')), ...this.live].map((m): ChatMessage => {
+			if (m.type === 'plan' && m.key && this.approvedKeys.includes(m.key)) return { ...m, approved: true };
+			if (m.type === 'proposal' && this.decidedKeys[m.key]) return { ...m, decided: this.decidedKeys[m.key] };
+			return m;
+		});
 		return [...shown, ...(this.group ? [groupMessage(this.group)] : [])];
 	}
 
@@ -345,11 +350,12 @@ export class GoalChat {
 		await this.watch(r.value.run_id);
 	}
 
-	/** Hands a PersonaChat event (send, resend, answer, skip, submit, approve with its fixed items, change, stop or retry) to the chat. */
+	/** Hands a PersonaChat event (send, resend, answer, skip, submit, approve with its fixed items, change, a proposal decision, stop or retry) to the chat. */
 	handle(event: unknown) {
 		if ((event as { type?: string }).type === 'stop') void this.stop();
 		if ((event as { type?: string }).type === 'retry') void this.retry();
-		const e = event as { type: string; text?: string; id?: string; value?: unknown; skipped?: boolean; fixed?: number[] };
+		const e = event as { type: string; text?: string; id?: string; value?: unknown; skipped?: boolean; fixed?: number[]; decision?: unknown };
+		if (e.type === 'proposal' && (e.decision === 'apply' || e.decision === 'reject')) void this.decideProposal(e.decision === 'apply');
 		if (e.type === 'send' && e.text?.trim()) void this.send(e.text.trim());
 		if (e.type === 'resend') void this.resend();
 		if (e.type === 'answer' && this.group && e.id) this.group = withAnswer(this.group, e.id, e.value);
@@ -377,6 +383,27 @@ export class GoalChat {
 		if (!yes) this.say('What should change? Type it below.');
 		await this.watch(this.runId);
 		if (yes && plan && fixed.length && this.goalId) await this.lockFixed(this.goalId, plan, fixed);
+	}
+
+	/**
+	 * Applies (`yes`) or dismisses the proposal the followed run waits on, through the action the
+	 * Inbox calls (B114), then follows the run to its end. A refusal makes the card decidable again.
+	 */
+	async decideProposal(yes: boolean) {
+		const runId = this.runId;
+		const record = this.view?.run_id === runId ? this.view?.waiting.find((w) => w.node === 'approve')?.data.proposal_record : undefined;
+		const id = (record as { proposal_id?: string } | undefined)?.proposal_id;
+		if (!runId || !id) return;
+		const key = `${runId}:approve`;
+		this.decidedKeys = { ...this.decidedKeys, [key]: yes ? 'apply' : 'reject' };
+		const r = await decideProposal(id, this.goalId, yes, runId);
+		if (!r.ok) {
+			const { [key]: _, ...rest } = this.decidedKeys;
+			this.decidedKeys = rest;
+			return this.say(r.message);
+		}
+		this.freeze();
+		await this.watch(runId);
 	}
 
 	/** Syncs the written plan, then sets Fixed time on the actions the plan items at `fixed` became. */

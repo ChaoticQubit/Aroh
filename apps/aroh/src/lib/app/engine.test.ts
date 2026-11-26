@@ -79,6 +79,9 @@ describe('engine client', () => {
 		const clash = 'node `place_check`: tool `check_overlap`: blocked: Could not fit sessions around your calendar: Gym: Upper body A clashes with Gym: Full body A (legs, chest, back)';
 		expect(pauseMessage({ status: 'failed', error: clash })).toBe('Could not fit sessions around your calendar: Gym: Upper body A clashes with Gym: Full body A (legs, chest, back).');
 		expect(pauseMessage({ status: 'failed', error: 'node `plan`: BadRequest: The plan was too long to finish' })).toBe('The plan was too long to finish.');
+		const days = 'node `day_check`: tool `check_days`: blocked: Could not plan the days you answered: You answered 7 days a week; the plan leaves Sunday empty';
+		expect(pauseMessage({ status: 'failed', error: days })).toBe('Could not plan the days you answered: You answered 7 days a week; the plan leaves Sunday empty.');
+		expect(progressLines([{ seq: 1, at_ms: 0, body: { type: 'step_started', step: 'fit_days' } }])).toEqual([{ text: 'Moving sessions onto the days you answered', done: false }]);
 		const events = [{ seq: 1, at_ms: 0, body: { type: 'step_started', step: 'place' } }];
 		expect(progressLines(events)).toEqual([{ text: 'Moving sessions around your calendar', done: false }]);
 		expect(pauseMessage({ status: 'checkpointed' })).toBeNull();
@@ -313,5 +316,27 @@ describe('engine failures in plain words (B96)', () => {
 		}
 		expect(messages).toEqual([ENGINE_PROBLEM, ENGINE_PROBLEM, ENGINE_PROBLEM, ENGINE_PROBLEM, 'not found: goal g1']);
 		for (const m of messages.slice(0, 4)) expect(m).not.toMatch(/\d{3}|internal|html/i);
+	});
+});
+
+describe('a replan proposal in the goal chat (B114)', () => {
+	const record = {
+		proposal_id: 'p1',
+		summary: 'Read moves to Tuesday afternoon.',
+		size: 'small',
+		changes: [{ op: 'move', action_id: 'a1', title: 'Read', before: { start_at: '2026-12-07T18:00:00Z', end_at: '2026-12-07T18:30:00Z' }, after: { start_at: '2026-12-08T15:00:00Z', end_at: '2026-12-08T15:30:00Z' } }]
+	};
+	const waiting: Waiting = { node: 'approve', ask: 'approval', prompt: 'Apply this change to your plan?', data: { proposal_record: record } };
+
+	it('b114: shows the proposal with its changes right in the chat, not a pointer to Inbox', () => {
+		const out = chatFromRun({ ...view({ status: 'waiting_human' }, [waiting]), workflow: 'replan' }, 'UTC');
+		expect(out).toContainEqual({ type: 'message', from: 'persona', name: 'Adaptation analyst', text: 'Review the change below.' });
+		expect(out.at(-1)).toEqual({
+			type: 'proposal',
+			key: 'r1:approve',
+			id: 'p1',
+			spec: { kind: 'proposal_card', persona: 'Adaptation analyst', summary: 'Read moves to Tuesday afternoon.', changes: [{ op: 'move', title: 'Read', before: 'Mon 18:00', after: 'Tue 15:00' }] }
+		});
+		expect(JSON.stringify(out)).not.toContain('Inbox');
 	});
 });

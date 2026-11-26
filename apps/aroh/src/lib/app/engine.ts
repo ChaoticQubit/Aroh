@@ -5,6 +5,7 @@ import { formatYmd, minuteOfDay } from '$lib/ui/format';
 import type { Action } from './client';
 import { editError, type PersonaView } from './personas';
 import { deviceZone } from '$lib/ui/clock';
+import { changeViews } from './diff';
 import type { StartGoalBody } from './newgoal';
 import { caching, engineCache, type EngineCache } from './cache';
 
@@ -101,6 +102,7 @@ const STEP_TEXT: Record<string, string> = {
 	plan: 'Writing the plan',
 	revise: 'Revising the plan',
 	place: 'Moving sessions around your calendar',
+	fit_days: 'Moving sessions onto the days you answered',
 	write: 'Putting the plan on your calendar',
 	map: 'Reading your log',
 	save: 'Saving the entries',
@@ -113,7 +115,7 @@ const STEP_TEXT: Record<string, string> = {
 };
 
 /** Starts of failure reasons the server words for the owner (Q88 calendar clash, Q90 cut-off plan), shown as is without the node and tool around them. */
-const PLAIN_REASONS = ['Could not fit sessions around your calendar:', 'The plan was too long to finish'];
+const PLAIN_REASONS = ['Could not fit sessions around your calendar:', 'Could not plan the days you answered:', 'The plan was too long to finish'];
 
 /** The owner-facing line for a paused or failed run, or null when it is neither. */
 export function pauseMessage(status: RunStatus): string | null {
@@ -218,10 +220,11 @@ export function fixedActionIds(actions: Action[], goalId: string, items: PlanIte
 
 /**
  * The chat messages for one run view: progress, then what the run waits for (a plan to approve,
- * a change request prompt, a replan proposal), a pause or failure line, or the done line. Open
- * questions are not messages here: the chat renders them as one group (see `questions.ts`).
+ * a change request prompt, a replan proposal with its changes read in `zone`), a pause or failure
+ * line, or the done line. Open questions are not messages here: the chat renders them as one
+ * group (see `questions.ts`).
  */
-export function chatFromRun(view: RunView): ChatMessage[] {
+export function chatFromRun(view: RunView, zone: string = deviceZone()): ChatMessage[] {
 	const out: ChatMessage[] = [];
 	const lines = progressLines(view.events);
 	if (lines.length) out.push({ type: 'progress', lines, working: ACTIVE.includes(view.status.status) });
@@ -239,8 +242,10 @@ export function chatFromRun(view: RunView): ChatMessage[] {
 			const items = plan.items.map(({ title, start, minutes, rrule }) => ({ title, start, minutes, rrule }));
 			out.push({ type: 'plan', title: plan.summary, items: plan.items.map(itemLine), fixable: plan.items.map((i) => !i.rrule), plan: { items, timezone: plan.timezone ?? null }, key: `${view.run_id}:${w.node}`, approved: false });
 		} else if (w.node === 'approve' && w.data.proposal_record) {
-			const p = w.data.proposal_record as { summary: string };
-			out.push({ type: 'message', from: 'persona', name: 'Adaptation analyst', text: `${p.summary} It is in your Inbox to apply.` });
+			const p = w.data.proposal_record as { proposal_id?: string; summary: string; changes?: unknown };
+			const persona = 'Adaptation analyst';
+			out.push({ type: 'message', from: 'persona', name: persona, text: 'Review the change below.' });
+			out.push({ type: 'proposal', key: `${view.run_id}:${w.node}`, id: p.proposal_id ?? '', spec: { kind: 'proposal_card', persona, summary: p.summary, changes: changeViews(p, zone) } });
 		} else if (!questionsOf(w).length) {
 			out.push({ type: 'message', from: 'persona', name: 'Aroh', text: w.prompt ?? 'Your answer is needed.' });
 		}

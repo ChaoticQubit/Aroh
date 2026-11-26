@@ -430,7 +430,7 @@ async fn new_goal_to_written_actions() {
     let key = aroh_diary::DiaryKey::generate(1).unwrap();
     let today = utc(api.clock.now_ms()).date_naive().format("%Y-%m-%d").to_string();
     api.diary_day(u, &key, &today).await;
-    let (status, _) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str()}))).await;
+    let (status, _) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str(), "agents": true}))).await;
     assert_eq!(status, 200);
     let (status, chat) = api.call(Method::Post, &format!("/v1/actions/{series_action}/chat"), Some(&t), Some(json!({"scope": "this", "text": format!("shorter today, {DIARY_SENTINEL}")}))).await;
     assert_eq!(status, 202, "{chat}");
@@ -1444,7 +1444,7 @@ async fn questions_take_string_answers_and_skips_and_old_runs_still_submit() {
         {"id": "chapters_done", "answer": "4"},
         {"id": "daily_minutes", "answer": "30"},
         {"id": "preferred_reading_time", "answer": null},
-        {"id": "reading_days", "answer": "5"},
+        {"id": "reading_days", "answer": "3"},
         {"id": "book_format", "answer": null},
         {"id": "busy_days_limits", "answer": null},
     ]);
@@ -1475,7 +1475,7 @@ async fn questions_take_string_answers_and_skips_and_old_runs_still_submit() {
         {"id": "chapters_done", "answer": "4"},
         {"id": "daily_minutes", "answer": null},
         {"id": "preferred_reading_time", "answer": "Evening"},
-        {"id": "reading_days", "answer": "5"},
+        {"id": "reading_days", "answer": "3"},
         {"id": "book_format", "answer": "Print book"},
         {"id": "busy_days_limits", "answer": "none"},
     ]);
@@ -1687,7 +1687,7 @@ async fn a_run_waiting_before_the_profile_node_resumes_on_its_own_graph() {
         {"id": "chapters_done", "answer": "4"},
         {"id": "daily_minutes", "answer": "30"},
         {"id": "preferred_reading_time", "answer": "Evening"},
-        {"id": "reading_days", "answer": "5"},
+        {"id": "reading_days", "answer": "3"},
         {"id": "book_format", "answer": null},
         {"id": "busy_days_limits", "answer": null},
     ]);
@@ -1968,7 +1968,8 @@ async fn plan_rows(api: &Api, goal: &str) -> Vec<(String, String, String, bool)>
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "needs AROH_TEST_PG"]
 async fn run_again_keeps_done_actions_changes_nothing_before_approval_and_carries_the_answers() {
-    let api = api(goal_models(), offline()).await;
+    let models = goal_models();
+    let api = api(models.clone(), offline()).await;
     let (u, t) = api.signed_up().await;
     let (goal, first, view) = api.approved_goal(&t).await;
     assert_eq!(view["status"]["status"], "done", "{view}");
@@ -1995,7 +1996,15 @@ async fn run_again_keeps_done_actions_changes_nothing_before_approval_and_carrie
     let again = started["run_id"].as_str().unwrap().to_string();
     assert_ne!(again, first);
 
+    let planned_before = models.sent().len();
     api.tick().await;
+    let planner: Vec<String> = models.sent()[planned_before..].iter().map(body_text).filter(|b| b.contains("You are Goal planner")).collect();
+    assert!(!planner.is_empty(), "the run-again planner ran");
+    for body in &planner {
+        let state = body.replace("\\\"", "\"");
+        assert!(state.contains("\"weekly_runs\"") && state.contains("\"answer\":\"4\""), "the planner input holds the edited answer: {body}");
+        assert!(state.contains("How many runs a week?"), "the planner input holds the questions: {body}");
+    }
     let view = api.run(&t, &again).await;
     assert_eq!((view["workflow"].as_str(), view["waiting"][0]["node"].as_str()), (Some("run-again"), Some("approve")), "no questions asked again: {view}");
     let answers: Vec<(String, Option<String>)> =
@@ -2026,6 +2035,12 @@ async fn run_again_keeps_done_actions_changes_nothing_before_approval_and_carrie
 }
 
 const DIARY_SENTINEL: &str = "DIARY-SENTINEL-4b1e";
+
+/// An Anthropic unary reply with `text` (no block when empty) and `stop`, as one model turn reads it.
+fn message_reply(text: &str, stop: &str) -> Reply {
+    let content = if text.is_empty() { json!([]) } else { json!([{"type": "text", "text": text}]) };
+    json_reply(200, json!({"id": "msg_t", "type": "message", "role": "assistant", "content": content, "stop_reason": stop, "usage": {"input_tokens": 5, "output_tokens": 5}}))
+}
 
 impl Api {
     /// Seals one structured diary day for `user` on `day` whose summary and
@@ -2109,8 +2124,7 @@ async fn diary_reaches_runs_only_while_shared_and_never_rests_in_plaintext() {
     };
 
     let (status, off) = api.call(Method::Get, "/v1/diary/key", Some(&t), None).await;
-    assert_eq!((status, off["on"].clone()), (200, json!(false)));
-    let (first, _) = replan("before sharing").await;
+    assert_eq!((status, off), (200, json!({"on": false, "version": null})));
 
     let b64 = |bytes: &[u8]| { use base64::Engine as _; base64::engine::general_purpose::STANDARD.encode(bytes) };
     for bad in [json!({"version": 1, "key": b64(&[1u8; 16])}), json!({"version": 0, "key": key.to_base64().as_str()}), json!({"version": 1, "key": "not base64!"}), json!({"version": 1})] {
@@ -2118,9 +2132,15 @@ async fn diary_reaches_runs_only_while_shared_and_never_rests_in_plaintext() {
         assert_eq!(status, 400, "{body}");
         assert!(!body.to_string().contains(key.to_base64().as_str()));
     }
-    let (status, on) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str()}))).await;
+    let (status, held) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str()}))).await;
+    assert_eq!((status, held), (200, json!({"on": false, "version": 1})), "the server holds the key with agents off");
+    let (first, _) = replan("key held, agents off").await;
+
+    let (status, on) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str(), "agents": true}))).await;
     assert_eq!(status, 200, "{on}");
     assert_eq!(on, json!({"on": true, "version": 1}));
+    let (status, kept) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str()}))).await;
+    assert_eq!((status, kept), (200, json!({"on": true, "version": 1})), "sending the key again keeps the toggle");
     let (shared, view) = replan("while sharing").await;
     let record = &view["waiting"][0]["data"]["proposal_record"];
     assert!(record["summary"].as_str().unwrap().contains(DIARY_SENTINEL), "the owner reads the run through the API: {view}");
@@ -2130,10 +2150,10 @@ async fn diary_reaches_runs_only_while_shared_and_never_rests_in_plaintext() {
     let status: String = db::query_scalar("select status from public.proposals where run_id::text = $1").bind(&shared).fetch_one(&api.pool).await.unwrap();
     assert_eq!(status, "applied");
 
+    let (status, off) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str(), "agents": false}))).await;
+    assert_eq!((status, off), (200, json!({"on": false, "version": 1})), "turning agents off keeps the server copy");
     let (status, _) = api.call(Method::Delete, "/v1/diary/key", Some(&t), None).await;
-    assert_eq!(status, 204);
-    let (status, _) = api.call(Method::Delete, "/v1/diary/key", Some(&t), None).await;
-    assert_eq!(status, 404);
+    assert_eq!(status, 405, "the server copy is never deleted from the app");
     let (after, _) = replan("after unsharing").await;
 
     let saw = saw.lock().unwrap().clone();
@@ -2197,7 +2217,7 @@ async fn diary_key_version_must_match_the_diary_rows() {
     assert!(!body.to_string().contains(stale.to_base64().as_str()));
     let (_, off) = api.call(Method::Get, "/v1/diary/key", Some(&t), None).await;
     assert_eq!(off["on"], false, "a refused key is not stored");
-    let (status, _) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 2, "key": v2.to_base64().as_str()}))).await;
+    let (status, _) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 2, "key": v2.to_base64().as_str(), "agents": true}))).await;
     assert_eq!(status, 200);
 
     let replan = || async {
@@ -2213,6 +2233,110 @@ async fn diary_key_version_must_match_the_diary_rows() {
     let run = replan().await;
     assert_eq!(*saw.lock().unwrap(), vec![true, false], "a run gets no diary once the rows moved to another key version");
     assert_eq!(api.count("select count(*) from public.runs where id::text = $1 and not sealed", &run).await, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs AROH_TEST_PG"]
+async fn the_engine_structures_a_day_and_reads_an_image_keeping_only_ciphertext() {
+    let tracker = Uuid::now_v7().to_string();
+    let card_reply = json!({"summary": format!("A slow day, {DIARY_SENTINEL}."), "mood": 3, "energy": 2, "highlights": ["Tea with Ana"], "food": null, "water": null,
+        "workout": null, "notes_for_tomorrow": null, "tracker_values": [{"tracker_id": tracker, "field": "weight_kg", "value": 71.5}]})
+    .to_string();
+    let models = FnTransport::new(move |req| {
+        let body = body_text(req);
+        if body.contains("You structure one day of a private diary") {
+            if body.contains("REFUSE-THIS-DAY") {
+                return message_reply("", "refusal");
+            }
+            assert!(body.contains(DIARY_SENTINEL), "the model reads the opened words");
+            return message_reply(&card_reply, "end_turn");
+        }
+        if body.contains("You transcribe images") {
+            assert!(body.contains("\"type\":\"image\""), "the image goes to the model");
+            return message_reply("  Chapter 1\nThe joy of x  ", "end_turn");
+        }
+        json_reply(400, json!({}))
+    });
+    let api = api(models.clone(), offline()).await;
+    let (u, t) = api.signed_up().await;
+    let owner = u.to_string();
+    let key = aroh_diary::DiaryKey::generate(1).unwrap();
+    let day = "2026-11-26";
+    let seal_entry = |text: &str| {
+        let id = Uuid::now_v7().to_string();
+        let entry = aroh_diary::Entry { at: utc(T0), text: text.into(), source: aroh_diary::Source::Text };
+        let sealed = aroh_diary::seal(&key, &owner, aroh_diary::Table::Entries, &id, &entry.to_bytes()).unwrap();
+        aroh_diary::SealedEntry { id, sealed }
+    };
+    let entry = seal_entry(&format!("Slept badly, {DIARY_SENTINEL}"));
+    let mut row = aroh_domain::rows::DiaryEntry { id: entry.id.clone(), user_id: owner.clone(), day: day.into(), at: utc(T0), key_version: 1, nonce: entry.sealed.nonce.clone(), ciphertext: entry.sealed.ciphertext.clone(), updated_at: String::new(), deleted: false };
+    put_row(&api.pool, &api.hlc, u, &mut row).await.unwrap();
+    let fields = vec![aroh_diary::NumericField { tracker_id: tracker.clone(), key: "weight_kg".into(), label: "Weight".into(), unit: Some("kg".into()) }];
+    let request = aroh_diary::StructureRequest { day: day.into(), entries: vec![entry.clone()], fields: fields.clone() };
+    let body = serde_json::to_value(&request).unwrap();
+    assert!(!body.to_string().contains(DIARY_SENTINEL), "the device sends ciphertext only");
+
+    let (status, missing) = api.call(Method::Post, "/v1/diary/structure", Some(&t), Some(body.clone())).await;
+    assert_eq!((status, missing["error"]["code"].as_str()), (409, Some("diary_key_missing")), "{missing}");
+    let (status, _) = api.call(Method::Put, "/v1/diary/key", Some(&t), Some(json!({"version": 1, "key": key.to_base64().as_str()}))).await;
+    assert_eq!(status, 200);
+    let (status, answer) = api.call(Method::Post, "/v1/diary/structure", Some(&t), Some(body.clone())).await;
+    assert_eq!(status, 200, "{answer}");
+    assert!(!answer.to_string().contains(DIARY_SENTINEL), "the engine answers with ciphertext only");
+    let answer: aroh_diary::StructuredDay = serde_json::from_value(answer).unwrap();
+    assert_eq!(answer.tracker_values, vec![aroh_diary::TrackerValue { tracker_id: tracker.clone(), field: "weight_kg".into(), value: 71.5 }]);
+    let day_row = aroh_diary::day_id(&owner, day);
+    let card = aroh_diary::Card::from_bytes(&aroh_diary::open(&key, &owner, aroh_diary::Table::Days, &day_row, &answer.card).unwrap()).unwrap();
+    assert_eq!((card.entry_ids.clone(), card.summary.contains(DIARY_SENTINEL)), (vec![entry.id.clone()], true));
+    let mut card_row = aroh_domain::rows::DiaryDay { id: day_row, user_id: owner.clone(), day: day.into(), key_version: 1, nonce: answer.card.nonce.clone(), ciphertext: answer.card.ciphertext.clone(), updated_at: String::new(), deleted: false };
+    put_row(&api.pool, &api.hlc, u, &mut card_row).await.unwrap();
+    assert_eq!(api.count("select count(*) from public.diary_days where user_id::text = $1", &owner).await, 1);
+
+    let mut empty = body.clone();
+    empty["entries"] = json!([]);
+    let mut tampered = request.clone();
+    tampered.entries[0].sealed.ciphertext = seal_entry("other words").sealed.ciphertext;
+    let refused = aroh_diary::StructureRequest { day: day.into(), entries: vec![seal_entry("REFUSE-THIS-DAY")], fields };
+    let other_version = aroh_diary::StructureRequest { day: day.into(), entries: vec![aroh_diary::SealedEntry { sealed: aroh_diary::Sealed { key_version: 2, ..entry.sealed.clone() }, ..entry.clone() }], fields: vec![] };
+    for (label, bad, want) in [
+        ("no entries", empty, 400),
+        ("tampered", serde_json::to_value(&tampered).unwrap(), 400),
+        ("refusal", serde_json::to_value(&refused).unwrap(), 502),
+        ("other key version", serde_json::to_value(&other_version).unwrap(), 409),
+        ("unknown field", json!({"day": day, "entries": body["entries"], "fields": [], "extra": 1}), 400),
+    ] {
+        let (status, err) = api.call(Method::Post, "/v1/diary/structure", Some(&t), Some(bad)).await;
+        assert_eq!(status, want, "{label}: {err}");
+        let message = err["error"]["message"].as_str().unwrap();
+        assert!(!message.contains(DIARY_SENTINEL) && !message.contains("REFUSE"), "{label}: no diary text in an error: {message}");
+        if want != 400 {
+            assert!(message.ends_with('.') && message.starts_with(char::is_uppercase), "{label}: a refusal is a plain sentence: {message}");
+        }
+    }
+    let (status, _) = api.call(Method::Post, "/v1/diary/structure", None, Some(body.clone())).await;
+    assert_eq!(status, 401);
+
+    let png = { use base64::Engine as _; base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\nIMAGE-BYTES-7d2c") };
+    let (status, read) = api.call(Method::Post, "/v1/files/transcribe", Some(&t), Some(json!({"media_type": "image/png", "data": png}))).await;
+    assert_eq!((status, read), (200, json!({"text": "Chapter 1\nThe joy of x"})));
+    for bad in [json!({"media_type": "image/heic", "data": png}), json!({"media_type": "image/jpeg", "data": png}), json!({"media_type": "image/png", "data": "A".repeat(aroh_server::files::MAX_IMAGE_BASE64 + 4)})] {
+        let (status, err) = api.call(Method::Post, "/v1/files/transcribe", Some(&t), Some(bad)).await;
+        assert_eq!(status, 400, "{err}");
+    }
+    let (status, _) = api.call(Method::Post, "/v1/files/transcribe", None, Some(json!({"media_type": "image/png", "data": png}))).await;
+    assert_eq!(status, 401);
+
+    let rest = api.every_row_text().await;
+    assert!(api.count("select count(*) from public.usage where user_id::text = $1", &owner).await >= 2, "each model turn writes its usage");
+    assert!(!rest.contains(DIARY_SENTINEL), "diary text rests in plaintext somewhere");
+    assert!(!rest.contains("Chapter 1") && !rest.contains(&png), "the image or its text was stored");
+    assert!(!rest.contains(key.to_base64().as_str()), "the diary key rests in plaintext");
+
+    db::query("delete from public.ai_consents where user_id = $1").bind(u).execute(&api.pool).await.unwrap();
+    let (status, err) = api.call(Method::Post, "/v1/diary/structure", Some(&t), Some(body)).await;
+    assert_eq!((status, err["error"]["code"].as_str()), (403, Some("consent_required")), "{err}");
+    let (status, _) = api.call(Method::Post, "/v1/files/transcribe", Some(&t), Some(json!({"media_type": "image/png", "data": png}))).await;
+    assert_eq!(status, 403);
 }
 
 /// A device stamp newer than every stamp the test server issued so far, from node `d1`.

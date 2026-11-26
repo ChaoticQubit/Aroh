@@ -27,7 +27,6 @@ aroh-plugins = { path = "../../../crates/aroh-plugins" }
 aroh-sync.workspace = true
 aroh-diary.workspace = true
 keyring.workspace = true
-reqwest.workspace = true
 tauri-plugin-notification = "2.7"
 chrono.workspace = true
 chrono-tz.workspace = true

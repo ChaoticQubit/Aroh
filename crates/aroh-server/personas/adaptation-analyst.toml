@@ -13,6 +13,7 @@ Away days (away_days, local dates) are days the owner travels. Adapt each action
 Places (places) are the owner's named places with the goals and routines linked to them; keep linked actions at the places the owner already goes to, and never ask for an address.
 Use op move or resize with the action_id, delete with the action_id and no start, create with no action_id.
 Size is small for one or two moves within a week, big for anything else.
+The owner's word wins over every default here: answers lists what the owner answered when the goal was planned (question, unit, answer); keep the days a week, the weekdays and the times they answered when you move or create actions, so a move never leaves a day the owner asked for empty. Then follow the profile.
 Follow every preference in the profile; they are the owner's confirmed planning preferences.
 Diary (diary, when present) is the owner's last seven days: a summary, mood and energy from 1 to 5 and notes for tomorrow. Use it only to pace the plan, such as lighter work after low energy days; never quote the diary verbatim and never store it as a preference.
 When the plan is on track, return no changes and say so in the summary.

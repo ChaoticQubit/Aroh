@@ -14,7 +14,7 @@ const ACCOUNT: &str = "account";
 const PENDING: &str = "pending_logs";
 
 /// Settings the owner may write, all stored as text.
-pub const SETTINGS: [&str; 13] = [
+pub const SETTINGS: [&str; 14] = [
     "server_url",
     "goal_budget_usd",
     "calendars",
@@ -22,6 +22,7 @@ pub const SETTINGS: [&str; 13] = [
     "supabase_url",
     "supabase_anon_key",
     "dismissed_insights",
+    "dismissed_runs",
     "setup_done",
     "day_suggestions",
     "location",
@@ -52,8 +53,9 @@ pub fn default_value(name: &str) -> Option<String> {
     default_in(&DEFAULTS, name)
 }
 
-/// Most insight ids `dismissed_insights` holds: the Inbox shows the 30 newest insights.
-pub const MAX_DISMISSED: usize = 30;
+/// Most ids `dismissed_insights` or `dismissed_runs` holds. The Inbox drops ids whose item is
+/// gone, so the list stays near the items still listed; the bound only stops a runaway write.
+pub const MAX_DISMISSED: usize = 300;
 
 /// Most all-day events `day_suggestions` holds a triage suggestion for, as a triage run sends.
 pub const MAX_DAY_SUGGESTIONS: usize = 300;
@@ -105,6 +107,19 @@ pub fn settings(conn: &Connection) -> Result<BTreeMap<String, String>> {
     Ok(out)
 }
 
+/// Checks a dismissed list `field`: at most [`MAX_DISMISSED`] comma-separated uuids.
+/// Errors with `Invalid` for anything else.
+fn check_dismissed(field: &'static str, value: &str) -> Result<()> {
+    let ids: Vec<&str> = value.split(',').collect();
+    if ids.len() > MAX_DISMISSED {
+        return Err(invalid(field));
+    }
+    for id in ids {
+        aroh_domain::rows::check_uuid(field, id)?;
+    }
+    Ok(())
+}
+
 /// Checks `day_suggestions`: a JSON object of at most [`MAX_DAY_SUGGESTIONS`] device event ids
 /// (1 to 255 characters) to a day kind, `reminder`, `busy` or `away`.
 /// Errors with `Invalid` for anything else.
@@ -139,15 +154,8 @@ pub fn set_setting(conn: &Connection, name: &str, value: &str) -> Result<()> {
             "server_url" => aroh_domain::rows::check_url("server_url", value)?,
             "supabase_url" => aroh_domain::rows::check_url("supabase_url", value)?,
             "supabase_anon_key" => aroh_domain::rows::check_public_key("supabase_anon_key", value)?,
-            "dismissed_insights" => {
-                let ids: Vec<&str> = value.split(',').collect();
-                if ids.len() > MAX_DISMISSED {
-                    return Err(invalid("dismissed_insights"));
-                }
-                for id in ids {
-                    aroh_domain::rows::check_uuid("dismissed_insights", id)?;
-                }
-            }
+            "dismissed_insights" => check_dismissed("dismissed_insights", value)?,
+            "dismissed_runs" => check_dismissed("dismissed_runs", value)?,
             "day_suggestions" => check_day_suggestions(value)?,
             "agent_defaults" => drop(serde_json::from_str::<AgentDefaults>(value).map_err(|_| invalid("agent_defaults"))?),
             "goal_budget_usd" => {

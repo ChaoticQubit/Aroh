@@ -43,6 +43,8 @@ vi.mock('@tauri-apps/api/core', () => ({
 					waiting: [
 						fake.node === 'approve'
 							? { node: 'approve', ask: 'approval', prompt: 'Approve this plan?', data: { plan: { summary: 'One long core session', timezone: 'UTC', items: [{ title: 'Long core session', start: '2026-12-10T18:00:00', minutes: 90, rrule: null }] } } }
+							: fake.node === 'proposal'
+							? { node: 'approve', ask: 'approval', prompt: 'Apply this change to your plan?', data: { proposal_record: { proposal_id: 'p1', summary: 'Read moves to Tuesday.', size: 'small', changes: [{ op: 'delete', title: 'Read', before: null, after: null }] } } }
 							: fake.node === 'limit_choice'
 							? { node: 'limit_choice', ask: 'question', prompt: 'Pick what should change.', data: { limits: { fits: false, questions: fake.questions, card: fake.card } } }
 							: { node: 'questions', ask: 'question', prompt: 'Answer these so the plan fits you.', data: { intake: { questions: fake.questions } } }
@@ -57,6 +59,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 		}
 		if (method === 'POST' && path === '/v1/runs/r1/answers') {
 			fake.posts.push({ path, body });
+			if (fake.node === 'proposal' && fake.answerStatus === 202) fake.statuses = ['done'];
 			return fake.answerStatus === 202 ? { status: 202, body: { run_id: 'r1' } } : { status: fake.answerStatus, body: { error: { code: 'conflict', message: 'conflict: answer does not match `answers`' } } };
 		}
 		return { status: 404, body: { error: { code: 'not_found', message: `no route ${method} ${path}` } } };
@@ -559,5 +562,40 @@ describe('goal chat cache stays true (B87)', () => {
 		expect(chat.view).toBeNull();
 		expect(goalStatus(chat.view, 5, 0, { tone: 'planned', label: 'Active' }, chat.unreachable)).toMatchObject({ chip: 'Offline', retry: true });
 		engineCache.owner(null);
+	});
+});
+
+describe('a waiting replan proposal in the goal chat (B114)', () => {
+	const proposals = (messages: ChatMessage[]) => messages.filter((m) => m.type === 'proposal');
+
+	it('b114: shows the proposal with Apply and Dismiss, and Apply answers the run through the shared action', async () => {
+		fake.node = 'proposal';
+		const chat = await opened();
+		expect(proposals(chat.thread)).toEqual([expect.objectContaining({ id: 'p1', key: 'r1:approve', spec: expect.objectContaining({ summary: 'Read moves to Tuesday.' }) })]);
+		expect(texts(chat.thread)).toContain('Review the change below.');
+		chat.handle({ type: 'proposal', decision: 'apply' });
+		await settle();
+		expect(fake.posts).toEqual([{ path: '/v1/runs/r1/answers', body: { node: 'approve', answer: true } }]);
+		expect(proposals(chat.thread)).toEqual([expect.objectContaining({ id: 'p1', decided: 'apply' })]);
+	});
+
+	it('b114: Dismiss rejects the proposal and does not ask what to change', async () => {
+		fake.node = 'proposal';
+		const chat = await opened();
+		chat.handle({ type: 'proposal', decision: 'reject' });
+		await settle();
+		expect(fake.posts).toEqual([{ path: '/v1/runs/r1/answers', body: { node: 'approve', answer: false } }]);
+		expect(texts(chat.thread)).not.toContain('What should change? Type it below.');
+		expect(proposals(chat.thread)).toEqual([expect.objectContaining({ decided: 'reject' })]);
+	});
+
+	it('b114: a refused decision leaves the proposal decidable and says why', async () => {
+		fake.node = 'proposal';
+		fake.answerStatus = 409;
+		const chat = await opened();
+		chat.handle({ type: 'proposal', decision: 'apply' });
+		await settle();
+		expect(proposals(chat.thread)).toEqual([expect.not.objectContaining({ decided: 'apply' })]);
+		expect(texts(chat.thread)).toContain('conflict: answer does not match `answers`');
 	});
 });

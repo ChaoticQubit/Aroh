@@ -8,7 +8,7 @@ tauri::ios_plugin_binding!(init_plugin_aroh_speech);
 
 /// Error payload every platform rejects with, so the guest code sees one shape.
 /// `code` is one of `unsupported`, `mic_denied`, `speech_denied`, `on_device_unavailable`,
-/// `recognizer_unavailable`, `busy`, `not_started` or `audio_failed`.
+/// `recognizer_unavailable`, `busy`, `not_started`, `audio_failed` or `superseded` (a newer start took over).
 #[cfg(not(target_os = "ios"))]
 #[derive(Debug, serde::Serialize)]
 struct SpeechError {

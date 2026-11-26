@@ -13,6 +13,7 @@ away_days = "list<string>"
 places = "list<{name: string, goals: list<string>, routines: list<string>}>"
 autonomy = "enum(ask, balanced, auto)"
 profile = "list<{id: string, fact: string, topic: string?, source: string, date: string}>"
+answers = "list<{id: string, question: string, unit: string?, answer: string}>"
 diary = "list<{day: string, summary: string, mood: int, energy: int, notes_for_tomorrow: string?}>?"
 proposal = "{summary: string, size: enum(small, big), changes: list<{op: enum(move, resize, create, delete), action_id: string?, title: string, start: string?, minutes: int?}>}"
 proposal_record = "{proposal_id: string, summary: string, size: enum(small, big), changes: list<{op: enum(move, resize, create, delete), action_id: string?, title: string, before: {start_at: string, end_at: string}?, after: {start_at: string, end_at: string}?}>}"
@@ -24,7 +25,7 @@ id = "adapt"
 kind = "agent"
 persona = "adaptation-analyst"
 prompt = "Propose the smallest plan change that answers the reason."
-reads = ["goal", "calendar", "ordered", "daily_minutes", "busy", "away_days", "reason", "profile", "places", "diary"]
+reads = ["goal", "calendar", "ordered", "daily_minutes", "busy", "away_days", "reason", "answers", "profile", "places", "diary"]
 writes = "proposal"
 
 [[nodes]]

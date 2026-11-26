@@ -113,7 +113,7 @@ pub struct ErrorBody {
 /// Code and message of an error response. Codes: bad_request, unauthorized,
 /// forbidden, not_found, conflict, setup, internal, and the refusals
 /// consent_required, daily_run_limit, goal_limit, file_too_large, storage_full,
-/// files_remain, account_disabled.
+/// files_remain, account_disabled, model_failed, diary_key_missing.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorDetail {
     pub code: String,
@@ -144,6 +144,7 @@ fn refusal_status(code: &str) -> StatusCode {
     match code {
         "consent_required" | "account_disabled" => StatusCode::FORBIDDEN,
         "daily_run_limit" => StatusCode::TOO_MANY_REQUESTS,
+        "model_failed" => StatusCode::BAD_GATEWAY,
         _ => StatusCode::CONFLICT,
     }
 }
@@ -177,6 +178,7 @@ mod tests {
         assert_eq!(status("daily_run_limit"), (StatusCode::TOO_MANY_REQUESTS, "daily_run_limit"));
         assert_eq!(status("goal_limit"), (StatusCode::CONFLICT, "goal_limit"));
         assert_eq!(status("account_disabled").0, StatusCode::FORBIDDEN);
+        assert_eq!(status("model_failed").0, StatusCode::BAD_GATEWAY);
         assert_eq!(ServerError::Refused { code: "goal_limit", message: "Archive one.".into() }.to_string(), "Archive one.");
     }
 

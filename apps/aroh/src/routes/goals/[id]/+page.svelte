@@ -11,6 +11,7 @@
 	import { goalHeader, goalView } from '$lib/app/views';
 	import { engine, progressLines } from '$lib/app/engine';
 	import { GoalChat } from '$lib/app/chat.svelte';
+	import { withOpenProposals } from '$lib/app/proposals';
 	import { answersReason, chipFor, goalStatus, markRead, planWaits, runState, settledMark } from '$lib/app/goalcard';
 	import { dashboard, type Pace } from '$lib/app/dashboard';
 	import type { AgentSettings } from '$lib/app/newgoal';
@@ -115,6 +116,7 @@
 
 	const chat = $derived(new GoalChat(openId, 'Tell the agents anything about this goal. They read it at their next step.'));
 	$effect(() => void chat.open(chat.goalId ? runsOnOpen(chat.goalId) : undefined));
+	const seenProposals = new Set<string>();
 
 	const ready = $derived(!!s);
 	let runMark = $state('');
@@ -318,7 +320,7 @@
 			steps={progressLines(chat.view?.events ?? [])}
 			research={chat.origin?.research ?? null}
 			answers={chat.origin?.answers ?? []}
-			messages={chat.thread}
+			messages={withOpenProposals(chat.thread, data.snapshot?.proposals, seenProposals)}
 			onchat={(e) => chat.handle(e)}
 			voice={speech}
 			{controls}

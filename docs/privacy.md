@@ -16,6 +16,7 @@ Draft for the hosted Aroh service, 2026-11-23. The owner reviews it, fills in th
 | Email address and password (the password only as a hash) | Our Supabase project (Auth) | To sign you in |
 | Goals, plans, calendar actions, trackers and their entries, categories, notes on preferences, places you name, proposals, budgets and usage | On your phone (SQLite) and, when signed in, our Supabase database | To show and sync your plan across devices |
 | Files you attach to a goal, and the text the app reads from them | Our Supabase storage and database | So agents can use them when planning |
+| Diary entries and day cards, encrypted on your phone with a diary key kept in iCloud Keychain | On your phone and, encrypted, our database; our server holds a copy of the diary key sealed with a server key | To sync your diary and let the engine structure your days |
 | Busy times from calendars you connect (title, start, end) | On your phone and our database | So plans avoid your busy times |
 | Apple Health values that a tracker imports (body mass, workouts, steps, dietary energy), only when you connect Health | On your phone and, as tracker entries, our database | To fill your trackers |
 | Places you save (name, address, coordinates, radius) | On your phone and our database | Place-based reminders and planning |
@@ -41,6 +42,9 @@ Depending on the task, an agent run sends:
 - the text of files attached to the goal, and links you added;
 - your answers to the agent's questions;
 - for a free-text log, the text you typed and your tracker definitions;
+- to structure a diary day, that day's words, opened in our server's memory only and never stored or logged unencrypted, with your tracker definitions;
+- to read an attached image your phone could not read well, that image;
+- with "Let agents read my diary" on, the summary, mood, energy and notes of your last 7 diary days;
 - for a replan triggered by a tracker rule, the tracker's name and values in that window (which can include imported Health values such as body mass).
 
 Agents can search the web and read web pages. With Claude, searches and page reads go through Anthropic's own web tools; if you set up another search service (Brave Search or a SearXNG server), the search terms go to that service.

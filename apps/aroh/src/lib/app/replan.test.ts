@@ -64,7 +64,7 @@ describe('phaseOf', () => {
 
 	it('maps waiting, paused and failed runs', () => {
 		const base = obs({ server: ok({ event_at: 'x', checked: true, run_id: 'r1' }), runSeenAt: SAVED });
-		expect(phaseOf({ ...base, run: run({ status: 'waiting_human' }) })).toMatchObject({ kind: 'needs_you' });
+		expect(phaseOf({ ...base, run: run({ status: 'waiting_human' }) })).toMatchObject({ kind: 'needs_you', text: 'Replanning needs your OK' });
 		const failed = phaseOf({ ...base, run: run({ status: 'failed', error: 'model timeout' }) });
 		expect(failed).toMatchObject({ kind: 'failed', runId: 'r1' });
 		expect(failed.text).toContain('model timeout');

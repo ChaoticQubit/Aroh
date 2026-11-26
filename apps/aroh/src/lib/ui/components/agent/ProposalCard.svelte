@@ -5,17 +5,22 @@
 	import Persona from './Persona.svelte';
 	import type { OnChange, SpecOf } from '$lib/ui/contract';
 
-	/** A persona's proposed plan change, each change shown as before -> after. Emits "apply" or "reject". */
-	let { spec, onchange }: { spec: SpecOf<'proposal_card'>; onchange?: OnChange } = $props();
+	/**
+	 * A persona's proposed plan change, each change shown as before -> after. Emits "apply" or
+	 * "reject" (Dismiss). Given `decided`, the caller keeps the decision (null: none yet, so a
+	 * refused one makes the card decidable again); without it the card keeps its own.
+	 */
+	let { spec, onchange, decided: given }: { spec: SpecOf<'proposal_card'>; onchange?: OnChange; decided?: 'apply' | 'reject' | null } = $props();
 
 	const OP = { move: 'Move', resize: 'Resize', create: 'Add', delete: 'Remove' } as const;
 	const EDGE = { move: 'border-l-status-planned', resize: 'border-l-status-planned', create: 'border-l-status-done', delete: 'border-l-status-missed' } as const;
 	const INK = { move: 'text-status-planned', resize: 'text-status-planned', create: 'text-status-done', delete: 'text-status-missed' } as const;
-	let decided = $state<'apply' | 'reject' | null>(null);
+	let picked = $state<'apply' | 'reject' | null>(null);
+	const decided = $derived(given === undefined ? picked : given);
 
 	/** Records the decision and reports it. */
 	function decide(choice: 'apply' | 'reject') {
-		decided = choice;
+		picked = choice;
 		onchange?.(choice);
 	}
 </script>
@@ -38,11 +43,11 @@
 		</ul>
 	{/if}
 	{#if decided}
-		<p class="text-sm text-muted" role="status">{decided === 'apply' ? 'Applied. You can undo this from the calendar.' : 'Rejected. The plan stays as it was.'}</p>
+		<p class="text-sm text-muted" role="status">{decided === 'apply' ? 'Applied. You can undo this from the calendar.' : 'Dismissed. The plan stays as it was.'}</p>
 	{:else}
 		<div class="flex gap-2">
 			<Button size="touch" class="@3xl:h-8" onclick={() => decide('apply')}>Apply</Button>
-			<Button size="touch" variant="outline" class="@3xl:h-8" onclick={() => decide('reject')}>Reject</Button>
+			<Button size="touch" variant="outline" class="@3xl:h-8" onclick={() => decide('reject')}>Dismiss</Button>
 		</div>
 	{/if}
 </Card.Root>

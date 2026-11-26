@@ -81,6 +81,9 @@ describe('views', () => {
 		const { approvals, suggestions } = inboxView(fixture());
 		expect(approvals).toHaveLength(1);
 		expect(approvals[0].spec).toMatchObject({ kind: 'proposal_card', changes: [{ op: 'move', title: 'Strength session', before: 'Wed 18:00', after: 'Thu 18:00' }] });
+		const span = { op: 'move', title: 'Read', before: { start_at: '2026-12-07T18:00:00Z', end_at: '2026-12-07T18:30:00Z' }, after: { start_at: '2026-12-08T15:00:00Z', end_at: '2026-12-08T15:30:00Z' } };
+		const engineShaped = inboxView({ ...fixture(), proposals: [{ ...fixture().proposals[0], diff: { changes: [span] } }] }, [], [], 'UTC');
+		expect(engineShaped.approvals[0].spec).toMatchObject({ changes: [{ op: 'move', title: 'Read', before: 'Mon 18:00', after: 'Tue 15:00' }] });
 		expect(suggestions[0]).toMatchObject({ id: 'f1', spec: { kind: 'proposal_card', persona: 'Planner', changes: [] } });
 		expect(approvals[0].spec).toMatchObject({ persona: 'Fitness coach' });
 		expect(inboxView({ ...fixture(), personas: [] }).approvals[0].spec).toMatchObject({ persona: 'Goal planner' });
@@ -167,9 +170,18 @@ describe('views', () => {
 		const run = (run_id: string, goal_id: string | null, state: string) => ({ run_id, goal_id, workflow: 'new-goal', state, created_at: '', updated_at: '' });
 		const { runs } = inboxView(fixture(), [run('r1', 'g-not-synced', 'waiting_human'), run('r2', null, 'running')], [], 'UTC', '2026-11-26T08:00:00Z', { r1: '3 questions to answer' });
 		expect(runs).toEqual([
-			{ persona: 'Goal planner', title: 'Planning a new goal (r1)', step: 'Waiting for you: 3 questions to answer', progress: 100, tone: 'warn', working: false, href: '/goals/g-not-synced/chat' },
-			{ persona: 'Goal planner', title: 'Planning a new goal (r2)', step: 'Working', progress: 50, tone: 'planned', working: true }
+			{ id: 'r1', confirm: true, persona: 'Goal planner', title: 'Planning a new goal (r1)', step: 'Waiting for you: 3 questions to answer', progress: 100, tone: 'warn', working: false, href: '/goals/g-not-synced/chat' },
+			{ id: 'r2', confirm: true, persona: 'Goal planner', title: 'Planning a new goal (r2)', step: 'Working', progress: 50, tone: 'planned', working: true }
 		]);
+	});
+
+	it('b115: a deleted run leaves the Inbox and an older run of the same goal and workflow does not take its place', () => {
+		const run = (run_id: string, state: string) => ({ run_id, goal_id: 'g9', workflow: 'replan', state, created_at: '', updated_at: '' });
+		const s = { ...fixture(), settings: { dismissed_runs: '0190f2a0-0000-7000-8000-0000000000a1' } };
+		const { runs } = inboxView(s, [run('0190f2a0-0000-7000-8000-0000000000a1', 'failed'), run('0190f2a0-0000-7000-8000-0000000000a0', 'failed')]);
+		expect(runs).toEqual([]);
+		const shown = inboxView(fixture(), [run('0190f2a0-0000-7000-8000-0000000000a1', 'failed')]).runs;
+		expect(shown).toEqual([expect.objectContaining({ id: '0190f2a0-0000-7000-8000-0000000000a1', confirm: false })]);
 	});
 
 	it('b97: spins only for runs that still work: failed is red, an owner stop grey, waiting and paused are amber', () => {

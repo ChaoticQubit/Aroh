@@ -43,9 +43,26 @@ pub fn check_call(method: &str, path: &str) -> Result<reqwest::Method> {
 /// token and an optional JSON body. Output: the answer; network failures
 /// are errors. The token and body are never logged.
 pub async fn call(base: &str, token: &str, method: &str, path: &str, body: Option<&Value>) -> Result<Answer> {
+    send(base, token, method, path, body, None).await
+}
+
+/// Longest wait for an engine call that makes one model turn.
+pub const MODEL_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(150);
+
+/// Like `call`, for an engine route that makes one model turn (structuring a
+/// diary day, reading an image): waits up to `MODEL_CALL_TIMEOUT` instead of
+/// the client's 30 seconds. Output: the answer; network failures are errors.
+pub async fn call_model(base: &str, token: &str, method: &str, path: &str, body: Option<&Value>) -> Result<Answer> {
+    send(base, token, method, path, body, Some(MODEL_CALL_TIMEOUT)).await
+}
+
+async fn send(base: &str, token: &str, method: &str, path: &str, body: Option<&Value>, timeout: Option<std::time::Duration>) -> Result<Answer> {
     let method = check_call(method, path)?;
     aroh_domain::rows::check_url("server_url", base).map_err(|e| Error::Config(e.to_string()))?;
     let mut request = http().request(method, format!("{}{path}", base.trim_end_matches('/'))).bearer_auth(token);
+    if let Some(t) = timeout {
+        request = request.timeout(t);
+    }
     if let Some(body) = body {
         request = request.json(body);
     }
@@ -64,7 +81,7 @@ mod tests {
 
     #[test]
     fn engine_path_rules() {
-        for ok in ["/v1/keys", "/v1/runs?goal_id=0190f2a0-0000-7000-8000-00000000000a&state=waiting_human", "/v1/runs/abc?after_seq=4", "/v1/keys/x/test"] {
+        for ok in ["/v1/keys", "/v1/runs?goal_id=0190f2a0-0000-7000-8000-00000000000a&state=waiting_human", "/v1/runs/abc?after_seq=4", "/v1/keys/x/test", "/v1/diary/structure", "/v1/files/transcribe"] {
             assert!(check_call("GET", ok).is_ok(), "{ok}");
         }
         for bad in ["/healthz", "/v1/../tick", "//evil.com/v1/x", "http://evil.com/v1/x", "/v1/x?a=b#c", "/v1/x?a=%2e", "/v1/x y"] {

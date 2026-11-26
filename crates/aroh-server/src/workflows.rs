@@ -220,6 +220,35 @@ mod tests {
         }
     }
 
+    /// Words of a schedule preference, which belongs in instructions as a default (Q95).
+    const SCHEDULE_WORDS: [&str; 8] = ["rest day", "days a week", "day a week", "days per week", "training day", "minute", "hour", "under 90"];
+
+    /// The precedence line every planning persona carries (Q95).
+    const OWNER_WINS: &str = "The owner's word wins over every default here";
+
+    #[tokio::test]
+    async fn b113_guardrails_hold_safety_limits_never_schedule_preferences() {
+        for (name, _) in PERSONAS {
+            for g in load(name).await.guardrails {
+                let lower = g.to_lowercase();
+                assert!(!SCHEDULE_WORDS.iter().any(|w| lower.contains(w)), "{name}: `{g}` is a schedule preference, move it to instructions as a default");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn b113_every_planning_persona_lets_the_owners_answers_win() {
+        for name in ["goal-planner", "practice-planner", "practice-coach", "savings-planner", "habit-coach"] {
+            let text = load(name).await.instructions;
+            for rule in [OWNER_WINS, "7 means every day, Sunday included", "preferred_days", "name each default you used in the summary"] {
+                assert!(text.contains(rule), "{name}: {rule}");
+            }
+        }
+        let analyst = load("adaptation-analyst").await.instructions;
+        assert!(analyst.contains(OWNER_WINS) && analyst.contains("answers"), "the replan planner keeps the owner's answers");
+        assert!(load("practice-planner").await.instructions.contains("one rest day a week"), "the old guardrail is a default now");
+    }
+
     #[tokio::test]
     async fn health_and_finance_personas_carry_safety_guardrails() {
         for name in ["goal-researcher", "goal-planner", "habit-coach", "card-writer", "card-coach"] {

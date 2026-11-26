@@ -30,8 +30,9 @@ Every rejection is `{ code, message }`. `message` is fit to show the owner.
 | `speech_denied` | Speech recognition is off for the app. |
 | `on_device_unavailable` | The device or the current language has no on-device model. Aroh never falls back to server recognition. |
 | `recognizer_unavailable` | The recognizer is temporarily unavailable. |
-| `busy` | `start` while listening, or `stop` while a stop is in progress. |
-| `not_started` | `stop` with nothing running and no unclaimed transcript. |
+| `busy` | No longer sent; older builds sent it for `start` while listening. The guest stops and retries once. |
+| `superseded` | A newer `start` took over before this one began listening. Not shown to the owner. |
+| `not_started` | `stop` with nothing running and no unclaimed transcript. A `stop` during a `start` cancels it and resolves an empty transcript. |
 | `audio_failed` | The audio session or engine could not start. |
 
 ## Guest bindings
@@ -60,8 +61,10 @@ Runs on the Mac, outside containers, because it needs Xcode. The build script co
 
 ## Checks
 
-`Transcript` depends only on Foundation. Its assert-based checks in `ios/Checks/main.swift` run on the Mac without the Tauri package; they print counts and fixture names only, never live transcript text:
+`Transcript` and `SessionGate` depend only on Foundation. Their assert-based checks in `ios/Checks/` run on the Mac without the Tauri package; they print counts and fixture names only, never live transcript text:
 
 ```sh
-swiftc -o "$TMPDIR/tcheck" ios/Sources/Transcript.swift ios/Checks/main.swift && "$TMPDIR/tcheck"
+swiftc -o "$TMPDIR/tcheck" ios/Sources/Transcript.swift ios/Sources/SessionGate.swift ios/Checks/SessionChecks.swift ios/Checks/main.swift && "$TMPDIR/tcheck"
 ```
+
+`SessionGate` is the one native session's state: every `start` claims it and ends any older session instead of refusing as busy, and recognizer callbacks and stop timers of a replaced session are dropped by token.

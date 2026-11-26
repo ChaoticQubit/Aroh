@@ -77,7 +77,9 @@ export function toDayView(day: RustDay, done: DiaryDone[]): DiaryDayView {
 export function structureNote(outcome: string): string | null {
 	if (outcome === 'ok' || outcome === 'empty') return null;
 	if (outcome === 'no_key') return NO_KEY;
-	return `Not structured: ${outcome}. Your words are saved.`;
+	const trimmed = outcome.trim();
+	const sentence = /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+	return sentence.endsWith('Your words are saved.') ? sentence : `${sentence} Your words are saved.`;
 }
 
 /** The `count` local days before `today`, newest first. */
@@ -105,12 +107,12 @@ export async function diaryLoad(today: string, pastCount: number, actions: Actio
 	}
 }
 
-/** True when `load` shows today written but not structured while a Claude key is set, so a structure call is due. */
+/** True when `load` shows today written but not structured while a key is set on the engine, so a structure call is due. */
 export function needsStructure(load: DiaryLoad): boolean {
 	return load.kind === 'ready' && load.today.entries.length > 0 && !load.today.structure && load.note === null;
 }
 
-/** Structures local `today` from this phone (one model call), then returns the fresh load. */
+/** Has the engine structure local `today` (one model call there), then returns the fresh load. */
 export async function diaryStructure(today: string, pastCount: number, actions: ActionView[], zone: string): Promise<DiaryLoad> {
 	try {
 		const answer = await invoke<DayAnswer>('app_diary_structure', { day: today });

@@ -32,7 +32,7 @@
 		{ name: '1. Log, composer and today', title: 'Log', tab: 'log', body: 'log' },
 		{ name: '2. Calendar day, card above sessions', title: 'Calendar', tab: 'calendar', body: 'calendar' },
 		{ name: '3. Full card', title: 'Diary', tab: 'log', back: { label: 'Log', history: true, path: '/log' }, body: 'full' },
-		{ name: '4. No Claude key on this phone', title: 'Log', tab: 'log', body: 'unstructured' },
+		{ name: '4. No Claude key on the engine', title: 'Log', tab: 'log', body: 'unstructured' },
 		{ name: '5. Settings, agents cannot read', title: 'Diary', tab: 'settings', back: { label: 'Settings', history: true, path: '/settings' }, body: 'settings-off' },
 		{ name: '6. Settings, agents can read', title: 'Diary', tab: 'settings', back: { label: 'Settings', history: true, path: '/settings' }, body: 'settings-on' },
 		{ name: '7. Mac, diary is on iPhone', title: 'Log', tab: 'log', body: 'mac' }
@@ -44,7 +44,7 @@
 
 	/** The Diary settings page with the agents toggle in state `on`. */
 	function settings(on: boolean): SettingsSection[] {
-		return diarySettings(on, '7Qx2', keep);
+		return diarySettings(on, keep);
 	}
 </script>
 

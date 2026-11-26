@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), addPluginListener: vi.fn() }));
+
+const page = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+vi.stubGlobal('document', page);
 
 import { Dictation, SpeechError, type Speech } from './speech.svelte';
 
@@ -46,11 +49,11 @@ describe('chat voice input', () => {
 		expect(d.denied).toBe(true);
 	});
 
-	it('any other failure shows its reason without the Settings button', async () => {
+	it('any other failure shows fixed owner copy without the Settings button, never the native message', async () => {
 		const d = new Dictation(fakeSpeech([], '', { at: 'stop', code: 'audio_failed' }), () => '', () => {});
 		await d.toggle();
 		await d.toggle();
-		expect(d.error).toBe('Nothing was heard.');
+		expect(d.error).toBe('The microphone could not start. Try again.');
 		expect(d.denied).toBe(false);
 		await d.toggle();
 		expect(d.error).toBeNull();
@@ -151,5 +154,150 @@ describe('chat voice input', () => {
 		ended?.('I ate eggs then slept');
 		expect(d.listening).toBe(false);
 		expect(draft).toBe('I ate eggs then slept');
+	});
+});
+
+/** A speech stand-in that records calls; `start` waits on `gate` when given and rejects with `startFail` codes in turn. */
+function spySpeech(opts: { startFail?: SpeechError['code'][]; gate?: Promise<void>; final?: string; stopFail?: SpeechError['code'] } = {}) {
+	const calls: string[] = [];
+	const fails = [...(opts.startFail ?? [])];
+	const voice: Speech = {
+		async start(onPartial) {
+			calls.push('start');
+			if (opts.gate) await opts.gate;
+			const code = fails.shift();
+			if (code) throw new SpeechError(code, 'Already listening.');
+			onPartial('hello');
+		},
+		async stop() {
+			calls.push('stop');
+			if (opts.stopFail) throw new SpeechError(opts.stopFail, 'Voice input is not running.');
+			return opts.final ?? 'hello there';
+		}
+	};
+	return { voice, calls };
+}
+
+describe('mic sessions never block a later mic (B112)', () => {
+	beforeEach(() => {
+		page.visibilityState = 'visible';
+	});
+
+	it('releasing a listening mic stops its native session and keeps the words', async () => {
+		let draft = '';
+		const { voice, calls } = spySpeech();
+		const d = new Dictation(voice, () => draft, (text) => (draft = text));
+		await d.toggle();
+		await d.release();
+		expect(calls).toEqual(['start', 'stop']);
+		expect(d.listening).toBe(false);
+		expect(draft).toBe('hello there');
+	});
+
+	it('releasing an idle mic touches nothing native, and releasing twice stops once', async () => {
+		const { voice, calls } = spySpeech();
+		const d = new Dictation(voice, () => '', () => {});
+		await d.release();
+		expect(calls).toEqual([]);
+		await d.toggle();
+		await Promise.all([d.release(), d.release()]);
+		expect(calls).toEqual(['start', 'stop']);
+	});
+
+	it('releasing while the start is still in flight stops the session once it has started', async () => {
+		let open!: () => void;
+		const { voice, calls } = spySpeech({ gate: new Promise((r) => (open = r)) });
+		const d = new Dictation(voice, () => '', () => {});
+		const started = d.toggle();
+		const released = d.release();
+		open();
+		await Promise.all([started, released]);
+		expect(calls).toEqual(['start', 'stop']);
+		expect(d.listening).toBe(false);
+	});
+
+	it('a second tap while the start is in flight waits for it, then stops, with no error', async () => {
+		let open!: () => void;
+		const { voice, calls } = spySpeech({ gate: new Promise((r) => (open = r)) });
+		const d = new Dictation(voice, () => '', () => {});
+		const first = d.toggle();
+		const second = d.toggle();
+		open();
+		await Promise.all([first, second]);
+		expect(calls).toEqual(['start', 'stop']);
+		expect(d.listening).toBe(false);
+		expect(d.error).toBeNull();
+	});
+
+	it('a mic started on another screen releases the first one without stopping the new session', async () => {
+		const a = spySpeech();
+		const b = spySpeech();
+		const first = new Dictation(a.voice, () => '', () => {});
+		const second = new Dictation(b.voice, () => '', () => {});
+		await first.toggle();
+		await second.toggle();
+		expect(first.listening).toBe(false);
+		expect(second.listening).toBe(true);
+		await first.release();
+		expect(a.calls).toEqual(['start']);
+		await first.toggle();
+		expect(a.calls).toEqual(['start', 'start']);
+		expect(second.listening).toBe(false);
+	});
+
+	it('a busy native session left by an older build is stopped and the mic starts anyway', async () => {
+		const { voice, calls } = spySpeech({ startFail: ['busy'] });
+		const d = new Dictation(voice, () => '', () => {});
+		await d.toggle();
+		expect(calls).toEqual(['start', 'stop', 'start']);
+		expect(d.listening).toBe(true);
+		expect(d.error).toBeNull();
+	});
+
+	it('a start the native side superseded ends quietly', async () => {
+		const { voice } = spySpeech({ startFail: ['superseded'] });
+		const d = new Dictation(voice, () => '', () => {});
+		await d.toggle();
+		expect(d.listening).toBe(false);
+		expect(d.error).toBeNull();
+	});
+
+	it('stopping a session the native side already ended shows no error', async () => {
+		const { voice } = spySpeech({ stopFail: 'not_started' });
+		const d = new Dictation(voice, () => '', () => {});
+		await d.toggle();
+		await d.toggle();
+		expect(d.listening).toBe(false);
+		expect(d.error).toBeNull();
+	});
+
+	it('no native or raw message ever reaches the owner', async () => {
+		const raw: Speech = {
+			async start() {
+				throw new Error('aroh-speech.register_listener not allowed');
+			},
+			async stop() {
+				return '';
+			}
+		};
+		const d = new Dictation(raw, () => '', () => {});
+		await d.toggle();
+		expect(d.error).toBe('Voice input stopped. Tap the mic to try again.');
+		const busy = new Dictation(spySpeech({ startFail: ['busy', 'busy'] }).voice, () => '', () => {});
+		await busy.toggle();
+		expect(busy.error).toBe('Voice input stopped. Tap the mic to try again.');
+		expect(busy.listening).toBe(false);
+	});
+
+	it('the app going to the background stops the listening mic and keeps its words', async () => {
+		let draft = '';
+		const { voice, calls } = spySpeech();
+		const d = new Dictation(voice, () => draft, (text) => (draft = text));
+		await d.toggle();
+		page.visibilityState = 'hidden';
+		page.dispatchEvent(new Event('visibilitychange'));
+		await vi.waitFor(() => expect(calls).toEqual(['start', 'stop']));
+		await vi.waitFor(() => expect(d.listening).toBe(false));
+		expect(draft).toBe('hello there');
 	});
 });

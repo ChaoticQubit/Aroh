@@ -1,7 +1,7 @@
 //! End-to-end encrypted daily diary (Q85): the diary key, AES-256-GCM sealing
 //! bound to account, table, row and key version, the plaintext entry and card
 //! types with strict bounds, and the structuring prompt and output parser.
-//! Shared by the app (device) and the engine (agents read toggle).
+//! Shared by the app (device) and the engine (structuring and agent reads).
 
 pub mod card;
 pub mod structure;
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 pub use card::{AgentDay, Card, Entry, Source};
-pub use structure::{parse, prompt, NumericField, Prompt, Structure, TrackerValue};
+pub use structure::{parse, prompt, NumericField, Prompt, SealedEntry, Structure, StructureRequest, StructuredDay, TrackerValue};
 
 /// Length of a diary key in bytes (AES-256).
 pub const KEY_LEN: usize = 32;
@@ -50,7 +50,7 @@ fn invalid(field: &'static str, reason: &'static str) -> Error {
 
 /// The per-account diary key with its version. The bytes are zeroized on
 /// drop and never printed (Debug shows `[redacted]`). Made on the device;
-/// the engine only holds it while the agents read toggle is on.
+/// the engine holds a sealed copy to structure days and, with the toggle on, for agents.
 #[derive(Clone)]
 pub struct DiaryKey {
     version: i64,

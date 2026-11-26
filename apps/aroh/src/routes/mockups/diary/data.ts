@@ -31,7 +31,7 @@ export const today: DiaryDayView = {
 	]
 };
 
-/** Today with two entries and no Claude key on this phone: saved encrypted, not structured. */
+/** Today with two entries and no Claude key on the engine: saved encrypted, not structured. */
 export const todayUnstructured: DiaryDayView = { day: '2026-11-26', entries: todayEntries.slice(0, 2), structure: null, done: today.done.slice(0, 1) };
 
 /** Tuesday 24 November, structured, shown on the calendar day view. */
