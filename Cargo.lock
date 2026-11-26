@@ -121,6 +121,7 @@ dependencies = [
  "aroh-plugins",
  "aroh-store",
  "aroh-sync",
+ "base64 0.22.1",
  "chrono",
  "chrono-tz",
  "iana-time-zone",

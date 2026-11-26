@@ -13,7 +13,7 @@ export type LocationView = {
 	prompts: { id: string; guess: string | null; name: string; address: string | null; visits: number; weeks: number; usual: string; lat: number; lon: number }[];
 	patterns: { id: string; title: string; place: string; gap_days: number; weekday: string | null; local_time: string; duration_minutes: number; evidence: number; goal: string }[];
 	places: { id: string; name: string; address: string | null; lat: number; lon: number; watched: boolean; visits: number; links: { goal_id: string; series_id: string | null }[] }[];
-	routines: { series_id: string; title: string; place: string | null; cadence: string; streak: string; last_done: string | null; next: { start_at: string; status: 'planned' | 'missed' } | null }[];
+	routines: { series_id: string; title: string; place: string | null; cadence: string; streak: string; last_done: string | null; next: { action_id: string; start_at: string; status: 'planned' | 'missed' } | null }[];
 	log: { id: string; place: string; arrived_at: string; left_at: string | null }[];
 };
 
@@ -188,8 +188,19 @@ export function routineRows(v: LocationView, now: string, zone: string): Routine
 				: formatYmd(next.start_at, zone) === today
 					? ['warn', 'Due today']
 					: ['planned', 'Planned'];
-		return { id: r.series_id, title: r.title, place: r.place, cadence: r.cadence, streak: r.streak, lastDone: r.last_done, nextDue: next?.start_at ?? null, tone, due };
+		return { id: r.series_id, title: r.title, place: r.place, cadence: r.cadence, streak: r.streak, lastDone: r.last_done, nextDue: next?.start_at ?? null, nextId: next?.action_id ?? null, tone, due };
 	});
+}
+
+/** Deletes routine `seriesId` from now (Q93); done and logged sessions stay. */
+export const endRoutine = (seriesId: string) => invoke<unknown>('app_location_end_routine', { seriesId });
+
+/** Deletes the Routines goal (Q93): every routine ends from now; it comes back with a new routine. */
+export const deleteRoutines = () => invoke<null>('app_location_delete_routines');
+
+/** Whether deleting routine `seriesId` (null: Routines itself) leaves Routines with no row, so the screen should open Goals. */
+export function leavesRoutines(seriesId: string | null, rows: RoutineRow[]): boolean {
+	return seriesId === null || rows.every((r) => r.id === seriesId);
 }
 
 /** The location log rows. */

@@ -341,26 +341,71 @@ pub fn delete_series_from(conn: &Connection, clock: &mut Hlc, id: &str) -> Resul
     let series: ActionSeries = repo::get(&tx, &series_id)?;
     let mut ended = recur::end_at(&series, slot)?;
     repo::put(&tx, clock, &mut ended)?;
-    for later in repo::list::<Action>(&tx, &[("series_id", series_id.as_str())])? {
-        let open = matches!(later.status, ActionStatus::Planned | ActionStatus::Missed);
-        let after = later.occurrence.is_some_and(|o| o >= slot);
-        if later.id == action.id || !open || !after {
-            continue;
-        }
-        if repo::list::<ActionLog>(&tx, &[("action_id", later.id.as_str())])?.is_empty() {
-            repo::delete::<Action>(&tx, clock, &later.id)?;
-        } else if !later.locked {
-            let mut kept = later;
-            kept.locked = true;
-            repo::put(&tx, clock, &mut kept)?;
-        }
-    }
+    let later = repo::list::<Action>(&tx, &[("series_id", series_id.as_str())])?.into_iter().filter(|a| a.id != action.id && a.occurrence.is_some_and(|o| o >= slot));
+    close_open(&tx, clock, later)?;
     action.deleted = true;
     action.locked = true;
     repo::put(&tx, clock, &mut action)?;
     tx.commit()?;
     assert!(repo::get::<Action>(conn, id).is_err(), "the deleted session is a tombstone");
     Ok(action)
+}
+
+/// Closes the planned or missed sessions in `actions`: one without a log is tombstoned, a
+/// logged one is locked and kept, since it is off the bounded rule. Done and skipped stay.
+pub(crate) fn close_open(conn: &Connection, clock: &mut Hlc, actions: impl IntoIterator<Item = Action>) -> Result<()> {
+    for later in actions {
+        if !matches!(later.status, ActionStatus::Planned | ActionStatus::Missed) {
+            continue;
+        }
+        if repo::list::<ActionLog>(conn, &[("action_id", later.id.as_str())])?.is_empty() {
+            repo::delete::<Action>(conn, clock, &later.id)?;
+        } else if !later.locked {
+            let mut kept = later;
+            kept.locked = true;
+            repo::put(conn, clock, &mut kept)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a delete from `now` (Q93) would remove action `a`: planned or missed, starting (by
+/// time or by slot) at or after `now`, with no log. Lists use it, so a deleted routine never
+/// stays listed through a running or logged session.
+pub(crate) fn closes_from(conn: &Connection, a: &Action, now: DateTime<Utc>) -> Result<bool> {
+    let open = matches!(a.status, ActionStatus::Planned | ActionStatus::Missed);
+    let ahead = a.start_at >= now || a.occurrence.is_some_and(|o| o >= now);
+    Ok(open && ahead && repo::list::<ActionLog>(conn, &[("action_id", a.id.as_str())])?.is_empty())
+}
+
+/// Ends live series `series` from `now` inside the caller's transaction (Q93): bounded before
+/// its first rule date at or after `now` (tombstoned when that is its first), left as is when
+/// no date is left; its open sessions from `now` on (by slot or by time) are closed as in
+/// [`close_open`]. Output: the series as stored.
+pub(crate) fn end_series_in(conn: &Connection, clock: &mut Hlc, series: ActionSeries, now: DateTime<Utc>) -> Result<ActionSeries> {
+    let ended = match recur::upcoming(&series, now - chrono::Duration::seconds(1), 1)?.first() {
+        Some(at) => {
+            let mut ended = recur::end_at(&series, *at)?;
+            repo::put(conn, clock, &mut ended)?;
+            ended
+        }
+        None => series,
+    };
+    let from_now = repo::list::<Action>(conn, &[("series_id", ended.id.as_str())])?.into_iter().filter(|a| a.start_at >= now || a.occurrence.is_some_and(|o| o >= now));
+    close_open(conn, clock, from_now)?;
+    assert!(recur::upcoming(&ended, now, 1)?.is_empty() || ended.deleted, "an ended series has no rule date after now");
+    Ok(ended)
+}
+
+/// Deletes routine `series_id` from `now` (Q93), in one transaction: the series ends before
+/// its next rule date and its open sessions from now on go, done and logged ones stay. Works
+/// when every session was deleted already. Output: the series as stored.
+pub fn end_series(conn: &Connection, clock: &mut Hlc, series_id: &str, now: DateTime<Utc>) -> Result<ActionSeries> {
+    let tx = conn.unchecked_transaction()?;
+    let series: ActionSeries = repo::get(&tx, series_id)?;
+    let ended = end_series_in(&tx, clock, series, now)?;
+    tx.commit()?;
+    Ok(ended)
 }
 
 /// The owner's Fixed time switch on action `id`: sets `locked` and keeps the

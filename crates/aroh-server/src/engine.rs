@@ -305,6 +305,30 @@ pub fn day_inputs(blocks: &[BusyBlock], actions: &[Action], own_goal: &str, tz: 
     (busy.into_iter().map(|(_, v)| v).collect(), away.into_iter().collect())
 }
 
+/// The spend limits of `user`'s runs on `goal` from their budget rows: the
+/// strictest call and run budget, the goal's month and the user's month.
+/// Shared by run start and the cut-off continuation (Q90). Returns the limits.
+pub(crate) async fn budget_limits(pool: &db::PgPool, user: Uuid, goal: Option<Uuid>) -> Result<Limits, ServerError> {
+    let budgets = list_rows::<Budget>(pool, user, &[], false).await?;
+    let goal_text = goal.map(|g| g.to_string());
+    let pick = |scope: BudgetScope, for_goal: bool| {
+        budgets
+            .iter()
+            .filter(|b| b.scope == scope && (!for_goal || b.goal_id == goal_text))
+            .map(|b| u64::try_from(b.limit_usd_micros).unwrap_or(0))
+            .min()
+    };
+    Ok(Limits {
+        call: pick(BudgetScope::Call, false),
+        run: pick(BudgetScope::Run, false),
+        scope: goal.map(|g| PeriodLimit {
+            key: goal_key(g),
+            max_usd_micros: pick(BudgetScope::GoalMonth, true).unwrap_or(u64::MAX),
+        }),
+        user: pick(BudgetScope::UserMonth, false).map(|m| PeriodLimit { key: user_key(user), max_usd_micros: m }),
+    })
+}
+
 /// Loads run `id` from its latest checkpoint in `pool`.
 /// Callers check run ownership first.
 /// Returns `NotFound` before the first checkpoint, or the parse error.
@@ -489,24 +513,7 @@ impl Engine {
     }
 
     async fn limits(&self, user: Uuid, goal: Option<Uuid>) -> Result<Limits, ServerError> {
-        let budgets = list_rows::<Budget>(&self.deps.pool, user, &[], false).await?;
-        let goal_text = goal.map(|g| g.to_string());
-        let pick = |scope: BudgetScope, for_goal: bool| {
-            budgets
-                .iter()
-                .filter(|b| b.scope == scope && (!for_goal || b.goal_id == goal_text))
-                .map(|b| u64::try_from(b.limit_usd_micros).unwrap_or(0))
-                .min()
-        };
-        Ok(Limits {
-            call: pick(BudgetScope::Call, false),
-            run: pick(BudgetScope::Run, false),
-            scope: goal.map(|g| PeriodLimit {
-                key: goal_key(g),
-                max_usd_micros: pick(BudgetScope::GoalMonth, true).unwrap_or(u64::MAX),
-            }),
-            user: pick(BudgetScope::UserMonth, false).map(|m| PeriodLimit { key: user_key(user), max_usd_micros: m }),
-        })
+        budget_limits(&self.deps.pool, user, goal).await
     }
 
     pub(crate) async fn start(&self, user: Uuid, goal: Option<Uuid>, name: &str, input: Map<String, Value>) -> Result<RunId, ServerError> {
@@ -691,7 +698,7 @@ impl Engine {
                 check_text("answer", text)?;
             }
         }
-        let Some((intake, saved)) = self.saved_answers(user, goal_id).await? else {
+        let Some((mut intake, saved)) = self.saved_answers(user, goal_id).await? else {
             if !given.is_empty() {
                 return Err(ServerError::BadRequest("this goal has no saved answers to edit".into()));
             }
@@ -709,6 +716,7 @@ impl Engine {
             };
             return self.start_goal(user, start).await;
         };
+        crate::questions::current_shape(&mut intake);
         let answers = merge_answers(&intake, saved, &given)?;
         let now = self.now();
         prepare_reads(&self.deps.pool, user, now, DEFAULT_WINDOW_DAYS).await?;

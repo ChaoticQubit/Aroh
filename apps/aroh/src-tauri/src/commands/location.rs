@@ -4,6 +4,7 @@
 
 use super::with_core;
 use crate::commands::app::after_write;
+use crate::commands::engine::sync_if_signed_in;
 use crate::AppState;
 use aroh_app::location::{self, Drain, LocationView, PlaceDecision};
 use aroh_domain::rows::{ActionSeries, Place, PlaceLink};
@@ -220,6 +221,27 @@ pub async fn app_location_decide_pattern(app: AppHandle, id: String, apply: bool
     let series = with_core(&state, |c| location::decide_pattern(&c.conn, &mut c.clock, &c.user_id, &id, apply, Utc::now(), crate::zone()))?;
     changed(&app).await;
     Ok(series)
+}
+
+/// Deletes routine `series_id` from now (Q93): the series ends before its next date, its
+/// open sessions from now go, done and logged ones stay. Reminders are rescheduled and the
+/// rows pushed. Output: the series as stored.
+#[tauri::command(async)]
+pub fn app_location_end_routine(app: AppHandle, state: State<'_, AppState>, series_id: String) -> Result<ActionSeries, String> {
+    let series = with_core(&state, |c| aroh_app::write::end_series(&c.conn, &mut c.clock, &series_id, Utc::now()))?;
+    after_write(&app);
+    sync_if_signed_in(&app);
+    Ok(series)
+}
+
+/// Deletes the Routines goal (Q93): every routine ends from now and the goal is tombstoned; it
+/// comes back when a new routine is approved. Reminders are rescheduled and the rows pushed.
+#[tauri::command(async)]
+pub fn app_location_delete_routines(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    with_core(&state, |c| aroh_app::remove::delete_routines(&c.conn, &mut c.clock, &c.user_id, Utc::now()))?;
+    after_write(&app);
+    sync_if_signed_in(&app);
+    Ok(())
 }
 
 /// Clears the location history on this phone.

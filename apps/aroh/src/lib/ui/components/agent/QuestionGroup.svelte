@@ -2,20 +2,41 @@
 	import Check from '@lucide/svelte/icons/check';
 	import { Button } from '$lib/ui/primitives/button';
 	import * as Card from '$lib/ui/primitives/card';
+	import { Input } from '$lib/ui/primitives/input';
 	import Render from '../Render.svelte';
 	import Persona from './Persona.svelte';
 	import StillTrue from '../goal/StillTrue.svelte';
-	import type { ChatMessage, OnChange } from '$lib/ui/contract';
+	import { OTHER_CHOICE, type ChatMessage, type OnChange } from '$lib/ui/contract';
 
 	/**
 	 * Every open question of a run as one card: each with its input and a Skip (a question the
 	 * profile answers shows the remembered value, already counted as the answer, with Edit), a count line, and
 	 * one Send answers button enabled once every question has an answer or a skip. Emits
 	 * `{ type: 'answer', id, value }`, `{ type: 'skip', id, skipped }` and `{ type: 'submit' }`.
-	 * Once submitted it lists what was sent.
+	 * A choice question with an `other` slot ends with Other, which opens a text field; its answer
+	 * value is `{ picked, other }` (B107). Once submitted it lists what was sent.
 	 */
 	let { group, onchange }: { group: Extract<ChatMessage, { type: 'questions' }>; onchange?: OnChange } = $props();
+
+	type Item = (typeof group.items)[number];
+
+	/** Reports a choice question's picks and its Other text (null while Other is off). */
+	function pick(item: Item, chips: string[], other: string | null) {
+		onchange?.({ type: 'answer', id: item.id, value: { picked: chips.filter((c) => c !== OTHER_CHOICE), other } });
+	}
 </script>
+
+{#snippet answer(item: Item, n: number)}
+	{#if item.input.kind === 'choice' && item.other !== undefined}
+		{@const chips = item.input.value}
+		<Render spec={item.input} onchange={(value) => pick(item, value as string[], (value as string[]).includes(OTHER_CHOICE) ? (item.other ?? '') : null)} />
+		{#if item.other !== null}
+			<Input class="h-11 text-lg" aria-label="Other answer to question {n}" placeholder="Type your answer" value={item.other} oninput={(e) => pick(item, chips, e.currentTarget.value)} />
+		{/if}
+	{:else}
+		<Render spec={item.input} onchange={(value) => onchange?.({ type: 'answer', id: item.id, value })} />
+	{/if}
+{/snippet}
 
 <Card.Root size="sm" class="gap-4 px-4" aria-label="Questions">
 	<Persona name={group.persona} note={group.submitted ? 'Answers sent' : `${group.items.length} questions`} />
@@ -46,10 +67,10 @@
 					{:else if item.known}
 						{@const known = item.known}
 						<StillTrue label="Your answer" value={known.value} source={known.source} accepted>
-							<Render spec={item.input} onchange={(value) => onchange?.({ type: 'answer', id: item.id, value })} />
+							{@render answer(item, i + 1)}
 						</StillTrue>
 					{:else}
-						<Render spec={item.input} onchange={(value) => onchange?.({ type: 'answer', id: item.id, value })} />
+						{@render answer(item, i + 1)}
 					{/if}
 				</li>
 			{/each}

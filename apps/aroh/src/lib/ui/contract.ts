@@ -41,7 +41,7 @@ export type ChangeView = {
 
 /** Renderer-neutral component spec: the shape plugin view trees use. */
 export type ComponentSpec =
-	| { kind: 'number_input'; label: string; unit: string; value: number | null; step: number; min?: number; max?: number }
+	| { kind: 'number_input'; label: string; unit: string; value: number | null; step: number; min?: number; max?: number; clamp?: boolean }
 	| { kind: 'rating'; label: string; min: number; max: number; value: number | null }
 	| { kind: 'choice'; label: string; options: string[]; multi: boolean; value: string[] }
 	| { kind: 'note'; label: string; placeholder: string; value: string }
@@ -72,6 +72,9 @@ export type SpecOf<K extends ComponentSpec['kind']> = Extract<ComponentSpec, { k
 /** The change callback every component accepts: the new value, shaped per kind. */
 export type OnChange = (value: unknown) => void;
 
+/** The last option of a question's choice chips that opens a free-text answer field (B107). */
+export const OTHER_CHOICE = 'Other';
+
 /**
  * One entry of a persona chat thread: a message, an inline card, research progress, a working or
  * stopped run, or a plan summary. A trailing `typing` is the working bubble from Send until the
@@ -92,7 +95,7 @@ export type ChatMessage =
 			node?: string;
 			card?: LimitsCard | null;
 			prompt: string;
-			items: { id: string; text: string; input: ComponentSpec; known?: { value: string; source: string } }[];
+			items: { id: string; text: string; input: ComponentSpec; known?: { value: string; source: string }; other?: string | null }[];
 			values: Record<string, string>;
 			skipped: string[];
 			missing: string[];

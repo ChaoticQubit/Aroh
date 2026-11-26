@@ -66,7 +66,7 @@ fn import_keeps_matched_and_returns_unmatched_once_per_series() {
     let blocks: Vec<BusyBlock> = repo::list(&conn, &[]).unwrap();
     assert_eq!(blocks.len(), 2);
     assert!(blocks.iter().all(|b| b.group_name.as_deref() == Some("Work")));
-    let snap = snapshot::snapshot(&conn, &user, now(), day(2) - Duration::minutes(1), now()).unwrap();
+    let snap = snapshot::snapshot(&conn, &user, now(), day(2) - Duration::minutes(1), now(), now()).unwrap();
     assert_eq!(snap.busy.len(), 1);
     assert!(snap.actions.is_empty());
 }

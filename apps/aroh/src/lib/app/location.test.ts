@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Snapshot } from './client';
-import { decisionFor, locationSettingsView, patternItems, placePrompts, placeRows, routineRows, visitRows, type LocationView } from './location';
+import { decisionFor, leavesRoutines, locationSettingsView, patternItems, placePrompts, placeRows, routineRows, visitRows, type LocationView } from './location';
 
 const ROUTINES = 'g-routines';
 
@@ -51,9 +51,9 @@ function view(): LocationView {
 			{ id: 'pl2', name: 'City pool', address: null, lat: 37.76, lon: -122.44, watched: false, visits: 0, links: [] }
 		],
 		routines: [
-			{ series_id: 'r1', title: 'Swim laps', place: 'City pool', cadence: 'Weekly, Sat', streak: '4 weeks', last_done: '2026-11-21T10:40:00Z', next: { start_at: '2026-11-28T10:00:00Z', status: 'planned' } },
-			{ series_id: 'r2', title: 'Morning walk', place: null, cadence: 'Daily', streak: '1 day', last_done: null, next: { start_at: '2026-11-25T07:00:00Z', status: 'missed' } },
-			{ series_id: 'r3', title: 'Stretch', place: null, cadence: 'Daily', streak: '0 days', last_done: null, next: { start_at: '2026-11-26T19:00:00Z', status: 'planned' } }
+			{ series_id: 'r1', title: 'Swim laps', place: 'City pool', cadence: 'Weekly, Sat', streak: '4 weeks', last_done: '2026-11-21T10:40:00Z', next: { action_id: 'n1', start_at: '2026-11-28T10:00:00Z', status: 'planned' } },
+			{ series_id: 'r2', title: 'Morning walk', place: null, cadence: 'Daily', streak: '1 day', last_done: null, next: { action_id: 'n2', start_at: '2026-11-25T07:00:00Z', status: 'missed' } },
+			{ series_id: 'r3', title: 'Stretch', place: null, cadence: 'Daily', streak: '0 days', last_done: null, next: { action_id: 'n3', start_at: '2026-11-26T19:00:00Z', status: 'planned' } }
 		],
 		log: [
 			{ id: 'v1', place: 'Iron Works Gym', arrived_at: '2026-11-25T18:00:00Z', left_at: '2026-11-25T19:00:00Z' },
@@ -129,6 +129,16 @@ describe('routines', () => {
 		]);
 		expect(rows[0].lastDone).toBe('2026-11-21T10:40:00Z');
 		expect(rows[0].nextDue).toBe('2026-11-28T10:00:00Z');
+		expect(rows.map((r) => r.nextId)).toEqual(['n1', 'n2', 'n3']);
+	});
+});
+
+describe('deleting routines (B110)', () => {
+	it('b110: deleting Routines or its last routine opens Goals; another routine left keeps the screen', () => {
+		const rows = routineRows(view(), '2026-11-26T12:00:00Z', 'UTC');
+		expect(leavesRoutines(null, rows)).toBe(true);
+		expect(leavesRoutines('r1', rows)).toBe(false);
+		expect(leavesRoutines('r1', rows.slice(0, 1))).toBe(true);
 	});
 });
 

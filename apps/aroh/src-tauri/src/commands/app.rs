@@ -42,7 +42,7 @@ pub fn app_snapshot(state: State<'_, AppState>, from: String, to: String) -> Res
         return Err("invalid range".into());
     }
     let since = Utc::now() - Duration::days(ENTRY_DAYS);
-    with_core(&state, |c| aroh_app::snapshot::snapshot(&c.conn, &c.user_id, from, to, since))
+    with_core(&state, |c| aroh_app::snapshot::snapshot(&c.conn, &c.user_id, from, to, since, Utc::now()))
 }
 
 /// Runs the start-up tick now, for a changed local date, and reschedules reminders.

@@ -1,4 +1,5 @@
 use crate::checkpoints::EventBuffer;
+use crate::cutoff::{ContinueModel, RunBudget};
 use crate::error::ServerError;
 use crate::evals;
 use crate::ledger::{PgLedger, UsageModel, UsageWriter};
@@ -106,7 +107,16 @@ pub async fn connect(
             Box::new(MeteredModel::new(Box::new(http), price))
         }
     };
-    let model: Arc<dyn Model> = Arc::new(UsageModel::new(inner, vendor, model, writer));
+    let budget = Arc::new(RunBudget {
+        pool: deps.pool.clone(),
+        clock: deps.clock.clone(),
+        price: price,
+        user: writer.user,
+        goal: writer.goal,
+        run: writer.run,
+    });
+    let metered: Box<dyn Model> = Box::new(UsageModel::new(inner, vendor, model, writer));
+    let model: Arc<dyn Model> = Arc::new(ContinueModel::new(metered, price, budget));
     Ok(ModelHandle { model, price })
 }
 

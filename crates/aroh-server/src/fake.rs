@@ -73,13 +73,20 @@ fn start_and_stop(blocks: Vec<Value>, stop: &str) -> Reply {
 /// of an agent turn (structured output is JSON text).
 /// Usage is 100 input and 50 output tokens.
 pub fn sse_text(text: &str) -> Reply {
+    sse_text_stop(text, "end_turn")
+}
+
+/// An Anthropic streaming reply whose text is `text`, stopping with `stop`,
+/// such as `max_tokens` for an answer cut off at the output cap.
+/// Usage is 100 input and 50 output tokens.
+pub fn sse_text_stop(text: &str, stop: &str) -> Reply {
     start_and_stop(
         vec![
             json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
             json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}}),
             json!({"type": "content_block_stop", "index": 0}),
         ],
-        "end_turn",
+        stop,
     )
 }
 

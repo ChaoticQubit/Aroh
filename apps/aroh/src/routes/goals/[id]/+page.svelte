@@ -275,6 +275,26 @@
 		}
 	}
 
+	/**
+	 * Deletes routine `seriesId` from now, or Routines itself when null (Q93), then opens Goals
+	 * when no routine is left on the card, else reads the card again, and reloads.
+	 */
+	async function deleteRoutine(seriesId: string | null) {
+		if (deleting) return;
+		const rows = places ? location.routineRows(places, clock.now, clock.zone) : [];
+		deleting = true;
+		try {
+			await (seriesId === null ? location.deleteRoutines() : location.endRoutine(seriesId));
+			if (location.leavesRoutines(seriesId, rows)) await goto('/goals');
+			else places = await location.view();
+			await data.load();
+		} catch (e) {
+			data.error = String(e);
+		} finally {
+			deleting = false;
+		}
+	}
+
 	/** Switches the dashboard to a plugin version, or to the derived view. */
 	function onversion(value: string) {
 		const id = goal?.id;
@@ -287,7 +307,7 @@
 </script>
 
 {#if s && goal && view && routines && places}
-	<RoutinesScreen goal={goalHeader(s, goal, clock.zone)} view={goalView(s, goal, clock)} routines={location.routineRows(places, clock.now, clock.zone)} />
+	<RoutinesScreen goal={goalHeader(s, goal, clock.zone)} view={goalView(s, goal, clock)} routines={location.routineRows(places, clock.now, clock.zone)} busy={deleting} ondelete={(id) => void deleteRoutine(id)} />
 {:else if s && goal && view && controls}
 	{#key chat}
 		<GoalCard
