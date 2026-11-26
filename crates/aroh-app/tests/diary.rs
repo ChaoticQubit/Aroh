@@ -76,7 +76,7 @@ fn append_keeps_sealed_entries_and_never_queues_a_log() {
 fn engine(key: &DiaryKey, request: &aroh_diary::StructureRequest, reply: &str, at: DateTime<Utc>) -> aroh_diary::StructuredDay {
     let server_copy = DiaryKey::from_bytes(key.version(), key.bytes()).unwrap();
     let entries = request.open(&server_copy, ACCOUNT).unwrap();
-    assert!(aroh_diary::prompt(&request.day, &entries, &request.fields).unwrap().user.contains("DIARY-SENTINEL"), "the engine reads the words in memory");
+    assert!(aroh_diary::prompt(&request.day, &entries, &request.fields, None).unwrap().user.contains("DIARY-SENTINEL"), "the engine reads the words in memory");
     request.answer(&server_copy, ACCOUNT, reply, at).unwrap()
 }
 

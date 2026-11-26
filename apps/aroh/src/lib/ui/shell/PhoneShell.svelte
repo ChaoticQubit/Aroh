@@ -26,7 +26,7 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col bg-bg text-fg">
-	<header class="box-content grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-1 border-b border-border px-4 pt-[env(safe-area-inset-top)]">
+	<header class="box-content grid h-14 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-1 border-b border-border pt-[env(safe-area-inset-top)] pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))]">
 		{#if back}
 			<button type="button" class="-ml-2 flex min-h-11 min-w-0 items-center gap-0.5 justify-self-start rounded-sm pr-2 text-md outline-none focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Back to {back.label}" onclick={() => onback?.()}>
 				<ChevronLeft class="size-5 shrink-0" aria-hidden="true" /><span class="truncate">{back.label}</span>
@@ -45,10 +45,10 @@
 			</button>
 		</div>
 	</header>
-	<main class="@container min-h-0 flex-1 overflow-y-auto bg-surface">
+	<main class="@container min-h-0 flex-1 overflow-y-auto bg-surface pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
 		{@render children()}
 	</main>
-	<nav aria-label="Main" data-hide-typing class="flex shrink-0 border-t border-border bg-bg pb-[env(safe-area-inset-bottom)]">
+	<nav aria-label="Main" data-hide-typing class="flex shrink-0 border-t border-border bg-bg pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
 		{#each tabs as t (t.id)}
 			<button
 				type="button"

@@ -497,7 +497,7 @@ pub fn ensure_routines(conn: &Connection, clock: &mut Hlc, user_id: &str) -> Res
     }
 }
 
-fn target_goal(conn: &Connection, clock: &mut Hlc, user_id: &str, goal_id: &str) -> Result<Goal> {
+pub(crate) fn target_goal(conn: &Connection, clock: &mut Hlc, user_id: &str, goal_id: &str) -> Result<Goal> {
     if goal_id == aroh_domain::seed::routines_id() {
         return ensure_routines(conn, clock, user_id);
     }

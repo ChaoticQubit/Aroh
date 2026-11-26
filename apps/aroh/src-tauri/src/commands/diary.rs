@@ -7,7 +7,7 @@ use super::engine::{engine_call, engine_call_model, engine_error, sync_now};
 use super::with_core;
 use crate::AppState;
 use aroh_app::diary::{self, DayView, Keyring};
-use aroh_diary::{DiaryKey, Source, StructuredDay};
+use aroh_diary::{CardEdit, DiaryKey, Source, StructuredDay};
 use aroh_domain::rows::Proposal;
 use chrono::Utc;
 use serde_json::json;
@@ -162,27 +162,58 @@ fn structure_failure(answer: &aroh_sync::engine::Answer) -> String {
     engine_error(answer, "The engine could not structure this day. Your words are saved.")
 }
 
-/// Structures local `day` on the engine (Q94) when its card is stale: sends the sealed entries,
-/// saves the sealed card that comes back. Returns `ok`, `empty`, `no_key` or a plain sentence;
-/// the entries stay saved either way.
-async fn structure(app: &AppHandle, state: &State<'_, AppState>, keys: &Keyring, day: &str) -> Result<String, String> {
+/// Structures local `day` on the engine (Q94) when `diary::structure_due` says so (a stale
+/// unedited card, or `force` for Redo summary). When the engine says entries belong to an earlier
+/// day (B127), moves them and structures `day` and each of those days once more, without moves.
+/// Returns `ok`, `empty`, `no_key` or a plain sentence for `day`; the entries stay saved.
+async fn structure(app: &AppHandle, state: &State<'_, AppState>, keys: &Keyring, day: &str, force: bool) -> Result<String, String> {
+    let (outcome, moved) = structure_once(app, state, keys, day, force, true).await?;
+    if moved.is_empty() {
+        return Ok(outcome);
+    }
+    restructure(app, state, keys, day, force, &moved).await
+}
+
+/// Structures `day` (with `force`, or when stale) and then each of `others` when stale, after entries moved.
+/// Returns `day`'s outcome; the other days' failures leave their stale note for the next open.
+async fn restructure(app: &AppHandle, state: &State<'_, AppState>, keys: &Keyring, day: &str, force: bool, others: &[String]) -> Result<String, String> {
+    let outcome = structure_once(app, state, keys, day, force, false).await?.0;
+    for other in others.iter().filter(|d| d.as_str() != day) {
+        if structure_once(app, state, keys, other, false, false).await.is_err() {
+            eprintln!("aroh: a diary day was not structured after a move");
+        }
+    }
+    Ok(outcome)
+}
+
+/// One structure call for `day`: sends the sealed entries with the phone's UTC offset and saves
+/// the sealed card that comes back, or with `apply_moves` and engine moves, moves those entries
+/// instead of saving. Returns the outcome and the days entries moved to.
+async fn structure_once(app: &AppHandle, state: &State<'_, AppState>, keys: &Keyring, day: &str, force: bool, apply_moves: bool) -> Result<(String, Vec<String>), String> {
     let (view, request) = with_core(state, |c| {
         let view = diary::read_day(&c.conn, keys, day)?;
-        let request = if view.stale { diary::structure_request(&c.conn, &view)? } else { None };
+        let request = if diary::structure_due(&view, force) { diary::structure_request(&c.conn, &view)? } else { None };
         Ok((view, request))
     })?;
-    let Some(request) = request else { return Ok(if view.entries.is_empty() { "empty" } else { "ok" }.into()) };
+    let Some(mut request) = request else { return Ok((if view.entries.is_empty() { "empty" } else { "ok" }.into(), vec![])) };
+    request.utc_offset_minutes = Some(chrono::Local::now().offset().local_minus_utc() / 60);
     send_key(app, state, keys, None).await?;
     let body = serde_json::to_value(&request).expect("a structure request serializes");
     let answer = engine_call_model(state, "/v1/diary/structure", &body).await.map_err(|_| ENGINE_UNREACHABLE.to_string())?;
     if answer.status != 200 {
-        return Ok(structure_failure(&answer));
+        return Ok((structure_failure(&answer), vec![]));
     }
     let Ok(structured) = serde_json::from_value::<StructuredDay>(answer.body) else {
-        return Ok("The engine's answer could not be read. Your words are saved.".into());
+        return Ok(("The engine's answer could not be read. Your words are saved.".into(), vec![]));
     };
+    if apply_moves && !structured.moves.is_empty() {
+        let moved = with_core(state, |c| diary::apply_moves(&c.conn, &mut c.clock, keys, &view, &structured.moves))?;
+        if !moved.is_empty() {
+            return Ok(("ok".into(), moved));
+        }
+    }
     with_core(state, |c| diary::save_card(&c.conn, &mut c.clock, keys, &view, structured, Utc::now()).map(|_| ()))?;
-    Ok("ok".into())
+    Ok(("ok".into(), vec![]))
 }
 
 async fn day_answer(state: &State<'_, AppState>, keys: &Keyring, day: &str, outcome: String) -> Result<DiaryDay, String> {
@@ -284,16 +315,58 @@ pub async fn app_diary_append(app: AppHandle, state: State<'_, AppState>, day: S
     let keys = ensure_ring(&app, &state).await?;
     let source = if voice { Source::Voice } else { Source::Text };
     with_core(&state, |c| diary::append(&c.conn, &mut c.clock, &keys, &day, &text, source, Utc::now()).map(|_| ()))?;
-    let outcome = structure(&app, &state, &keys, &day).await.unwrap_or_else(|e| e);
+    let outcome = structure(&app, &state, &keys, &day, false).await.unwrap_or_else(|e| e);
     day_answer(&state, &keys, &day, outcome).await
 }
 
-/// Structures `day` again, for the card's retry.
+/// Structures `day` again: a stale card for the card's retry, or with `force` (Redo summary,
+/// B118) even a fresh or owner-edited one; the webview confirms before forcing over an edit.
 #[tauri::command]
-pub async fn app_diary_structure(app: AppHandle, state: State<'_, AppState>, day: String) -> Result<DiaryDay, String> {
+pub async fn app_diary_structure(app: AppHandle, state: State<'_, AppState>, day: String, force: Option<bool>) -> Result<DiaryDay, String> {
     ios_only()?;
     let keys = ensure_ring(&app, &state).await?;
-    let outcome = structure(&app, &state, &keys, &day).await.unwrap_or_else(|e| e);
+    let outcome = structure(&app, &state, &keys, &day, force.unwrap_or(false)).await.unwrap_or_else(|e| e);
+    day_answer(&state, &keys, &day, outcome).await
+}
+
+/// Saves the owner's `edit` of the card of `day` (B120), resealed with the diary key; the
+/// card keeps covering its entries. Returns the day, or a plain error naming the bad field.
+#[tauri::command]
+pub async fn app_diary_edit_card(app: AppHandle, state: State<'_, AppState>, day: String, edit: CardEdit) -> Result<DiaryDay, String> {
+    ios_only()?;
+    let keys = ensure_ring(&app, &state).await?;
+    with_core(&state, |c| diary::edit_card(&c.conn, &mut c.clock, &keys, &day, edit, Utc::now()).map(|_| ()))?;
+    day_answer(&state, &keys, &day, "ok".into()).await
+}
+
+/// Replaces the words of entry `id` of `day` with `text` (B120), resealed in place.
+#[tauri::command]
+pub async fn app_diary_edit_entry(app: AppHandle, state: State<'_, AppState>, day: String, id: String, text: String) -> Result<DiaryDay, String> {
+    ios_only()?;
+    let keys = ensure_ring(&app, &state).await?;
+    with_core(&state, |c| diary::edit_entry(&c.conn, &mut c.clock, &keys, &id, &text))?;
+    day_answer(&state, &keys, &day, "ok".into()).await
+}
+
+/// Deletes entry `id` of `day` (B120) and structures the day again so the summary drops the
+/// deleted words (an owner-edited card is kept and marked stale); the last entry takes the card.
+#[tauri::command]
+pub async fn app_diary_delete_entry(app: AppHandle, state: State<'_, AppState>, day: String, id: String) -> Result<DiaryDay, String> {
+    ios_only()?;
+    let keys = ensure_ring(&app, &state).await?;
+    with_core(&state, |c| diary::delete_entry(&c.conn, &mut c.clock, &keys, &id))?;
+    let outcome = structure(&app, &state, &keys, &day, false).await.unwrap_or_else(|e| e);
+    day_answer(&state, &keys, &day, outcome).await
+}
+
+/// Moves entry `id` of `day` to local day `to` (B127) and structures both days again.
+/// Returns `day` as it is after the move.
+#[tauri::command]
+pub async fn app_diary_move_entry(app: AppHandle, state: State<'_, AppState>, day: String, id: String, to: String) -> Result<DiaryDay, String> {
+    ios_only()?;
+    let keys = ensure_ring(&app, &state).await?;
+    with_core(&state, |c| diary::move_entry(&c.conn, &mut c.clock, &keys, &id, &to).map(|_| ()))?;
+    let outcome = restructure(&app, &state, &keys, &day, false, std::slice::from_ref(&to)).await.unwrap_or_else(|e| e);
     day_answer(&state, &keys, &day, outcome).await
 }
 

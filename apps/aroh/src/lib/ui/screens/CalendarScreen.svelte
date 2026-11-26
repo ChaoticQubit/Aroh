@@ -13,7 +13,7 @@
 	import { stepAnchor, swipe } from '$lib/ui/swipe';
 	import type { Snippet } from 'svelte';
 	import type { ActionView, DeleteScope } from '$lib/ui/contract';
-	import type { ActionEdit, AllDayView, BusyView, CategoryView, DayKind, DayPick } from './types';
+	import type { ActionEdit, AllDayView, BusyView, CategoryView, DayKind, DayPick, GoalChoice, NewAction } from './types';
 
 	/**
 	 * Calendar: month title with the range and its session count, Today, previous, next and the Day,
@@ -23,7 +23,9 @@
 	 * an all-day row and as bars in month cells and the week strip, with the kind question for the
 	 * first unanswered one in view; tapping a chip reopens it. A sideways swipe pages a day, week or
 	 * month like the arrows. Tapping an action opens the edit
-	 * sheet; `onstatus`, `onedit`, `onlock`, `ondelete` and `onchoose` report the changes. `initialView`, `day`, `editing`,
+	 * sheet; tapping an empty slot opens the same sheet to add an item there (B121), filed under one
+	 * of `goals` or none, reported by `oncreate`; tapping a week date or month cell opens that day.
+	 * `onstatus`, `onedit`, `onlock`, `ondelete` and `onchoose` report the changes. `initialView`, `day`, `editing`,
 	 * `confirming`, `selected` and `inline` (sheet drawn in place for mockups) set the opening state.
 	 * `dayTop` renders above the day grid with the shown day, for the diary card.
 	 */
@@ -43,6 +45,8 @@
 		onlock,
 		ondelete,
 		onchoose,
+		goals = [],
+		oncreate,
 		dayTop
 	}: {
 		actions: ActionView[];
@@ -60,8 +64,13 @@
 		onlock?: (id: string, locked: boolean) => void;
 		ondelete?: (id: string, scope: DeleteScope) => void;
 		onchoose?: (pick: DayPick) => void;
+		goals?: GoalChoice[];
+		oncreate?: (item: NewAction) => void;
 		dayTop?: Snippet<[string]>;
 	} = $props();
+
+	const NEW_MINUTES = 30;
+	let adding = $state<ActionView | null>(null);
 
 	const { now, zone } = getClock();
 	const today = formatYmd(now, zone);
@@ -109,8 +118,27 @@
 
 	/** Opens the edit sheet on an action and keeps it selected for dragging after the sheet closes. */
 	function openAction(id: string) {
+		adding = null;
 		editing = id;
 		selected = id;
+	}
+
+	/** Opens the add sheet on an empty slot starting at ISO `start`, 30 minutes long. */
+	function addAt(start: string) {
+		editing = null;
+		adding = { id: '', title: '', start, end: new Date(Date.parse(start) + NEW_MINUTES * 60_000).toISOString(), status: 'planned', locked: true, category: 1, goalTitle: '' };
+	}
+
+	/** Reports a new item from the add sheet and closes it. */
+	function create(item: NewAction) {
+		adding = null;
+		oncreate?.(item);
+	}
+
+	/** Shows day `d` in the day view, from a week date or a month cell. */
+	function openDay(d: string) {
+		anchor = d;
+		view = 'day';
 	}
 
 	/** Applies a move or resize locally and reports it. */
@@ -166,10 +194,7 @@
 						type="button"
 						class="flex min-h-16 flex-col items-stretch gap-0.5 border-t border-l border-border p-1 text-left outline-none first:border-l-0 focus-visible:ring-3 focus-visible:ring-ring/50 @3xl:min-h-24 {d.slice(0, 7) === monthStart.slice(0, 7) ? '' : 'text-muted/60'}"
 						aria-label="{d}, {marks.length ? `${marks.map((e) => e.title).join(', ')}, ` : ''}{items.length} actions"
-						onclick={() => {
-							anchor = d;
-							view = 'day';
-						}}
+						onclick={() => openDay(d)}
 					>
 						<span class="w-fit min-w-5 rounded-sm px-1 text-center text-xs leading-5 font-medium tabular-nums {d === today ? 'bg-accent text-accent-fg' : ''}">{Number(d.slice(8))}</span>
 						{#each marks.slice(0, 2) as e (e.id)}
@@ -189,14 +214,16 @@
 			</div>
 		</div>
 	{:else if view === 'week'}
-		<div class="hidden @3xl:block"><CalendarGrid days={week} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} /></div>
-		<div class="@3xl:hidden"><CalendarGrid compact days={week} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} /></div>
+		<div class="hidden @3xl:block"><CalendarGrid days={week} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} oncreate={oncreate ? addAt : undefined} onday={openDay} /></div>
+		<div class="@3xl:hidden"><CalendarGrid compact days={week} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} oncreate={oncreate ? addAt : undefined} onday={openDay} /></div>
 	{:else}
 		{#if dayTop}{@render dayTop(anchor)}{/if}
-		<CalendarGrid days={[anchor]} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} />
+		<CalendarGrid days={[anchor]} actions={visible} {busy} allDay={events} {selected} onopen={onedit ? openAction : undefined} onedit={onedit ? edit : undefined} onpick={onchoose ? (id) => (choosing = id) : undefined} oncreate={oncreate ? addAt : undefined} />
 	{/if}
 	</div>
 </div>
-{#if open}
+{#if adding}
+	<ActionSheet action={adding} {inline} {goals} oncreate={create} onclose={() => (adding = null)} />
+{:else if open}
 	<ActionSheet action={open} {confirming} {inline} {onstatus} onsave={edit} {onlock} ondelete={remove} onclose={() => (editing = null)} />
 {/if}

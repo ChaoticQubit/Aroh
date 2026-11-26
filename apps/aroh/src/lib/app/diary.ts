@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ActionView, CategorySlot } from '$lib/ui/contract';
 import type { Proposal } from './client';
-import { formatYmd, shiftDay } from '$lib/ui/format';
+import { formatYmd, minuteOfDay, shiftDay } from '$lib/ui/format';
 
 /** One verbatim diary entry: the owner's words, when they were logged and how. */
 export type DiaryEntryView = { id: string; at: string; text: string; source: 'text' | 'voice' };
@@ -17,13 +17,17 @@ export type DiaryStructure = {
 	workout: string | null;
 	notesForTomorrow: string | null;
 	structuredAt: string;
+	editedAt?: string | null;
 };
 
 /** One session done that day, linked from the card. */
 export type DiaryDone = { id: string; title: string; start: string; category: CategorySlot };
 
-/** One diary day: verbatim entries, the structure (null until structured) and the day's done sessions. */
-export type DiaryDayView = { day: string; entries: DiaryEntryView[]; structure: DiaryStructure | null; done: DiaryDone[] };
+/**
+ * One diary day: verbatim entries, the structure (null until structured) and the day's done sessions.
+ * `stale` is true when an owner-edited card does not cover every entry yet.
+ */
+export type DiaryDayView = { day: string; entries: DiaryEntryView[]; structure: DiaryStructure | null; done: DiaryDone[]; stale?: boolean };
 
 /** The card as Rust opens it from the sealed `diary_days` row. */
 export type RustCard = {
@@ -39,6 +43,7 @@ export type RustCard = {
 	workout: string | null;
 	notes_for_tomorrow: string | null;
 	structured_at: string;
+	edited_at?: string | null;
 };
 
 /** One day as `app_diary_day` returns it: entries, card, `stale` and the locked row count. */
@@ -63,14 +68,121 @@ export function doneOn(day: string, actions: ActionView[], zone: string): DiaryD
 		.map((a) => ({ id: a.id, title: a.title, start: a.start, category: a.category }));
 }
 
-/** Maps a Rust day to the card view; a stale or missing card shows as not structured. */
+/**
+ * Maps a Rust day to the card view. A stale card shows as not structured, unless the owner edited it:
+ * that card stays on screen with `stale` set, since only a confirmed Redo summary replaces it.
+ */
 export function toDayView(day: RustDay, done: DiaryDone[]): DiaryDayView {
-	const c = day.stale ? null : day.card;
+	const edited = !!day.card?.edited_at;
+	const c = day.stale && !edited ? null : day.card;
 	const entries = [...day.entries].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
 	const structure = c
-		? { summary: c.summary, mood: c.mood, energy: c.energy, highlights: c.highlights, food: c.food, water: c.water, workout: c.workout, notesForTomorrow: c.notes_for_tomorrow, structuredAt: c.structured_at }
+		? { summary: c.summary, mood: c.mood, energy: c.energy, highlights: c.highlights, food: c.food, water: c.water, workout: c.workout, notesForTomorrow: c.notes_for_tomorrow, structuredAt: c.structured_at, editedAt: c.edited_at ?? null }
 		: null;
-	return { day: day.day, entries, structure, done };
+	return { day: day.day, entries, structure, done, stale: day.stale && !!c };
+}
+
+/** The card's editable fields as the edit form holds them; cleared lines are empty strings. */
+export type CardDraft = { summary: string; mood: number; energy: number; highlights: string[]; food: string; water: string; workout: string; notesForTomorrow: string };
+
+/** The body of `app_diary_edit_card`, matching `aroh_diary::CardEdit`. */
+export type CardEdit = { summary: string; mood: number; energy: number; highlights: string[]; food: string | null; water: string | null; workout: string | null; notes_for_tomorrow: string | null };
+
+/** The edit form's starting values for structure `s`. */
+export function draftOf(s: DiaryStructure): CardDraft {
+	return { summary: s.summary, mood: s.mood, energy: s.energy, highlights: [...s.highlights], food: s.food ?? '', water: s.water ?? '', workout: s.workout ?? '', notesForTomorrow: s.notesForTomorrow ?? '' };
+}
+
+/** The edit payload for `draft`: text trimmed, a cleared line null, blank highlights dropped. */
+export function toCardEdit(draft: CardDraft): CardEdit {
+	const line = (s: string) => s.trim() || null;
+	return {
+		summary: draft.summary.trim(),
+		mood: draft.mood,
+		energy: draft.energy,
+		highlights: draft.highlights.map((h) => h.trim()).filter(Boolean),
+		food: line(draft.food),
+		water: line(draft.water),
+		workout: line(draft.workout),
+		notes_for_tomorrow: line(draft.notesForTomorrow)
+	};
+}
+
+const SUMMARY_MAX = 1000;
+const LINE_MAX = 300;
+const HIGHLIGHTS_MAX = 10;
+
+/** The first card bound `draft` breaks, as a sentence for the form; null when it can be saved. Rust checks the same bounds. */
+export function draftError(draft: CardDraft): string | null {
+	const e = toCardEdit(draft);
+	const scale = (n: number) => Number.isInteger(n) && n >= 1 && n <= 5;
+	const len = (s: string | null) => [...(s ?? '')].length;
+	if (!e.summary) return 'Write a summary.';
+	if (len(e.summary) > SUMMARY_MAX) return 'Keep the summary under 1000 characters.';
+	if (!scale(e.mood)) return 'Pick a mood from 1 to 5.';
+	if (!scale(e.energy)) return 'Pick an energy from 1 to 5.';
+	if (e.highlights.length > HIGHLIGHTS_MAX) return 'At most 10 highlights.';
+	if (e.highlights.some((h) => len(h) > LINE_MAX)) return 'Keep each highlight under 300 characters.';
+	if ([e.food, e.water, e.workout].some((l) => len(l) > LINE_MAX)) return 'Keep food, water and workout under 300 characters each.';
+	if (len(e.notes_for_tomorrow) > SUMMARY_MAX) return 'Keep the notes for tomorrow under 1000 characters.';
+	return null;
+}
+
+/** The "Your words" toggle label with the entry count (B119). */
+export function wordsLabel(count: number): string {
+	return `Your words · ${count} ${count === 1 ? 'entry' : 'entries'}`;
+}
+
+/** True when Redo summary would replace the owner's own edits, so it asks first. */
+export function redoNeedsConfirm(view: DiaryDayView): boolean {
+	return !!view.structure?.editedAt;
+}
+
+/** A day command's result for the card: the fresh day and its note, or a plain failure. */
+export type DayResult = { ok: true; view: DiaryDayView; note: string | null } | { ok: false; message: string };
+
+/** Runs day command `cmd` with `args` and maps its answer, keeping the day's `done` sessions. */
+async function dayCall(cmd: string, args: Record<string, unknown>, done: DiaryDone[]): Promise<DayResult> {
+	try {
+		const answer = await invoke<DayAnswer>(cmd, args);
+		return { ok: true, view: toDayView(answer.view, done), note: structureNote(answer.structure) };
+	} catch (e) {
+		return { ok: false, message: String(e) };
+	}
+}
+
+/** Redo summary (B118): has the engine structure `day` again even when its card is fresh. */
+export function diaryRedo(day: string, done: DiaryDone[]): Promise<DayResult> {
+	return dayCall('app_diary_structure', { day, force: true }, done);
+}
+
+/** Saves the owner's edit of the card of `day` (B120), resealed on the phone. */
+export function diaryEditCard(day: string, draft: CardDraft, done: DiaryDone[]): Promise<DayResult> {
+	return dayCall('app_diary_edit_card', { day, edit: toCardEdit(draft) }, done);
+}
+
+/** Replaces the words of entry `id` of `day`. */
+export function diaryEditEntry(day: string, id: string, text: string, done: DiaryDone[]): Promise<DayResult> {
+	return dayCall('app_diary_edit_entry', { day, id, text }, done);
+}
+
+/** Moves entry `id` of `day` to local day `to` (B127); both days are structured again. */
+export function diaryMoveEntry(day: string, id: string, to: string, done: DiaryDone[]): Promise<DayResult> {
+	return dayCall('app_diary_move_entry', { day, id, to }, done);
+}
+
+/** Local hour a diary day starts at (B127): words written after midnight but before it belong to the day before. */
+export const DIARY_DAY_START_HOUR = 4;
+
+/** The diary day an entry written at `now` in `zone` belongs to: the calendar day, or the one before it before 04:00. */
+export function diaryDayOf(now: string, zone: string): string {
+	const day = formatYmd(now, zone);
+	return minuteOfDay(now, zone) < DIARY_DAY_START_HOUR * 60 ? shiftDay(day, -1) : day;
+}
+
+/** Deletes entry `id` of `day`; the last one takes the card with it. */
+export function diaryDeleteEntry(day: string, id: string, done: DiaryDone[]): Promise<DayResult> {
+	return dayCall('app_diary_delete_entry', { day, id }, done);
 }
 
 /** The owner-facing line for a structuring outcome; null when there is nothing to say. */

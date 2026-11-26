@@ -5,6 +5,7 @@
 	import { Button } from '$lib/ui/primitives/button';
 	import { Dictation, type Speech } from '$lib/app/speech.svelte';
 	import DictationNotice from '$lib/ui/components/inputs/DictationNotice.svelte';
+	import { follow } from '$lib/ui/follow';
 
 	/**
 	 * The diary composer on the Log tab (Q85): a text area, a mic that dictates into it given
@@ -43,7 +44,7 @@
 	}}
 >
 	<label for={id} class="text-sm font-semibold">How is your day going?</label>
-	<textarea {id} bind:value={draft} rows="2" maxlength="2000" placeholder="Write or speak. Meals, water and workouts become tracker numbers." class="min-h-16 w-full resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"></textarea>
+	<textarea {id} bind:value={draft} use:follow={draft} rows="2" maxlength="2000" placeholder="Write or speak. Meals, water and workouts become tracker numbers." class="min-h-16 w-full resize-none rounded-sm border border-input bg-transparent px-3 py-2 text-lg outline-none placeholder:text-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"></textarea>
 	<div class="flex items-center gap-1">
 		<p class="flex flex-1 items-center gap-1 text-xs text-muted"><Lock class="size-3" aria-hidden="true" />Encrypted on this phone before it syncs</p>
 		{#if dictation}

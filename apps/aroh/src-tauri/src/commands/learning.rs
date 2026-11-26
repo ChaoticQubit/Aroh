@@ -42,6 +42,25 @@ pub fn app_edit_action(
     Ok(action)
 }
 
+/// Creates a one-off action from a Calendar slot tap (B121): `title` at `start_at` (RFC 3339)
+/// for `minutes`, under `goal_id` or the built-in Routines goal. It is locked, reminders are
+/// rescheduled and it is pushed at once like an edit. Output: the stored action.
+#[tauri::command(async)]
+pub fn app_create_action(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    title: String,
+    start_at: String,
+    minutes: i64,
+    goal_id: Option<String>,
+) -> Result<Action, String> {
+    let start = parse_time(&start_at, "start_at")?;
+    let action = with_core(&state, |c| write::create_action(&c.conn, &mut c.clock, &c.user_id, &title, start, minutes, goal_id.as_deref()))?;
+    after_write(&app);
+    sync_if_signed_in(&app);
+    Ok(action)
+}
+
 /// Turns Fixed time on or off for action `id` (the edit sheet and plan approval switch),
 /// then reschedules reminders. Output: the stored action.
 #[tauri::command(async)]

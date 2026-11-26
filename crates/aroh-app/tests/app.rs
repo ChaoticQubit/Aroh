@@ -285,6 +285,28 @@ fn edit_action_moves_resizes_deletes_and_locks() {
 }
 
 #[test]
+fn create_action_writes_a_locked_one_off_that_syncs() {
+    let (conn, mut clock, user) = seeded();
+    let start = Utc.with_ymd_and_hms(2026, 11, 27, 14, 15, 0).unwrap();
+    let loose = write::create_action(&conn, &mut clock, &user, "  Dentist  ", start, 30, None).unwrap();
+    assert_eq!((loose.title.as_str(), loose.start_at, loose.end_at), ("Dentist", start, start + Duration::minutes(30)));
+    assert_eq!((loose.status, loose.locked, loose.series_id.is_none()), (ActionStatus::Planned, true, true));
+    assert_eq!(loose.goal_id, aroh_domain::seed::routines_id(), "an action with no goal lives under Routines");
+    assert_eq!(repo::get::<Goal>(&conn, &loose.goal_id).unwrap().title, "Routines");
+    assert_eq!(repo::get::<Action>(&conn, &loose.id).unwrap(), loose);
+    let pushed = pending(&conn, Action::TABLE, &user, clock.node(), "", 500).unwrap();
+    assert!(pushed.iter().any(|r| r.get("id").and_then(|v| v.as_str()) == Some(loose.id.as_str())), "the new action is pushed");
+    let goal = repo::list::<Goal>(&conn, &[("user_id", user.as_str())]).unwrap().into_iter().find(|g| g.id != loose.goal_id).unwrap();
+    let filed = write::create_action(&conn, &mut clock, &user, "Run", start, 45, Some(&goal.id)).unwrap();
+    assert_eq!((filed.goal_id.as_str(), filed.end_at - filed.start_at), (goal.id.as_str(), Duration::minutes(45)));
+    assert!(write::create_action(&conn, &mut clock, &user, "   ", start, 30, None).is_err());
+    assert!(write::create_action(&conn, &mut clock, &user, "Nap", start, 0, None).is_err());
+    assert!(write::create_action(&conn, &mut clock, &user, "Nap", start, 1441, None).is_err());
+    assert!(write::create_action(&conn, &mut clock, &user, "Nap", start, 30, Some("00000000-0000-4000-8000-0000000000ff")).is_err());
+    assert_eq!(repo::list::<Action>(&conn, &[("title", "Nap")]).unwrap().len(), 0, "a refused create writes nothing");
+}
+
+#[test]
 fn reminders_cover_actions_and_check_ins() {
     let (conn, mut clock, user) = seeded();
     tick::tick(&conn, &mut clock, &user, now(), ZONE).unwrap();

@@ -14,8 +14,8 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-pub use card::{AgentDay, Card, Entry, Source};
-pub use structure::{parse, prompt, NumericField, Prompt, SealedEntry, Structure, StructureRequest, StructuredDay, TrackerValue};
+pub use card::{AgentDay, Card, CardEdit, Entry, Source};
+pub use structure::{move_allowed, parse, prompt, DayMove, EntryMove, NumericField, Prompt, SealedEntry, Structure, StructureRequest, StructuredDay, TrackerValue};
 
 /// Length of a diary key in bytes (AES-256).
 pub const KEY_LEN: usize = 32;

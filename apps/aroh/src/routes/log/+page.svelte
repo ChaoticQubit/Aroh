@@ -4,18 +4,19 @@
 	import LogScreen from '$lib/ui/screens/LogScreen.svelte';
 	import DiarySection from '$lib/ui/diary/DiarySection.svelte';
 	import { getClock } from '$lib/ui/clock';
-	import { formatYmd } from '$lib/ui/format';
+	import { formatDate, formatYmd } from '$lib/ui/format';
 	import { data } from '$lib/app/data.svelte';
 	import * as client from '$lib/app/client';
 	import { speech } from '$lib/app/speech.svelte';
 	import { actionViews, checkInData, logView } from '$lib/app/views';
-	import { diaryAppend, diaryLoad, diaryStructure, needsStructure, type DiaryLoad } from '$lib/app/diary';
+	import { diaryAppend, diaryDayOf, diaryLoad, diaryStructure, needsStructure, type DiaryLoad } from '$lib/app/diary';
 
 	const PAST_DAYS = 7;
 	const clock = getClock();
 	const s = $derived(data.snapshot);
 	const view = $derived(s ? logView(s, clock) : null);
-	const today = $derived(formatYmd(clock.now, clock.zone));
+	const today = $derived(diaryDayOf(clock.now, clock.zone));
+	const todayTitle = $derived(today === formatYmd(clock.now, clock.zone) ? 'Today' : formatDate(today, { weekday: 'long', day: 'numeric', month: 'long' }));
 	let diary = $state<DiaryLoad | null>(null);
 	let busy = $state(false);
 
@@ -46,6 +47,7 @@
 
 <DiarySection
 	load={diary}
+	title={todayTitle}
 	zone={clock.zone}
 	{busy}
 	voice={speech}
@@ -53,6 +55,9 @@
 	onopen={(day) => void goto(`/log/diary/${day}`)}
 	onaction={(id) => void goto(`/actions/${id}`)}
 	onsettings={() => void goto('/settings/key')}
+	onchange={(r) => {
+		if (diary?.kind === 'ready') diary = { ...diary, today: r.view, note: r.note };
+	}}
 />
 {#if view}
 	<LogScreen {...view} {oncheckin} onlog={(text) => data.run(() => client.logText(text))} voice={speech} />

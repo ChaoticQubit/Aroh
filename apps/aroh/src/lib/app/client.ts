@@ -309,6 +309,9 @@ export const readCalendar = (from: string, to: string) =>
 /** Moves or resizes an action to `start`..`end` (RFC 3339); the action is locked so agents leave it. */
 export const editAction = (id: string, start: string, end: string) => invoke<Action>('app_edit_action', { id, startAt: start, endAt: end, delete: false });
 
+/** Creates a one-off action from a Calendar slot (B121): `title` at `start` (RFC 3339) for `minutes`, under `goalId` or the built-in Routines goal; it is locked like an edit. */
+export const createAction = (title: string, start: string, minutes: number, goalId: string | null) => invoke<Action>('app_create_action', { title, startAt: start, minutes, goalId });
+
 /** Deletes an action, or with scope `future` it and every later session of its series (Q89); the server learns from the edit when it syncs. */
 export const deleteAction = (id: string, scope: DeleteScope = 'this') => invoke<Action>('app_edit_action', { id, startAt: null, endAt: null, delete: true, scope });
 

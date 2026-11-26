@@ -2059,6 +2059,7 @@ impl Api {
             workout: None,
             notes_for_tomorrow: Some(format!("Go easy, {DIARY_SENTINEL}.")),
             structured_at: utc(T0),
+            edited_at: None,
         };
         let id = aroh_diary::day_id(&user.to_string(), day);
         let sealed = aroh_diary::seal(key, &user.to_string(), aroh_diary::Table::Days, &id, &card.to_bytes()).unwrap();
@@ -2272,7 +2273,7 @@ async fn the_engine_structures_a_day_and_reads_an_image_keeping_only_ciphertext(
     let mut row = aroh_domain::rows::DiaryEntry { id: entry.id.clone(), user_id: owner.clone(), day: day.into(), at: utc(T0), key_version: 1, nonce: entry.sealed.nonce.clone(), ciphertext: entry.sealed.ciphertext.clone(), updated_at: String::new(), deleted: false };
     put_row(&api.pool, &api.hlc, u, &mut row).await.unwrap();
     let fields = vec![aroh_diary::NumericField { tracker_id: tracker.clone(), key: "weight_kg".into(), label: "Weight".into(), unit: Some("kg".into()) }];
-    let request = aroh_diary::StructureRequest { day: day.into(), entries: vec![entry.clone()], fields: fields.clone() };
+    let request = aroh_diary::StructureRequest { day: day.into(), entries: vec![entry.clone()], fields: fields.clone(), utc_offset_minutes: None };
     let body = serde_json::to_value(&request).unwrap();
     assert!(!body.to_string().contains(DIARY_SENTINEL), "the device sends ciphertext only");
 
@@ -2296,8 +2297,8 @@ async fn the_engine_structures_a_day_and_reads_an_image_keeping_only_ciphertext(
     empty["entries"] = json!([]);
     let mut tampered = request.clone();
     tampered.entries[0].sealed.ciphertext = seal_entry("other words").sealed.ciphertext;
-    let refused = aroh_diary::StructureRequest { day: day.into(), entries: vec![seal_entry("REFUSE-THIS-DAY")], fields };
-    let other_version = aroh_diary::StructureRequest { day: day.into(), entries: vec![aroh_diary::SealedEntry { sealed: aroh_diary::Sealed { key_version: 2, ..entry.sealed.clone() }, ..entry.clone() }], fields: vec![] };
+    let refused = aroh_diary::StructureRequest { day: day.into(), entries: vec![seal_entry("REFUSE-THIS-DAY")], fields, utc_offset_minutes: None };
+    let other_version = aroh_diary::StructureRequest { day: day.into(), entries: vec![aroh_diary::SealedEntry { sealed: aroh_diary::Sealed { key_version: 2, ..entry.sealed.clone() }, ..entry.clone() }], fields: vec![], utc_offset_minutes: None };
     for (label, bad, want) in [
         ("no entries", empty, 400),
         ("tampered", serde_json::to_value(&tampered).unwrap(), 400),

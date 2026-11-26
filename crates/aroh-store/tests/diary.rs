@@ -32,6 +32,7 @@ fn pending_diary_rows_carry_no_plaintext() {
         workout: None,
         notes_for_tomorrow: Some(SENTINEL.into()),
         structured_at: "2026-11-26T08:00:00Z".parse().unwrap(),
+        edited_at: None,
     };
     let id = day_id(user, "2026-11-26");
     let sealed = seal(&key, user, Table::Days, &id, &card.to_bytes()).unwrap();
